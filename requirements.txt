@@ -1,0 +1,19 @@
+# 핵심 프레임워크
+langchain>=1.2.13
+llama-index>=0.14.18
+
+# LLM 및 임베딩 (OpenAI & HuggingFace 연동)
+openai>=2.29.0
+langchain-openai
+sentence-transformers>=5.3.0
+
+# 벡터 데이터베이스
+chromadb>=1.5.5
+
+# 데이터 파싱 (PDF 및 워드)
+pypdf
+docx2txt
+
+# UI 및 환경 설정
+streamlit>=1.55.0
+python-dotenv
