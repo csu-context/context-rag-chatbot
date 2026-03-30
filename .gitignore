@@ -208,25 +208,23 @@ __marimo__/
 
 # --- Context Project Specific ---
 
+# 프로젝트 디렉토리 (자동 생성 및 대용량 파일 포함)
+models/
+vector_db/
+logs/
+data/raw/
+data/processed/
+
 # 벡터 데이터베이스 (ChromaDB 등 로컬 DB 파일)
-# 용량이 매우 크고 각자 로컬에서 생성되어야 하므로 제외
 database/
 chroma/
 *.db
 *.sqlite3
 
-# 환경 변수 및 비밀 키 (재확인)
-# 이미 템플릿에 있지만, 확실히 하기 위해 한 번 더 명시
+# 환경 변수 및 비밀 키
 .env
 .env.production
 !.env.example
 
-# 데이터 파일 (사내 매뉴얼 등 보안이 필요한 원본 문서)
-# 보안이 중요한 PDF/Docx 파일이 깃허브에 직접 올라가는 것을 방지
-data/*.pdf
-data/*.docx
-data/*.txt
-
-# 맥OS 시스템 파일 (맥 사용자 2명 필수)
-# 윈도우 사용자의 폴더에 .DS_Store 파일이 생기는 것을 방지
+# 맥OS 시스템 파일
 .DS_Store
