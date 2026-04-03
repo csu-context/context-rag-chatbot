@@ -1,14 +1,19 @@
+# [Pytorch CUDA 13.0 전용 인덱스]
+--extra-index-url https://download.pytorch.org/whl/cu130
+
 # 핵심 프레임워크
 langchain>=1.2.13
 llama-index>=0.14.18
 
-# LLM 및 임베딩 (OpenAI & HuggingFace 연동)
-openai>=2.29.0
-langchain-openai
+# LLM 및 임베딩 (BGE-M3-ko 및 GPU 가속)
+torch==2.11.0
+torchvision==0.26.0
+torchaudio==2.11.0
 sentence-transformers>=5.3.0
 
-# 벡터 데이터베이스
+# 벡터 데이터베이스 및 성능 측정
 chromadb>=1.5.5
+psutil
 
 # 데이터 파싱 (PDF 및 워드)
 pypdf
@@ -17,3 +22,5 @@ docx2txt
 # UI 및 환경 설정
 streamlit>=1.55.0
 python-dotenv
+openai>=2.29.0
+langchain-openai
