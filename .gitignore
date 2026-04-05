@@ -209,11 +209,11 @@ __marimo__/
 # --- Context Project Specific ---
 
 # 프로젝트 디렉토리 (자동 생성 및 대용량 파일 포함)
-models/
-vector_db/
-logs/
-data/raw/
-data/processed/
+/models/
+/vector_db/
+/logs/
+/data/raw/
+/data/processed/
 
 # 벡터 데이터베이스 (ChromaDB 등 로컬 DB 파일)
 database/
