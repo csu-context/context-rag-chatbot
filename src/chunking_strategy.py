@@ -41,10 +41,16 @@ def create_parent_child_chunks(markdown_text: str, base_metadata: dict) -> list:
     hierarchical_data = []
 
     for doc in parent_docs:
+        # [FIX] MarkdownHeaderTextSplitter는 헤더와 다음 헤더 사이에 텍스트가 없는 경우,
+        # page_content가 비어있는 Document를 생성할 수 있습니다.
+        # 이러한 빈 문서는 건너뛰어 불필요한 데이터 생성을 방지합니다.
+        if not doc.page_content.strip():
+            continue
+
         parent_id = str(uuid.uuid4())
 
-        # Header 2를 우선 적용, 없으면 Header 1 적용 (기본값: "기본 섹션")
-        sec_title = doc.metadata.get("Header 2", doc.metadata.get("Header 1", "기본 섹션"))
+        # 가장 구체적인 헤더부터 제목을 찾습니다 (H3 -> H2 -> H1).
+        sec_title = doc.metadata.get("Header 3") or doc.metadata.get("Header 2") or doc.metadata.get("Header 1") or "기본 섹션"
 
         child_docs = child_splitter.split_text(doc.page_content)
 
