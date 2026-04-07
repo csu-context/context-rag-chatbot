@@ -16,7 +16,7 @@ chromadb>=1.5.5
 psutil
 
 # 데이터 파싱 (PDF 및 워드)
-pypdf
+pymupdf
 docx2txt
 
 # UI 및 환경 설정
