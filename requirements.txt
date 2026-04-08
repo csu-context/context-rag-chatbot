@@ -2,25 +2,28 @@
 --extra-index-url https://download.pytorch.org/whl/cu130
 
 # 핵심 프레임워크
-langchain>=1.2.13
-llama-index>=0.14.18
+langchain>=0.1.0
+langchain-community
+langchain-text-splitters
+llama-index>=0.9.0
 
 # LLM 및 임베딩 (BGE-M3-ko 및 GPU 가속)
-torch==2.11.0
-torchvision==0.26.0
-torchaudio==2.11.0
-sentence-transformers>=5.3.0
+torch>=2.1.0
+torchvision>=0.16.0
+torchaudio>=2.1.0
+sentence-transformers>=2.3.0
 
 # 벡터 데이터베이스 및 성능 측정
-chromadb>=1.5.5
+chromadb>=0.4.0
 psutil
+tqdm
 
 # 데이터 파싱 (PDF 및 워드)
 pymupdf
 docx2txt
 
 # UI 및 환경 설정
-streamlit>=1.55.0
+streamlit>=1.30.0
 python-dotenv
-openai>=2.29.0
+openai>=1.10.0
 langchain-openai
