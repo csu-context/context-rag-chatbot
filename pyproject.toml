@@ -1,0 +1,33 @@
+[tool.ruff]
+# Ruff 설정
+line-length = 120
+target-version = "py310"
+fix = true
+
+[tool.ruff.lint]
+# 규칙 선택 (Linting)
+# E: Error, F: Pyflakes, I: Isort, W: Warning
+select = ["E", "F", "I", "W"]
+ignore = []
+
+[tool.ruff.lint.isort]
+# Isort 관련 설정
+combine-as-imports = true
+force-wrap-aliases = true
+
+[tool.black]
+# Black 설정
+line-length = 120
+target-version = ['py310']
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.git
+  | \.venv
+  | \.idea
+  | \.DS_Store
+  | __pycache__
+  | build
+  | dist
+)/
+'''
