@@ -1,4 +1,4 @@
-﻿# src/tests/test_performance.py 업데이트 버전
+# src/tests/test_performance.py 업데이트 버전
 import os
 import time
 

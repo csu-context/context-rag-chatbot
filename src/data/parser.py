@@ -68,6 +68,80 @@ class ManualParser:
             }
         )
 
+    def _extract_block_info(self, block):
+        """블록 내 모든 span을 추출, 정렬하여 텍스트와 최대 폰트 크기 반환"""
+        if "lines" not in block:
+            return None, 0
+
+        all_spans = []
+        for line in block["lines"]:
+            for s in line["spans"]:
+                all_spans.append(s)
+
+        # y좌표 우선, 그 다음 x좌표 순으로 정렬 (텍스트 순서 보정)
+        all_spans.sort(key=lambda x: (x["origin"][1], x["origin"][0]))
+
+        block_text = ""
+        max_size = 0
+        last_y = -1
+        for s in all_spans:
+            text = s["text"]
+            if not text.strip():
+                continue
+
+            # 줄바꿈 감지 시 공백 추가
+            if last_y != -1 and abs(s["origin"][1] - last_y) > 2:
+                block_text += " "
+
+            block_text += text
+            last_y = s["origin"][1]
+            if s["size"] > max_size:
+                max_size = s["size"]
+
+        return block_text.strip(), round(max_size, 1)
+
+    def _process_pdf_block(
+        self,
+        block_text,
+        max_size,
+        base_font_size,
+        structured_data,
+        current_chapter,
+        current_article,
+        current_content,
+        article_start_page,
+        page_num,
+    ):
+        """블록의 폰트 크기 및 내용을 분석하여 챕터/조/본문으로 분류"""
+        # 머리말/꼬리말 무시 (본문 크기보다 작을 경우)
+        if max_size < base_font_size - 0.5:
+            return current_chapter, current_article, current_content, article_start_page
+
+        # 대제목(장) 탐지
+        if max_size >= base_font_size + 1.5:
+            if current_content:
+                self._add_chunk(structured_data, current_chapter, current_article, current_content, article_start_page)
+                current_content = []
+
+            return block_text, "기본(조 없음)", current_content, page_num + 1
+
+        # 중제목(조) 탐지 (유연한 패턴 매칭)
+        normalized_text = block_text.replace(" ", "")
+        is_article = re.match(r"^제\d+조", normalized_text) or re.match(r"^제조\d+", normalized_text)
+
+        if is_article:
+            if current_content:
+                self._add_chunk(structured_data, current_chapter, current_article, current_content, article_start_page)
+
+            # 깨진 텍스트 보정 (제조1 -> 제1조)
+            new_article = (
+                re.sub(r"제조(\d+)", r"제\1조", block_text) if normalized_text.startswith("제조") else block_text
+            )
+            return current_chapter, new_article, [], page_num + 1
+
+        current_content.append(block_text)
+        return current_chapter, current_article, current_content, article_start_page
+
     def _parse_pdf(self):
         """폰트 크기 분석 기반 PDF 파싱 로직"""
         doc = fitz.open(str(self.file_path))
@@ -86,78 +160,21 @@ class ManualParser:
             blocks = page.get_text("dict").get("blocks", [])
 
             for b in blocks:
-                if "lines" not in b:
-                    continue
-
-                # 블록 내 모든 span을 추출하고 좌표 순으로 정렬
-                all_spans = []
-                for line in b["lines"]:
-                    for s in line["spans"]:
-                        all_spans.append(s)
-
-                # y좌표 우선, 그 다음 x좌표 순으로 정렬 (텍스트 순서 보정)
-                all_spans.sort(key=lambda x: (x["origin"][1], x["origin"][0]))
-
-                block_text = ""
-                max_size = 0
-                last_y = -1
-                for s in all_spans:
-                    text = s["text"]
-                    if not text.strip():
-                        continue
-
-                    # 줄바꿈 감지 시 공백 추가
-                    if last_y != -1 and abs(s["origin"][1] - last_y) > 2:
-                        block_text += " "
-
-                    block_text += text
-                    last_y = s["origin"][1]
-                    if s["size"] > max_size:
-                        max_size = s["size"]
-
-                block_text = block_text.strip()
+                block_text, max_size = self._extract_block_info(b)
                 if not block_text:
                     continue
 
-                max_size = round(max_size, 1)
-
-                # 머리말/꼬리말 무시 (본문 크기보다 작을 경우)
-                if max_size < base_font_size - 0.5:
-                    continue
-
-                # 대제목(장) 탐지
-                if max_size >= base_font_size + 1.5:
-                    if current_content:
-                        self._add_chunk(
-                            structured_data, current_chapter, current_article, current_content, article_start_page
-                        )
-                        current_content = []
-
-                    current_chapter = block_text
-                    current_article = "기본(조 없음)"
-                    article_start_page = page_num + 1
-                    continue
-
-                # 중제목(조) 탐지 (유연한 패턴 매칭)
-                normalized_text = block_text.replace(" ", "")
-                is_article = re.match(r"^제\d+조", normalized_text) or re.match(r"^제조\d+", normalized_text)
-
-                if is_article:
-                    if current_content:
-                        self._add_chunk(
-                            structured_data, current_chapter, current_article, current_content, article_start_page
-                        )
-
-                    # 깨진 텍스트 보정 (제조1 -> 제1조)
-                    if normalized_text.startswith("제조"):
-                        current_article = re.sub(r"제조(\d+)", r"제\1조", block_text)
-                    else:
-                        current_article = block_text
-
-                    current_content = []
-                    article_start_page = page_num + 1
-                else:
-                    current_content.append(block_text)
+                current_chapter, current_article, current_content, article_start_page = self._process_pdf_block(
+                    block_text,
+                    max_size,
+                    base_font_size,
+                    structured_data,
+                    current_chapter,
+                    current_article,
+                    current_content,
+                    article_start_page,
+                    page_num,
+                )
 
         if current_content:
             self._add_chunk(structured_data, current_chapter, current_article, current_content, article_start_page)
@@ -181,7 +198,7 @@ class ManualParser:
 
     def _parse_markdown(self):
         """헤더 계층 기반 Markdown 파싱 로직"""
-        with open(self.file_path, "r", encoding="utf-8") as f:
+        with open(self.file_path, encoding="utf-8") as f:
             content = f.read()
 
         structured_data = []

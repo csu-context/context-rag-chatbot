@@ -25,7 +25,7 @@ class ParsingValidator:
             logger.error("분석할 결과 파일을 찾을 수 없습니다. 먼저 loader.py를 실행하세요.")
             return
 
-        with open(latest_file, "r", encoding="utf-8") as f:
+        with open(latest_file, encoding="utf-8") as f:
             data = json.load(f)
 
         logger.info("[파싱 품질 분석 리포트]")

@@ -1,4 +1,4 @@
-﻿# src/models/embedder.py
+# src/models/embedder.py
 import torch
 from sentence_transformers import SentenceTransformer
 

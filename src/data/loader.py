@@ -2,7 +2,7 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 from src.data.parser import ManualParser
 from src.utils.paths import PROCESSED_DATA_DIR, RAW_DATA_DIR, ensure_directories
@@ -28,7 +28,7 @@ class DocumentLoader:
         # 지원하는 확장자
         self.supported_extensions = [".pdf", ".md", ".markdown"]
 
-    def scan_and_parse(self, save_filename: str = None) -> List[Dict[str, Any]]:
+    def scan_and_parse(self, save_filename: str = None) -> list[dict[str, Any]]:
         """
         원본 디렉토리를 스캔하여 지원되는 모든 파일을 파싱함
         :param save_filename: 저장할 파일명 (지정하지 않으면 자동 생성)

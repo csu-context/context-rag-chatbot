@@ -1,13 +1,20 @@
 [tool.ruff]
-# Ruff 설정
+# Ruff 설정: 린트(Linting) 및 포맷팅(Formatting) 통합 관리
 line-length = 120
 target-version = "py310"
 fix = true
 
 [tool.ruff.lint]
 # 규칙 선택 (Linting)
-# E: Error, F: Pyflakes, I: Isort, W: Warning
-select = ["E", "F", "I", "W"]
+# E/W: pycodestyle (에러/경고)
+# F: Pyflakes (치명적 오류)
+# I: isort (임포트 정렬)
+# B: flake8-bugbear (잠재적 버그 방지)
+# UP: pyupgrade (최신 파이썬 문법 제안)
+# C90: mccabe (코드 복잡도 검사)
+# SIM: flake8-simplify (코드 단순화 제안)
+# PYI: flake8-pyi (타이핑 관련 에러)
+select = ["E", "F", "I", "W", "B", "UP", "C90", "SIM", "PYI"]
 ignore = []
 
 [tool.ruff.lint.isort]
@@ -15,19 +22,13 @@ ignore = []
 combine-as-imports = true
 force-wrap-aliases = true
 
-[tool.black]
-# Black 설정
-line-length = 120
-target-version = ['py310']
-include = '\.pyi?$'
-exclude = '''
-/(
-    \.git
-  | \.venv
-  | \.idea
-  | \.DS_Store
-  | __pycache__
-  | build
-  | dist
-)/
-'''
+[tool.ruff.format]
+# Black 스타일의 포맷터 설정
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+[tool.ruff.lint.mccabe]
+# 코드 복잡도 임계값 설정 (기본 10)
+max-complexity = 10

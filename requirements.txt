@@ -27,4 +27,3 @@ langchain-openai
 
 # Linting 및 Formatting (개발 환경 전용)
 ruff>=0.4.0
-black>=24.4.0

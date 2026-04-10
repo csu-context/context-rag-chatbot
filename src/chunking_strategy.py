@@ -1,6 +1,6 @@
 import json
 import uuid
-from typing import Optional, TypedDict
+from typing import TypedDict
 
 from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
 
@@ -11,11 +11,11 @@ from src.utils.paths import PROCESSED_DATA_DIR, ensure_directories
 class ChunkMetadata(TypedDict):
     doc_id: str
     src_name: str
-    src_type: Optional[str]
+    src_type: str | None
     pg_num: int
     sec_title: str
     chunk_id: str
-    parent_id: Optional[str]
+    parent_id: str | None
 
 
 def create_parent_child_chunks(markdown_text: str, base_metadata: dict) -> list:
