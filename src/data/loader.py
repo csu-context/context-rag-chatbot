@@ -1,15 +1,16 @@
 import json
 import logging
-from pathlib import Path
-from typing import List, Dict, Any
 from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List
 
 from src.data.parser import ManualParser
-from src.utils.paths import RAW_DATA_DIR, PROCESSED_DATA_DIR, ensure_directories
+from src.utils.paths import PROCESSED_DATA_DIR, RAW_DATA_DIR, ensure_directories
 
 # 로깅 설정
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
+
 
 class DocumentLoader:
     def __init__(self, raw_dir: Path = RAW_DATA_DIR, processed_dir: Path = PROCESSED_DATA_DIR):
@@ -20,10 +21,10 @@ class DocumentLoader:
         """
         self.raw_dir = raw_dir
         self.processed_dir = processed_dir
-        
+
         # 디렉토리 생성 및 확인
         ensure_directories()
-        
+
         # 지원하는 확장자
         self.supported_extensions = [".pdf", ".md", ".markdown"]
 
@@ -34,12 +35,12 @@ class DocumentLoader:
         :return: 파싱된 모든 청크 리스트
         """
         all_chunks = []
-        
+
         # 지원하는 확장자 파일 목록 수집
         files_to_parse = []
         for ext in self.supported_extensions:
             files_to_parse.extend(list(self.raw_dir.glob(f"**/*{ext}")))
-        
+
         if not files_to_parse:
             logger.warning(f"파싱할 파일을 찾을 수 없습니다: {self.raw_dir}")
             return []
@@ -49,7 +50,7 @@ class DocumentLoader:
         for file_path in files_to_parse:
             relative_path = file_path.relative_to(self.raw_dir)
             logger.info(f"파싱 진행 중: {relative_path}")
-            
+
             try:
                 parser = ManualParser(str(relative_path))
                 chunks = parser.parse()
@@ -63,15 +64,16 @@ class DocumentLoader:
             if not save_filename:
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 save_filename = f"parsed_documents_{timestamp}.json"
-            
+
             save_path = self.processed_dir / save_filename
             with open(save_path, "w", encoding="utf-8") as f:
                 json.dump(all_chunks, f, ensure_ascii=False, indent=2)
-            
+
             logger.info(f"파싱 결과가 저장되었습니다: {save_path}")
             logger.info(f"총 추출된 청크 수: {len(all_chunks)}")
-        
+
         return all_chunks
+
 
 if __name__ == "__main__":
     loader = DocumentLoader()
