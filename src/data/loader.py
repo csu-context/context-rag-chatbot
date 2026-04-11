@@ -28,7 +28,7 @@ class DocumentLoader:
         # 지원하는 확장자
         self.supported_extensions = [".pdf", ".md", ".markdown"]
 
-    def scan_and_parse(self, save_filename: str = None) -> list[dict[str, Any]]:
+    def scan_and_parse(self, save_filename: str | None = None) -> list[dict[str, Any]]:
         """
         원본 디렉토리를 스캔하여 지원되는 모든 파일을 파싱함
         :param save_filename: 저장할 파일명 (지정하지 않으면 자동 생성)
