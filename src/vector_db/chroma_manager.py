@@ -1,5 +1,6 @@
 import os
 import sys
+import logging
 import warnings
 # 경고 숨기기 로직 추가
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
@@ -8,12 +9,11 @@ warnings.filterwarnings("ignore", module="huggingface_hub")
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 
-# 프로젝트 루트를 sys.path에 추가하여 src 모듈 임포트 에러 방지
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.append(str(PROJECT_ROOT))
-# DB 영구 저장 경로 설정 (/.gitignore에 등록된 /vector_db/chroma/ 경로 사용)
-VECTOR_DB_DIR = PROJECT_ROOT / "vector_db" / "chroma"
+# 로깅 설정
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+from src.utils.paths import VECTOR_DB_DIR, ensure_directories
 
 import chromadb
 from chromadb.config import Settings
@@ -40,15 +40,16 @@ class ChromaDBManager:
         """
         ChromaDB 클라이언트 및 컬렉션을 초기화합니다.
         """
-        # 1. 영구 저장(Persistence) 로컬 클라이언트 설정
-        os.makedirs(VECTOR_DB_DIR, exist_ok=True)
-        self.client = chromadb.PersistentClient(path=str(VECTOR_DB_DIR),
-        settings=Settings(anonymized_telemetry=False)
+        # 1. 영구 저장(Persistence) 로컬 클라이언트 설정 및 디렉토리 확인
+        ensure_directories()
+        self.client = chromadb.PersistentClient(
+            path=str(VECTOR_DB_DIR),
+            settings=Settings(anonymized_telemetry=False)
         )
-        
+
         # 2. 커스텀 BGE 임베딩 함수 초기화
         self.embedding_fn = BGEChromaEmbeddingFunction()
-        
+
         # 3. 컬렉션 가져오기 또는 생성
         # BGE-M3 모델은 주로 코사인 유사도(cosine similarity) 검색에 최적화되어 있습니다.
         self.collection = self.client.get_or_create_collection(
@@ -57,7 +58,7 @@ class ChromaDBManager:
             metadata={"hnsw:space": "cosine"}
         )
 
-        print(f"✅ ChromaDB 로드 완료 (컬렉션: {collection_name}, 데이터 개수: {self.collection.count()})")
+        logger.info(f"ChromaDB 로드 완료 (컬렉션: {collection_name}, 데이터 개수: {self.collection.count()})")
 
     def upsert_documents(self, ids: List[str], documents: List[str], metadatas: Optional[List[Dict[str, Any]]] = None):
         """
@@ -65,7 +66,7 @@ class ChromaDBManager:
         기존에 동일한 ID가 존재하면 업데이트(Update)를 수행하여 중복 저장을 방지합니다.
         """
         if not ids or not documents:
-            print("⚠️ 업서트할 문서가 없습니다.")
+            logger.warning("업서트할 문서가 없습니다.")
             return
 
         # ChromaDB 메타데이터에는 None 값이 들어갈 수 없으므로(validation 에러 발생),
@@ -75,11 +76,11 @@ class ChromaDBManager:
             cleaned_metadatas = []
             for meta in metadatas:
                 cleaned = {k: v for k, v in meta.items() if v is not None}
-                
+
                 # ChromaDB는 빈 딕셔너리({}) 삽입을 허용하지 않으므로 더미 키 추가
                 if not cleaned:
                     cleaned = {"_is_empty": True}
-                    
+
                 cleaned_metadatas.append(cleaned)
 
         # Upsert 실행
@@ -88,7 +89,7 @@ class ChromaDBManager:
             documents=documents,
             metadatas=cleaned_metadatas
         )
-        print(f"✅ {len(ids)}개의 문서 청크가 ChromaDB에 성공적으로 업서트되었습니다.")
+        logger.info(f"{len(ids)}개의 문서 청크가 ChromaDB에 성공적으로 업서트되었습니다.")
 
     def query(self, query_texts: List[str], n_results: int = 3) -> dict:
         """
@@ -109,11 +110,11 @@ if __name__ == "__main__":
     # ==========================================
     # 검증 계획 1 & 2 테스트용 스크립트
     # ==========================================
-    print("--- 1. ChromaDB Manager 초기화 ---")
+    logger.info("--- 1. ChromaDB Manager 초기화 ---")
     db_manager = ChromaDBManager(collection_name="test_collection")
     initial_count = db_manager.get_count()
-    
-    print("\n--- 2. 샘플 데이터 준비 및 Upsert ---")
+
+    logger.info("--- 2. 샘플 데이터 준비 및 Upsert ---")
     # 5개의 샘플 텍스트와 메타데이터 준비
     sample_ids = ["chunk_001", "chunk_002", "chunk_003", "chunk_004", "chunk_005"]
     sample_texts = [
@@ -130,28 +131,28 @@ if __name__ == "__main__":
         {"doc_id": "doc_02", "sec_title": "급여 및 복지"},
         {"doc_id": "doc_03", "sec_title": "채용 및 수습"}
     ]
-    
+
     # 첫 번째 업서트 (최초 삽입)
     db_manager.upsert_documents(ids=sample_ids, documents=sample_texts, metadatas=sample_metadatas)
-    
+
     # 두 번째 업서트 (동일 ID로 덮어쓰기 - 중복 데이터 방지 검증)
-    print("\n--- 3. 중복 저장 방지(Upsert) 검증 ---")
+    logger.info("--- 3. 중복 저장 방지(Upsert) 검증 ---")
     db_manager.upsert_documents(ids=sample_ids, documents=sample_texts, metadatas=sample_metadatas)
     final_count = db_manager.get_count()
-    
-    print(f"-> 초기 데이터 개수: {initial_count}")
-    print(f"-> 현재 데이터 개수: {final_count} (동일 ID 재업로드 시 데이터가 중복 증가하지 않음 확인)")
-    
-    print("\n--- 4. 유사도 검색 테스트 ---")
+
+    logger.info(f"-> 초기 데이터 개수: {initial_count}")
+    logger.info(f"-> 현재 데이터 개수: {final_count} (동일 ID 재업로드 시 데이터가 중복 증가하지 않음 확인)")
+
+    logger.info("--- 4. 유사도 검색 테스트 ---")
     queries = ["수습 기간 동안 월급은 어떻게 되나요?", "1년 다니면 휴가 며칠 나와요?"]
     search_results = db_manager.query(query_texts=queries, n_results=2)
-    
+
     for i, query_str in enumerate(queries):
-        print(f"\n[질문]: {query_str}")
+        logger.info(f"[질문]: {query_str}")
         # 반환되는 데이터 구조가 List[List[str]] 형태이므로 인덱싱 접근
         for j in range(len(search_results['documents'][i])):
             doc_text = search_results['documents'][i][j]
             doc_meta = search_results['metadatas'][i][j]
             doc_dist = search_results['distances'][i][j]
             # hnsw:space 가 cosine일 경우, distance 값이 작을수록 (0에 가까울수록) 유사도가 높습니다.
-            print(f"  - 결과 {j+1} (거리: {doc_dist:.4f}): {doc_text} (출처: {doc_meta['sec_title']})")
+            logger.info(f"  - 결과 {j+1} (거리: {doc_dist:.4f}): {doc_text} (출처: {doc_meta['sec_title']})")
