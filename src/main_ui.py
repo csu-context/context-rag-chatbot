@@ -4,7 +4,6 @@ from pathlib import Path
 # --- 1. 페이지 설정 (가장 상단에 위치) ---
 st.set_page_config(
     page_title="기업 매뉴얼 챗봇",
-    page_icon="🤖",
     layout="wide"  # 넓은 화면 레이아웃 사용
 )
 
