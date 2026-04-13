@@ -1,17 +1,22 @@
 # [Pytorch CUDA 13.0 전용 인덱스]
 --extra-index-url https://download.pytorch.org/whl/cu130
 
-# 핵심 프레임워크
-langchain>=0.1.0
-langchain-community
+# 핵심 프레임워크 (2026년 4월 최신 안정 버전)
+langchain>=1.2.15
+langchain-community>=0.4.0
+langchain-core>=1.2.28
 langchain-text-splitters
-llama-index>=0.9.0
+llama-index>=0.14.18
 
-# LLM 및 임베딩 (BGE-M3-ko 및 GPU 가속)
-torch>=2.1.0
-torchvision>=0.16.0
-torchaudio>=2.1.0
-sentence-transformers>=2.3.0
+# LLM 및 임베딩 (Gemini & BGE-M3-ko 및 GPU 가속)
+# Gemini 3.1 및 Gemma 4 모델을 지원하는 최신 SDK 포함
+langchain-google-genai>=4.2.1
+google-genai>=1.71.0
+langchain-huggingface>=1.2.1
+torch==2.11.0
+torchvision==0.26.0
+torchaudio==2.11.0
+sentence-transformers>=5.3.0
 
 # 벡터 데이터베이스 및 성능 측정
 chromadb>=0.4.0
@@ -23,7 +28,7 @@ pymupdf
 docx2txt
 
 # UI 및 환경 설정
-streamlit>=1.30.0
+streamlit>=1.55.0
 python-dotenv
 openai>=1.10.0
 langchain-openai
