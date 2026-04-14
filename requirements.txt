@@ -28,3 +28,6 @@ docx2txt
 # UI 및 환경 설정
 streamlit>=1.55.0
 python-dotenv
+
+# Linting 및 Formatting (개발 환경 전용)
+ruff>=0.4.0

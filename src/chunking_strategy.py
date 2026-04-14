@@ -1,20 +1,21 @@
 import json
 import uuid
-from typing import TypedDict, Optional
+from typing import TypedDict
+
+from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
 
 from src.utils.paths import PROCESSED_DATA_DIR, ensure_directories
-from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
 
 
 # 청크 단위 메타데이터 스키마 정의
 class ChunkMetadata(TypedDict):
     doc_id: str
     src_name: str
-    src_type: Optional[str]
+    src_type: str | None
     pg_num: int
     sec_title: str
     chunk_id: str
-    parent_id: Optional[str]
+    parent_id: str | None
 
 
 def create_parent_child_chunks(markdown_text: str, base_metadata: dict) -> list:
@@ -33,9 +34,7 @@ def create_parent_child_chunks(markdown_text: str, base_metadata: dict) -> list:
 
     # 2. 자식 청크: 글자 수 기준 세부 분할
     child_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=300,
-        chunk_overlap=50,
-        separators=["\n\n", "\n", " ", ""]
+        chunk_size=300, chunk_overlap=50, separators=["\n\n", "\n", " ", ""]
     )
 
     hierarchical_data = []
@@ -50,7 +49,9 @@ def create_parent_child_chunks(markdown_text: str, base_metadata: dict) -> list:
         parent_id = str(uuid.uuid4())
 
         # 가장 구체적인 헤더부터 제목을 찾습니다 (H3 -> H2 -> H1).
-        sec_title = doc.metadata.get("Header 3") or doc.metadata.get("Header 2") or doc.metadata.get("Header 1") or "기본 섹션"
+        sec_title = (
+            doc.metadata.get("Header 3") or doc.metadata.get("Header 2") or doc.metadata.get("Header 1") or "기본 섹션"
+        )
 
         child_docs = child_splitter.split_text(doc.page_content)
 
@@ -66,21 +67,13 @@ def create_parent_child_chunks(markdown_text: str, base_metadata: dict) -> list:
                 "pg_num": base_metadata.get("pg_num", 1),
                 "sec_title": sec_title,
                 "chunk_id": child_id,
-                "parent_id": parent_id
+                "parent_id": parent_id,
             }
 
-            children_list.append({
-                "child_id": child_id,
-                "metadata": child_metadata,
-                "text": child_text
-            })
+            children_list.append({"child_id": child_id, "metadata": child_metadata, "text": child_text})
 
         # 부모 데이터 구조 완성
-        hierarchical_data.append({
-            "parent_id": parent_id,
-            "parent_text": doc.page_content,
-            "children": children_list
-        })
+        hierarchical_data.append({"parent_id": parent_id, "parent_text": doc.page_content, "children": children_list})
 
     return hierarchical_data
 
@@ -97,12 +90,7 @@ if __name__ == "__main__":
     정규 출근 시간은 오전 9시이며, 퇴근 시간은 오후 6시입니다.
     """
 
-    dummy_metadata = {
-        "doc_id": "HR_001",
-        "src_name": "인사규정_2026.pdf",
-        "src_type": "pdf",
-        "pg_num": 12
-    }
+    dummy_metadata = {"doc_id": "HR_001", "src_name": "인사규정_2026.pdf", "src_type": "pdf", "pg_num": 12}
 
     # 청킹 파이프라인 실행
     chunking_result = create_parent_child_chunks(sample_text, dummy_metadata)
