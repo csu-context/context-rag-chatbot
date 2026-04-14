@@ -5,6 +5,7 @@
 langchain>=1.2.15
 langchain-community>=0.4.0
 langchain-core>=1.2.28
+langchain-text-splitters
 llama-index>=0.14.18
 
 # LLM 및 임베딩 (Gemini & BGE-M3-ko 및 GPU 가속)
@@ -18,8 +19,9 @@ torchaudio==2.11.0
 sentence-transformers>=5.3.0
 
 # 벡터 데이터베이스 및 성능 측정
-chromadb>=1.5.5
+chromadb>=0.4.0
 psutil
+tqdm
 
 # 데이터 파싱 (PDF 및 워드)
 pymupdf
@@ -28,6 +30,5 @@ docx2txt
 # UI 및 환경 설정
 streamlit>=1.55.0
 python-dotenv
-
-# Linting 및 Formatting (개발 환경 전용)
-ruff>=0.4.0
+openai>=1.10.0
+langchain-openai

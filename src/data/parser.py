@@ -1,10 +1,12 @@
-import json
+import hashlib
 import logging
 import re
 from collections import Counter
+from typing import Any
 
 import fitz
 
+from src.common.constants import MetadataFields
 from src.utils.paths import RAW_DATA_DIR
 
 # 로그 설정
@@ -21,20 +23,34 @@ class ManualParser:
         if not self.file_path.exists():
             raise FileNotFoundError(f"파일을 찾을 수 없습니다: {self.file_path}")
 
+        # [표준화] 파일명 및 고유 ID 생성
+        self.file_name = self.file_path.name
+
         # 카테고리 자동 추출 (상위 폴더명 활용)
         self.category = self.file_path.parent.name if self.file_path.parent != RAW_DATA_DIR else "일반"
-        self.extension = self.file_path.suffix.lower()
 
-    def parse(self):
+        # 확장자 추출 (마침표 제외)
+        self.extension = self.file_path.suffix.lower().replace(".", "")
+
+        # 고유 source_id 생성
+        self.source_id = self._generate_source_id()
+
+    def _generate_source_id(self) -> str:
+        """파일명과 수정 시간을 조합하여 고유 ID(Hash) 생성"""
+        stats = self.file_path.stat()
+        unique_str = f"{self.file_path.name}_{stats.st_mtime}"
+        return hashlib.md5(unique_str.encode()).hexdigest()[:12]
+
+    def parse(self) -> list[dict[str, Any]]:
         """확장자에 따른 파싱 수행"""
-        if self.extension == ".pdf":
+        if self.extension == "pdf":
             return self._parse_pdf()
-        elif self.extension in [".md", ".markdown"]:
+        elif self.extension in ["md", "markdown"]:
             return self._parse_markdown()
         else:
             raise ValueError(f"지원하지 않는 파일 형식입니다: {self.extension}")
 
-    def _clean_text(self, text: str):
+    def _clean_text(self, text: str) -> str:
         """데이터 정제: 불필요한 공백 제거 및 규정 특화 정규화"""
         # 1. 중복 공백 제거
         text = re.sub(r"\s+", " ", text).strip()
@@ -48,8 +64,8 @@ class ManualParser:
 
         return text
 
-    def _add_chunk(self, data_list, chapter, article, content, page):
-        """구조화된 청크 데이터 생성 및 리스트 추가"""
+    def _add_chunk(self, data_list: list[dict[str, Any]], chapter: str, article: str, content: list[str], page: int):
+        """구조화된 청크 데이터 생성 및 리스트 추가 (표준 규격 준수)"""
         cleaned_content = self._clean_text(" ".join(content))
         if not cleaned_content or len(cleaned_content) < 5:
             return
@@ -60,98 +76,57 @@ class ManualParser:
                 "article": self._clean_text(article),
                 "content": cleaned_content,
                 "metadata": {
-                    "source": self.file_path.name,
-                    "category": self.category,
-                    "page": page,
-                    "extension": self.extension,
+                    MetadataFields.SOURCE_ID: self.source_id,
+                    MetadataFields.SRC_NAME: self.file_name,
+                    MetadataFields.PG_NUM: page,
+                    MetadataFields.DOC_TYPE: self.extension,
+                    MetadataFields.CATEGORY: self.category,
                 },
             }
         )
 
-    def _extract_block_info(self, block):
-        """블록 내 모든 span을 추출, 정렬하여 텍스트와 최대 폰트 크기 반환"""
+    def _extract_block_info(self, block: dict) -> tuple[str, float]:
+        """블록 내 텍스트와 최대 폰트 크기를 추출"""
         if "lines" not in block:
-            return None, 0
+            return "", 0.0
 
         all_spans = []
         for line in block["lines"]:
-            for s in line["spans"]:
-                all_spans.append(s)
+            for span in line["spans"]:
+                all_spans.append(span)
 
-        # y좌표 우선, 그 다음 x좌표 순으로 정렬 (텍스트 순서 보정)
         all_spans.sort(key=lambda x: (x["origin"][1], x["origin"][0]))
 
         block_text = ""
-        max_size = 0
-        last_y = -1
-        for s in all_spans:
-            text = s["text"]
+        max_size = 0.0
+        last_y = -1.0
+        for span in all_spans:
+            text = span["text"]
             if not text.strip():
                 continue
 
-            # 줄바꿈 감지 시 공백 추가
-            if last_y != -1 and abs(s["origin"][1] - last_y) > 2:
+            if last_y != -1 and abs(span["origin"][1] - last_y) > 2:
                 block_text += " "
 
             block_text += text
-            last_y = s["origin"][1]
-            if s["size"] > max_size:
-                max_size = s["size"]
+            last_y = span["origin"][1]
+            if span["size"] > max_size:
+                max_size = span["size"]
 
         return block_text.strip(), round(max_size, 1)
 
-    def _process_pdf_block(
-        self,
-        block_text,
-        max_size,
-        base_font_size,
-        structured_data,
-        current_chapter,
-        current_article,
-        current_content,
-        article_start_page,
-        page_num,
-    ):
-        """블록의 폰트 크기 및 내용을 분석하여 챕터/조/본문으로 분류"""
-        # 머리말/꼬리말 무시 (본문 크기보다 작을 경우)
-        if max_size < base_font_size - 0.5:
-            return current_chapter, current_article, current_content, article_start_page
-
-        # 대제목(장) 탐지
-        if max_size >= base_font_size + 1.5:
-            if current_content:
-                self._add_chunk(structured_data, current_chapter, current_article, current_content, article_start_page)
-                current_content = []
-
-            return block_text, "기본(조 없음)", current_content, page_num + 1
-
-        # 중제목(조) 탐지 (유연한 패턴 매칭)
-        normalized_text = block_text.replace(" ", "")
-        is_article = re.match(r"^제\d+조", normalized_text) or re.match(r"^제조\d+", normalized_text)
-
-        if is_article:
-            if current_content:
-                self._add_chunk(structured_data, current_chapter, current_article, current_content, article_start_page)
-
-            # 깨진 텍스트 보정 (제조1 -> 제1조)
-            new_article = (
-                re.sub(r"제조(\d+)", r"제\1조", block_text) if normalized_text.startswith("제조") else block_text
-            )
-            return current_chapter, new_article, [], page_num + 1
-
-        current_content.append(block_text)
-        return current_chapter, current_article, current_content, article_start_page
-
-    def _parse_pdf(self):
+    def _parse_pdf(self) -> list[dict[str, Any]]:
         """폰트 크기 분석 기반 PDF 파싱 로직"""
         doc = fitz.open(str(self.file_path))
         base_font_size = self._calculate_base_font_size(doc)
 
         structured_data = []
-        current_chapter = "기본(장 없음)"
-        current_article = "기본(조 없음)"
-        current_content = []
-        article_start_page = 1
+        state = {
+            "chapter": "기본(장 없음)",
+            "article": "기본(조 없음)",
+            "content": [],
+            "start_page": 1,
+        }
 
         logger.info(f"PDF 분석 완료 (본문 크기: {base_font_size}) - 파싱 시작")
 
@@ -159,81 +134,107 @@ class ManualParser:
             page = doc[page_num]
             blocks = page.get_text("dict").get("blocks", [])
 
-            for b in blocks:
-                block_text, max_size = self._extract_block_info(b)
-                if not block_text:
-                    continue
+            for block in blocks:
+                self._process_pdf_block(block, page_num, base_font_size, state, structured_data)
 
-                current_chapter, current_article, current_content, article_start_page = self._process_pdf_block(
-                    block_text,
-                    max_size,
-                    base_font_size,
-                    structured_data,
-                    current_chapter,
-                    current_article,
-                    current_content,
-                    article_start_page,
-                    page_num,
-                )
-
-        if current_content:
-            self._add_chunk(structured_data, current_chapter, current_article, current_content, article_start_page)
+        if state["content"]:
+            self._add_chunk(structured_data, state["chapter"], state["article"], state["content"], state["start_page"])
 
         doc.close()
         return structured_data
 
-    def _calculate_base_font_size(self, doc):
+    def _process_pdf_block(self, block: dict, page_num: int, base_font_size: float, state: dict, structured_data: list):
+        """단일 PDF 블록을 분석하여 상태 업데이트 및 청크 추가"""
+        block_text, max_size = self._extract_block_info(block)
+        if not block_text or max_size < base_font_size - 0.5:
+            return
+
+        # 대제목(장) 탐지
+        if max_size >= base_font_size + 1.5:
+            if state["content"]:
+                self._add_chunk(
+                    structured_data, state["chapter"], state["article"], state["content"], state["start_page"]
+                )
+                state["content"] = []
+
+            state["chapter"] = block_text
+            state["article"] = "기본(조 없음)"
+            state["start_page"] = page_num + 1
+            return
+
+        # 중제목(조) 탐지
+        normalized_text = block_text.replace(" ", "")
+        is_article = re.match(r"^제\d+조", normalized_text) or re.match(r"^제조\d+", normalized_text)
+
+        if is_article:
+            if state["content"]:
+                self._add_chunk(
+                    structured_data, state["chapter"], state["article"], state["content"], state["start_page"]
+                )
+
+            if normalized_text.startswith("제조"):
+                state["article"] = re.sub(r"제조(\d+)", r"제\1조", block_text)
+            else:
+                state["article"] = block_text
+
+            state["content"] = []
+            state["start_page"] = page_num + 1
+        else:
+            state["content"].append(block_text)
+
+    def _calculate_base_font_size(self, doc) -> float:
         """문서 전체에서 가장 많이 사용된 본문 폰트 크기 계산"""
         font_sizes = []
         sample_pages = min(len(doc), 10)
         for page_num in range(sample_pages):
             page = doc[page_num]
-            for b in page.get_text("dict").get("blocks", []):
-                if "lines" in b:
-                    for line in b["lines"]:
-                        for s in line["spans"]:
-                            if s["text"].strip():
-                                font_sizes.append(round(s["size"], 1))
+            for block in page.get_text("dict").get("blocks", []):
+                if "lines" in block:
+                    for line in block["lines"]:
+                        for span in line["spans"]:
+                            if span["text"].strip():
+                                font_sizes.append(round(span["size"], 1))
         return Counter(font_sizes).most_common(1)[0][0] if font_sizes else 11.0
 
-    def _parse_markdown(self):
+    def _parse_markdown(self) -> list[dict[str, Any]]:
         """헤더 계층 기반 Markdown 파싱 로직"""
         with open(self.file_path, encoding="utf-8") as f:
             content = f.read()
 
         structured_data = []
-        current_chapter = "기본(장 없음)"
-        current_article = "기본(조 없음)"
-        current_content = []
+        chapter = "기본(장 없음)"
+        article = "기본(조 없음)"
+        content_lines = []
 
-        lines = content.split("\n")
-        for line in lines:
+        for line in content.split("\n"):
             line = line.strip()
             if not line:
                 continue
 
             if line.startswith("# "):
-                if current_content:
-                    self._add_chunk(structured_data, current_chapter, current_article, current_content, 1)
-                    current_content = []
-                    current_article = "기본(조 없음)"
-                current_chapter = line.lstrip("#").strip()
+                if content_lines:
+                    self._add_chunk(structured_data, chapter, article, content_lines, 1)
+                    content_lines = []
+                    article = "기본(조 없음)"
+                chapter = line.lstrip("#").strip()
             elif line.startswith("## ") or line.startswith("### "):
-                if current_content:
-                    self._add_chunk(structured_data, current_chapter, current_article, current_content, 1)
-                current_article = line.lstrip("#").strip()
-                current_content = []
+                if content_lines:
+                    self._add_chunk(structured_data, chapter, article, content_lines, 1)
+                article = line.lstrip("#").strip()
+                content_lines = []
             else:
-                current_content.append(line)
+                content_lines.append(line)
 
-        if current_content:
-            self._add_chunk(structured_data, current_chapter, current_article, current_content, 1)
+        if content_lines:
+            self._add_chunk(structured_data, chapter, article, content_lines, 1)
 
         return structured_data
 
 
 if __name__ == "__main__":
-    # 로깅 설정
+    import json
+
+    # 단독 실행 시 테스트 로직
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
     # data/raw 디렉토리에서 테스트할 첫 번째 파일 자동 검색
@@ -252,7 +253,7 @@ if __name__ == "__main__":
             # 샘플 출력
             if parsed_data:
                 logger.info("\n[첫 번째 청크 샘플]")
-                logger.info(json.dumps(parsed_data[0], ensure_ascii=False, indent=2))
+                print(json.dumps(parsed_data[0], ensure_ascii=False, indent=2))
         except Exception as e:
             logger.error(f"파싱 중 에러 발생: {e}")
     else:
