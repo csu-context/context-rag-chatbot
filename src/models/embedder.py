@@ -1,11 +1,12 @@
-﻿# src/models/embedder.py
-from sentence_transformers import SentenceTransformer
-from src.utils.paths import MODELS_DIR
+# src/models/embedder.py
 import torch
+from sentence_transformers import SentenceTransformer
+
+from src.utils.paths import MODELS_DIR
 
 
 class BGEEmbedder:
-    def __init__(self, model_name='BAAI/bge-m3'):
+    def __init__(self, model_name="BAAI/bge-m3"):
         # 1. 장치 우선순위 결정: CUDA -> MPS -> CPU
         if torch.cuda.is_available():
             self.device = "cuda"

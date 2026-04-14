@@ -1,7 +1,8 @@
-﻿import os
+import os
+
 from dotenv import load_dotenv
-from langchain_google_genai import ChatGoogleGenerativeAI
 from google.api_core import exceptions
+from langchain_google_genai import ChatGoogleGenerativeAI
 
 # 1. 환경 변수 로드
 load_dotenv()
@@ -27,11 +28,11 @@ def test_gemini_rag_foundation():
         # 3. RAG 시스템 프롬프트 설정 (기초 환경 검증용)
         messages = [
             ("system", "당신은 로컬 데이터(BGE-M3 임베딩)를 기반으로 답변하는 RAG 시스템의 비서입니다."),
-            ("human", f"현재 설정된 데이터 경로({os.getenv('DATA_PATH')})를 인지하고 있나요? 연결 상태를 확인해줘.")
+            ("human", f"현재 설정된 데이터 경로({os.getenv('DATA_PATH')})를 인지하고 있나요? 연결 상태를 확인해줘."),
         ]
 
         # 4. 응답 수신 테스트
-        print(f"모델 호출 중")
+        print("모델 호출 중")
         response = llm.invoke(messages)
 
         print("\n[정상 응답 확인]")

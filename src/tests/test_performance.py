@@ -1,10 +1,12 @@
-﻿# src/tests/test_performance.py 업데이트 버전
-import time
-import torch
-import psutil
+# src/tests/test_performance.py 업데이트 버전
 import os
-from src.models.embedder import BGEEmbedder
+import time
+
+import psutil
+import torch
 from sklearn.metrics.pairwise import cosine_similarity
+
+from src.models.embedder import BGEEmbedder
 
 
 def get_memory_usage():

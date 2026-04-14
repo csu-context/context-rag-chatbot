@@ -6,6 +6,7 @@ from src.pipeline import PreprocessingPipeline
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+
 def main():
     """
     RAG 챗봇 프로젝트의 메인 진입점.
@@ -29,6 +30,7 @@ def main():
     
     logger.info("초기화 완료. 메인 로직을 시작할 준비가 되었습니다.")
     # TODO: 3. 벡터 DB 로드 및 챗봇 엔진 실행
+
 
 if __name__ == "__main__":
     main()

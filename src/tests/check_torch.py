@@ -1,4 +1,4 @@
-﻿# src/tests/check_torch.py
+# src/tests/check_torch.py
 import torch
 
 print(f"PyTorch 버전: {torch.__version__}")

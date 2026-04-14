@@ -21,6 +21,7 @@ REQUIRED_DIRECTORIES = [
     LOGS_DIR,
 ]
 
+
 def ensure_directories():
     """
     프로젝트 실행 시 필요한 모든 디렉토리가 없을 경우 자동으로 생성함.
@@ -34,6 +35,7 @@ def ensure_directories():
         else:
             # 선택사항: 이미 존재할 경우 로그를 남기지 않거나 디버깅용으로만 사용
             pass
+
 
 if __name__ == "__main__":
     # 유틸리티 단독 실행 시 테스트 및 초기화 수행
