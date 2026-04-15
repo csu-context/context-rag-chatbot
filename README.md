@@ -76,7 +76,7 @@ docker-compose up -d --build
 
 ### 3. 서비스 접속
 - **Streamlit UI:** `http://localhost:8501`
-- **ChromaDB API:** `http://localhost:8000`
+- **ChromaDB 상태 확인:** `http://localhost:8000/api/v2/heartbeat` (숫자가 표시되면 정상)
 
 ### 4. 주요 명령어
 - **로그 확인:** `docker-compose logs -f app`
