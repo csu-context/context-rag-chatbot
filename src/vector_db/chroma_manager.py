@@ -49,17 +49,14 @@ class ChromaDBManager:
             # 서버(Http) 모드: Docker 환경 등에서 별도 컨테이너로 실행 중인 ChromaDB 서버에 접속
             logger.info(f"ChromaDB 서버 모드 접속 시도 (Host: {chroma_host}, Port: {chroma_port})")
             self.client = chromadb.HttpClient(
-                host=chroma_host,
-                port=int(chroma_port),
-                settings=Settings(anonymized_telemetry=False)
+                host=chroma_host, port=int(chroma_port), settings=Settings(anonymized_telemetry=False)
             )
         else:
             # 로컬(Persistent) 모드: 로컬 파일 시스템에 직접 데이터 저장
             ensure_directories()
             logger.info(f"ChromaDB 로컬 모드 활성화 (Path: {VECTOR_DB_DIR})")
             self.client = chromadb.PersistentClient(
-                path=str(VECTOR_DB_DIR),
-                settings=Settings(anonymized_telemetry=False)
+                path=str(VECTOR_DB_DIR), settings=Settings(anonymized_telemetry=False)
             )
 
         # 2. 커스텀 BGE 임베딩 함수 초기화
