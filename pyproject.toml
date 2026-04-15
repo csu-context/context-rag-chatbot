@@ -1,7 +1,7 @@
 [tool.ruff]
 # Ruff 설정: 린트(Linting) 및 포맷팅(Formatting) 통합 관리
 line-length = 120
-target-version = "py310"
+target-version = "py313"
 
 [tool.ruff.lint]
 # 규칙 선택 (Linting)

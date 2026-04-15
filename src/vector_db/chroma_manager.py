@@ -39,10 +39,25 @@ class ChromaDBManager:
     def __init__(self, collection_name: str = "rag_collection"):
         """
         ChromaDB 클라이언트 및 컬렉션을 초기화합니다.
+        환경 변수 CHROMA_SERVER_HOST 존재 여부에 따라 로컬(Persistent) 또는 서버(Http) 모드로 동작합니다.
         """
-        # 1. 영구 저장(Persistence) 로컬 클라이언트 설정 및 디렉토리 확인
-        ensure_directories()
-        self.client = chromadb.PersistentClient(path=str(VECTOR_DB_DIR), settings=Settings(anonymized_telemetry=False))
+        # 1. 클라이언트 설정
+        chroma_host = os.getenv("CHROMA_SERVER_HOST")
+        chroma_port = os.getenv("CHROMA_SERVER_PORT", "8000")
+
+        if chroma_host:
+            # 서버(Http) 모드: Docker 환경 등에서 별도 컨테이너로 실행 중인 ChromaDB 서버에 접속
+            logger.info(f"ChromaDB 서버 모드 접속 시도 (Host: {chroma_host}, Port: {chroma_port})")
+            self.client = chromadb.HttpClient(
+                host=chroma_host, port=int(chroma_port), settings=Settings(anonymized_telemetry=False)
+            )
+        else:
+            # 로컬(Persistent) 모드: 로컬 파일 시스템에 직접 데이터 저장
+            ensure_directories()
+            logger.info(f"ChromaDB 로컬 모드 활성화 (Path: {VECTOR_DB_DIR})")
+            self.client = chromadb.PersistentClient(
+                path=str(VECTOR_DB_DIR), settings=Settings(anonymized_telemetry=False)
+            )
 
         # 2. 커스텀 BGE 임베딩 함수 초기화
         self.embedding_fn = BGEChromaEmbeddingFunction()

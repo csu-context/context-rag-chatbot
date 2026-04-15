@@ -1,0 +1,55 @@
+services:
+  # RAG Chatbot 애플리케이션 서비스
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rag-chatbot-app
+    # 소스 코드 및 데이터 동기화를 위한 볼륨 설정
+    volumes:
+      - ./src:/app/src
+      - ./data:/app/data
+      - ./vector_db:/app/vector_db
+      - ./logs:/app/logs
+      - ./.env:/app/.env
+    # .env 파일 로드
+    env_file:
+      - .env
+    environment:
+      - CHROMA_SERVER_HOST=chromadb
+      - CHROMA_SERVER_PORT=8000
+    ports:
+      - "8501:8501"
+    # ChromaDB 서버가 준비될 때까지 대기
+    depends_on:
+      - chromadb
+    # NVIDIA GPU 연동 (Windows/Linux GPU 사용자 전용)
+    # 필요 시 아래 주석을 해제하여 사용하세요.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+    networks:
+      - rag-network
+
+
+  # ChromaDB 서버 전용 컨테이너 (벡터 DB 관리)
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: rag-chatbot-chromadb
+    volumes:
+      - ./vector_db:/chroma/chroma
+    ports:
+      - "8000:8000"
+    environment:
+      - IS_PERSISTENT=TRUE
+      - PERSIST_DIRECTORY=/chroma/chroma
+    networks:
+      - rag-network
+
+networks:
+  rag-network:
+    driver: bridge
