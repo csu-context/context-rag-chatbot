@@ -59,6 +59,32 @@
 
 ---
 
+## Docker 환경에서 시작하기 (Docker Setup)
+
+팀원 간 라이브러리 버전 충돌을 방지하고, ChromaDB 서버를 안정적으로 운영하기 위해 Docker 환경 사용을 권장합니다.
+
+### 1. 필수 요구사항
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) 설치
+- (Windows/Linux GPU 사용 시) [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) 설치
+
+### 2. 실행 방법
+프로젝트 루트 디렉토리에서 아래 명령어를 입력하세요.
+```bash
+# 컨테이너 빌드 및 실행 (백그라운드)
+docker-compose up -d --build
+```
+
+### 3. 서비스 접속
+- **Streamlit UI:** `http://localhost:8501`
+- **ChromaDB API:** `http://localhost:8000`
+
+### 4. 주요 명령어
+- **로그 확인:** `docker-compose logs -f app`
+- **컨테이너 중지:** `docker-compose down`
+- **컨테이너 내 명령어 실행:** `docker-compose exec app bash`
+
+---
+
 ## 협업 규칙 (Ground Rules)
 
 1. **브랜치 전략:** 직접 `main`에 푸시하지 않습니다.
