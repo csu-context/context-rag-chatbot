@@ -208,7 +208,12 @@ def test_with_api():
             prompt = ChatPromptTemplate.from_messages([("system", RAG_SYSTEM_PROMPT), ("human", "{question}")])
             chain = prompt | llm
 
-            result = chain.invoke({"question": tc["question"]})
+            # context가 테스트 케이스에 포함되어 있으면 이를 함께 전달합니다.
+            input_data = {"question": tc["question"]}
+            if "context" in tc:
+                input_data["context"] = tc["context"]
+
+            result = chain.invoke(input_data)
             response = result.content
 
             print(f"   응답:\n{response}")
