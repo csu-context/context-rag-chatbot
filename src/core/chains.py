@@ -5,7 +5,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from langchain_google_genai import ChatGoogleGenerativeAI
 
-from src.core.prompts import SYSTEM_PROMPT
+from src.core.prompts import RAG_SYSTEM_PROMPT
 
 # 환경 변수 로드
 load_dotenv()
@@ -14,7 +14,7 @@ load_dotenv()
 def get_rag_chain(retriever):
     # 1. 모델 설정
     llm = ChatGoogleGenerativeAI(
-        model="gemini-2.5-flash", temperature=1.0, google_api_key=os.getenv("GOOGLE_API_KEY"), safety_settings=None
+        model="gemini-2.5-flash", temperature=0.1, google_api_key=os.getenv("GOOGLE_API_KEY"), safety_settings=None
     )
 
     # 2. 컨텍스트 포맷팅 함수
@@ -29,7 +29,7 @@ def get_rag_chain(retriever):
         return "\n\n".join(formatted)
 
     # 3. 프롬프트 구성
-    prompt = ChatPromptTemplate.from_messages([("system", SYSTEM_PROMPT), ("human", "{question}")])
+    prompt = ChatPromptTemplate.from_messages([("system", RAG_SYSTEM_PROMPT), ("human", "{question}")])
 
     # 4. RAG 체인 구성
     rag_chain = {"context": retriever | format_docs, "question": RunnablePassthrough()} | prompt | llm
