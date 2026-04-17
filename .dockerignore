@@ -1,0 +1,28 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*.class
+.venv/
+env/
+venv/
+pip-log.txt
+
+# IDEs
+.idea/
+.vscode/
+
+# Project Data (Volumes handles these)
+data/raw/
+data/processed/
+vector_db/
+logs/
+.env
+
+# Docker
+Dockerfile
+docker-compose.yml
+.aider*
