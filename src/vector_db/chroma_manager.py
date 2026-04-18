@@ -73,16 +73,14 @@ class ChromaDBManager:
                 )
 
                 logger.info(
-                    f"✅ ChromaDB 로드 완료 (컬렉션: {self.collection_name}, "
-                    f"데이터 개수: {self.collection.count()})"
+                    f"✅ ChromaDB 로드 완료 (컬렉션: {self.collection_name}, 데이터 개수: {self.collection.count()})"
                 )
                 return  # 성공 시 루프 탈출
 
             except Exception as e:
                 if attempt < max_retries - 1:
                     logger.warning(
-                        f"⚠️ ChromaDB 연결 실패. {retry_delay}초 후 재시도... "
-                        f"({attempt + 1}/{max_retries}) | 오류: {e}"
+                        f"⚠️ ChromaDB 연결 실패. {retry_delay}초 후 재시도... ({attempt + 1}/{max_retries}) | 오류: {e}"
                     )
                     time.sleep(retry_delay)
                 else:
@@ -100,9 +98,7 @@ class ChromaDBManager:
             logger.error(f"쿼리 임베딩 중 오류 발생: {e}")
             return []
 
-    def upsert_documents(
-        self, ids: list[str], documents: list[str], metadatas: list[dict[str, Any]] | None = None
-    ):
+    def upsert_documents(self, ids: list[str], documents: list[str], metadatas: list[dict[str, Any]] | None = None):
         """
         문서 청크를 DB에 업서트(Upsert)합니다.
         기존에 동일한 ID가 존재하면 업데이트(Update)를 수행하여 중복 저장을 방지합니다.
