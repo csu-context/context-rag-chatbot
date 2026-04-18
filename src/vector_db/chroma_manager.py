@@ -41,7 +41,7 @@ class ChromaDBManager:
         환경 변수 CHROMA_SERVER_HOST 존재 여부에 따라 로컬(Persistent) 또는 서버(Http) 모드로 동작하며,
         DB 연결 실패 시 재시도(Retry) 로직을 수행합니다.
         """
-        self.collection_name = collection_name
+      self.collection_name = collection_name
         self.embedding_fn = BGEChromaEmbeddingFunction()
 
         # 클라이언트 초기화 및 DB 연결 재시도 로직
@@ -98,7 +98,12 @@ class ChromaDBManager:
             logger.error(f"쿼리 임베딩 중 오류 발생: {e}")
             return []
 
-    def upsert_documents(self, ids: list[str], documents: list[str], metadatas: list[dict[str, Any]] | None = None):
+    def upsert_documents(
+        self,
+        ids: list[str],
+        documents: list[str],
+        metadatas: list[dict[str, Any]] | None = None,
+    ):
         """
         문서 청크를 DB에 업서트(Upsert)합니다.
         기존에 동일한 ID가 존재하면 업데이트(Update)를 수행하여 중복 저장을 방지합니다.

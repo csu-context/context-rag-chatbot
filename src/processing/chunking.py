@@ -2,7 +2,10 @@ import json
 import uuid
 from typing import Any, TypedDict, cast
 
-from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
+from langchain_text_splitters import (
+    MarkdownHeaderTextSplitter,
+    RecursiveCharacterTextSplitter,
+)
 
 from src.common.constants import MetadataFields
 from src.utils.paths import ensure_directories
@@ -47,7 +50,13 @@ def split_into_children(parent_text: str, parent_id: str, base_metadata: dict[st
         }
         child_metadata = cast(ChunkMetadata, cast(object, child_metadata_dict))
 
-        children_list.append({MetadataFields.CHUNK_ID: child_id, "metadata": child_metadata, "text": child_text})
+        children_list.append(
+            {
+                MetadataFields.CHUNK_ID: child_id,
+                "metadata": child_metadata,
+                "text": child_text,
+            }
+        )
     return children_list
 
 

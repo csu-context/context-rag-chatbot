@@ -64,7 +64,14 @@ class ManualParser:
 
         return text
 
-    def _add_chunk(self, data_list: list[dict[str, Any]], chapter: str, article: str, content: list[str], page: int):
+    def _add_chunk(
+        self,
+        data_list: list[dict[str, Any]],
+        chapter: str,
+        article: str,
+        content: list[str],
+        page: int,
+    ):
         """구조화된 청크 데이터 생성 및 리스트 추가 (표준 규격 준수)"""
         cleaned_content = self._clean_text(" ".join(content))
         if not cleaned_content or len(cleaned_content) < 5:
@@ -138,12 +145,25 @@ class ManualParser:
                 self._process_pdf_block(block, page_num, base_font_size, state, structured_data)
 
         if state["content"]:
-            self._add_chunk(structured_data, state["chapter"], state["article"], state["content"], state["start_page"])
+            self._add_chunk(
+                structured_data,
+                state["chapter"],
+                state["article"],
+                state["content"],
+                state["start_page"],
+            )
 
         doc.close()
         return structured_data
 
-    def _process_pdf_block(self, block: dict, page_num: int, base_font_size: float, state: dict, structured_data: list):
+    def _process_pdf_block(
+        self,
+        block: dict,
+        page_num: int,
+        base_font_size: float,
+        state: dict,
+        structured_data: list,
+    ):
         """단일 PDF 블록을 분석하여 상태 업데이트 및 청크 추가"""
         block_text, max_size = self._extract_block_info(block)
         if not block_text or max_size < base_font_size - 0.5:
@@ -153,7 +173,11 @@ class ManualParser:
         if max_size >= base_font_size + 1.5:
             if state["content"]:
                 self._add_chunk(
-                    structured_data, state["chapter"], state["article"], state["content"], state["start_page"]
+                    structured_data,
+                    state["chapter"],
+                    state["article"],
+                    state["content"],
+                    state["start_page"],
                 )
                 state["content"] = []
 
@@ -169,7 +193,11 @@ class ManualParser:
         if is_article:
             if state["content"]:
                 self._add_chunk(
-                    structured_data, state["chapter"], state["article"], state["content"], state["start_page"]
+                    structured_data,
+                    state["chapter"],
+                    state["article"],
+                    state["content"],
+                    state["start_page"],
                 )
 
             if normalized_text.startswith("제조"):
