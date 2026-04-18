@@ -5,9 +5,6 @@ def format_citations(docs: List[Document]) -> str:
     """
     검색된 문서들(Document 객체 리스트)에서 메타데이터를 추출하여
     '참조된 문서 목록' 형식을 생성합니다.
-    
-    본문의 세부 인용([파일명, p.XX])과 중복되지 않도록 
-    전체적인 출처 정보를 요약하여 제공합니다.
     """
     if not docs:
         return ""
@@ -15,8 +12,11 @@ def format_citations(docs: List[Document]) -> str:
     sources = set()
     for doc in docs:
         src_name = doc.metadata.get("src_name") or doc.metadata.get("source", "알 수 없는 파일")
-        # 파일명만 추출하여 중복 제거 (페이지 단위 중복 방지)
-        sources.add(src_name)
+        pg_num = doc.metadata.get("pg_num") or doc.metadata.get("page")
+        
+        # 페이지 정보가 있으면 파일명 옆에 표시, 없으면 '정보 없음' 안내
+        page_info = f"p.{pg_num}" if pg_num else "페이지 정보 없음"
+        sources.add(f"{src_name} ({page_info})")
         
     if not sources:
         return ""
