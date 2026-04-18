@@ -13,6 +13,7 @@ from src.utils.citation import format_citations
 
 logger = logging.getLogger(__name__)
 
+
 def get_rag_chain(retriever):
     llm = ChatGoogleGenerativeAI(
         model="gemini-2.5-flash",
