@@ -2,7 +2,7 @@ import logging
 import os
 import time
 import warnings
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import chromadb
 from chromadb.api.types import Documents, EmbeddingFunction, Embeddings
@@ -69,23 +69,28 @@ class ChromaDBManager:
                 self.collection = self.client.get_or_create_collection(
                     name=self.collection_name,
                     embedding_function=self.embedding_fn,
-                    metadata={"hnsw:space": "cosine"}
+                    metadata={"hnsw:space": "cosine"},
                 )
 
-                logger.info(f"✅ ChromaDB 로드 완료 (컬렉션: {self.collection_name}, 데이터 개수: {self.collection.count()})")
+                logger.info(
+                    f"✅ ChromaDB 로드 완료 (컬렉션: {self.collection_name}, "
+                    f"데이터 개수: {self.collection.count()})"
+                )
                 return  # 성공 시 루프 탈출
 
             except Exception as e:
                 if attempt < max_retries - 1:
                     logger.warning(
-                        f"⚠️ ChromaDB 연결 실패. {retry_delay}초 후 재시도... ({attempt + 1}/{max_retries}) | 오류: {e}")
+                        f"⚠️ ChromaDB 연결 실패. {retry_delay}초 후 재시도... "
+                        f"({attempt + 1}/{max_retries}) | 오류: {e}"
+                    )
                     time.sleep(retry_delay)
                 else:
                     logger.error("❌ ChromaDB 연결에 최종 실패했습니다. DB 상태를 확인해주세요.")
                     # 재시도 최종 실패 시 빈 컬렉션 객체 방지 처리가 필요할 수 있으나, 여기서는 에러를 발생시킵니다.
                     raise RuntimeError("ChromaDB initialization failed.") from e
 
-    def embed_query(self, query_text: str) -> List[float]:
+    def embed_query(self, query_text: str) -> list[float]:
         """
         사용자 쿼리를 벡터(Embedding)로 변환합니다.
         """
@@ -95,7 +100,9 @@ class ChromaDBManager:
             logger.error(f"쿼리 임베딩 중 오류 발생: {e}")
             return []
 
-    def upsert_documents(self, ids: List[str], documents: List[str], metadatas: Optional[List[Dict[str, Any]]] = None):
+    def upsert_documents(
+        self, ids: list[str], documents: list[str], metadatas: list[dict[str, Any]] | None = None
+    ):
         """
         문서 청크를 DB에 업서트(Upsert)합니다.
         기존에 동일한 ID가 존재하면 업데이트(Update)를 수행하여 중복 저장을 방지합니다.
@@ -119,7 +126,7 @@ class ChromaDBManager:
         except Exception as e:
             logger.error(f"문서 업서트 중 오류 발생: {e}")
 
-    def search(self, query_text: str, k: int = 3) -> List[Dict[str, Any]]:
+    def search(self, query_text: str, k: int = 3) -> list[dict[str, Any]]:
         """
         주어진 쿼리 텍스트와 가장 유사한 문서를 검색하고,
         하이브리드 리트리버와 호환되는 표준화된 dict 리스트 형태로 반환합니다.
@@ -138,17 +145,19 @@ class ChromaDBManager:
             metas = results["metadatas"][0]
             dists = results["distances"][0]
 
-            for doc, meta, dist in zip(docs, metas, dists):
+            for doc, meta, dist in zip(docs, metas, dists, strict=False):
                 # 정규화 (Normalization): 거리(Distance)를 0~1 사이의 유사도 점수(Score)로 변환
                 # ChromaDB의 코사인 거리 = 1 - 코사인 유사도
                 # 음수 유사도(거리가 1을 초과하는 경우)는 RAG 환경에서 의미가 없으므로 0으로 보정
                 score = max(0.0, 1.0 - dist)
 
-                standardized_results.append({
-                    "content": doc,
-                    "metadata": meta,
-                    "score": round(score, 4)  # 소수점 4자리까지 반올림
-                })
+                standardized_results.append(
+                    {
+                        "content": doc,
+                        "metadata": meta,
+                        "score": round(score, 4),  # 소수점 4자리까지 반올림
+                    }
+                )
 
             return standardized_results
 
@@ -175,14 +184,17 @@ if __name__ == "__main__":
     logger.info("--- 2. 샘플 데이터 준비 및 Upsert ---")
     sample_ids = ["chunk_001", "chunk_002", "chunk_003"]
     sample_texts = [
-        "제1조(목적) 이 학칙은 조선대학교의 교육목표를 달성하기 위하여 필요한 학사운영 등에 관한 사항을 규정함을 목적으로 한다.",
+        (
+            "제1조(목적) 이 학칙은 조선대학교의 교육목표를 달성하기 위하여 필요한 "
+            "학사운영 등에 관한 사항을 규정함을 목적으로 한다."
+        ),
         "제40조(성적평가) 학업성적은 각 교과목별로 시험성적, 과제물, 출석 등을 종합하여 평가한다.",
-        "제45조(졸업) 소정의 전 과정을 이수하고 졸업요건을 충족한 자에게는 학사학위를 수여한다."
+        "제45조(졸업) 소정의 전 과정을 이수하고 졸업요건을 충족한 자에게는 학사학위를 수여한다.",
     ]
     sample_metadatas = [
         {"source": "조선대학교_학칙.pdf", "page": 1, "sec_title": "총칙"},
         {"source": "조선대학교_학칙.pdf", "page": 12, "sec_title": "성적평가"},
-        {"source": "조선대학교_학칙.pdf", "page": 15, "sec_title": "졸업 및 학위"}
+        {"source": "조선대학교_학칙.pdf", "page": 15, "sec_title": "졸업 및 학위"},
     ]
 
     db_manager.upsert_documents(ids=sample_ids, documents=sample_texts, metadatas=sample_metadatas)
@@ -196,7 +208,7 @@ if __name__ == "__main__":
     search_queries = [
         "조선대학교 학칙의 목적이 뭐야?",
         "졸업하려면 어떻게 해야 하나요?",
-        "전혀 상관없는 이상한 질문입니다."  # 낮은 점수 또는 예외 처리 확인용
+        "전혀 상관없는 이상한 질문입니다.",  # 낮은 점수 또는 예외 처리 확인용
     ]
 
     for q_text in search_queries:
