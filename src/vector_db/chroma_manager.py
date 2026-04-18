@@ -49,7 +49,9 @@ class ChromaDBManager:
             # 서버(Http) 모드: Docker 환경 등에서 별도 컨테이너로 실행 중인 ChromaDB 서버에 접속
             logger.info(f"ChromaDB 서버 모드 접속 시도 (Host: {chroma_host}, Port: {chroma_port})")
             self.client = chromadb.HttpClient(
-                host=chroma_host, port=int(chroma_port), settings=Settings(anonymized_telemetry=False)
+                host=chroma_host,
+                port=int(chroma_port),
+                settings=Settings(anonymized_telemetry=False),
             )
         else:
             # 로컬(Persistent) 모드: 로컬 파일 시스템에 직접 데이터 저장
@@ -65,12 +67,19 @@ class ChromaDBManager:
         # 3. 컬렉션 가져오기 또는 생성
         # BGE-M3 모델은 주로 코사인 유사도(cosine similarity) 검색에 최적화되어 있습니다.
         self.collection = self.client.get_or_create_collection(
-            name=collection_name, embedding_function=self.embedding_fn, metadata={"hnsw:space": "cosine"}
+            name=collection_name,
+            embedding_function=self.embedding_fn,
+            metadata={"hnsw:space": "cosine"},
         )
 
         logger.info(f"ChromaDB 로드 완료 (컬렉션: {collection_name}, 데이터 개수: {self.collection.count()})")
 
-    def upsert_documents(self, ids: list[str], documents: list[str], metadatas: list[dict[str, Any]] | None = None):
+    def upsert_documents(
+        self,
+        ids: list[str],
+        documents: list[str],
+        metadatas: list[dict[str, Any]] | None = None,
+    ):
         """
         문서 청크를 DB에 업서트(Upsert)합니다.
         기존에 동일한 ID가 존재하면 업데이트(Update)를 수행하여 중복 저장을 방지합니다.

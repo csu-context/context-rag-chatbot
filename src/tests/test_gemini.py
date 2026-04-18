@@ -27,8 +27,14 @@ def test_gemini_rag_foundation():
 
         # 3. RAG 시스템 프롬프트 설정 (기초 환경 검증용)
         messages = [
-            ("system", "당신은 로컬 데이터(BGE-M3 임베딩)를 기반으로 답변하는 RAG 시스템의 비서입니다."),
-            ("human", f"현재 설정된 데이터 경로({os.getenv('DATA_PATH')})를 인지하고 있나요? 연결 상태를 확인해줘."),
+            (
+                "system",
+                "당신은 로컬 데이터(BGE-M3 임베딩)를 기반으로 답변하는 RAG 시스템의 비서입니다.",
+            ),
+            (
+                "human",
+                f"현재 설정된 데이터 경로({os.getenv('DATA_PATH')})를 인지하고 있나요? 연결 상태를 확인해줘.",
+            ),
         ]
 
         # 4. 응답 수신 테스트
