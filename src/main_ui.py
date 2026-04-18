@@ -31,7 +31,9 @@ with st.sidebar:
     # [목표 3] 파일 업로더 구현 (전처리 파이프라인 연동용)
     st.subheader("문서 관리")
     uploaded_files = st.file_uploader(
-        "매뉴얼 파일 업로드 (PDF, DOCX)", type=["pdf", "docx"], accept_multiple_files=True
+        "매뉴얼 파일 업로드 (PDF, DOCX)",
+        type=["pdf", "docx"],
+        accept_multiple_files=True,
     )
 
     if uploaded_files:
