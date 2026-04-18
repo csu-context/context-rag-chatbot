@@ -38,9 +38,7 @@ if __name__ == "__main__":
             metadata={"source": "연봉규정_2026.pdf", "page": "5"},
         )
     ]
-    run_test_scenario(
-        "정상 답변 및 출처 테스트", "올해 신입 사원 연봉이 얼마야?", docs_a
-    )
+    run_test_scenario("정상 답변 및 출처 테스트", "올해 신입 사원 연봉이 얼마야?", docs_a)
 
     # 시나리오 B: 문서 내 정보가 없는 경우
     docs_b = [

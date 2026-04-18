@@ -18,17 +18,13 @@ class ParsingValidator:
     def get_latest_result(self) -> Path:
         """가장 최근에 생성된 전처리 결과 파일 경로 반환"""
         # pipeline.py에서 생성하는 파일 패턴으로 검색
-        json_files = sorted(
-            self.processed_dir.glob("preprocessed_v1_*.json"), reverse=True
-        )
+        json_files = sorted(self.processed_dir.glob("preprocessed_v1_*.json"), reverse=True)
         return json_files[0] if json_files else None
 
     def analyze(self):
         latest_file = self.get_latest_result()
         if not latest_file:
-            logger.error(
-                "분석할 결과 파일을 찾을 수 없습니다. 먼저 pipeline.py 또는 main.py를 실행하세요."
-            )
+            logger.error("분석할 결과 파일을 찾을 수 없습니다. 먼저 pipeline.py 또는 main.py를 실행하세요.")
             return
 
         with open(latest_file, encoding="utf-8") as f:
@@ -56,12 +52,8 @@ class ParsingValidator:
         no_chapter = [d for d in data if "장 없음" in d["metadata"].get("chapter", "")]
         no_article = [d for d in data if "조 없음" in d["metadata"].get("article", "")]
 
-        chapter_success_rate = (
-            (1 - len(no_chapter) / total_sections) * 100 if total_sections > 0 else 0
-        )
-        article_success_rate = (
-            (1 - len(no_article) / total_sections) * 100 if total_sections > 0 else 0
-        )
+        chapter_success_rate = (1 - len(no_chapter) / total_sections) * 100 if total_sections > 0 else 0
+        article_success_rate = (1 - len(no_article) / total_sections) * 100 if total_sections > 0 else 0
 
         logger.info("-" * 60)
         logger.info("[품질 지표 (탐지 성공률)]")
@@ -75,28 +67,18 @@ class ParsingValidator:
             logger.info("-" * 60)
             logger.info("[자식 청크 길이 분석 (글자 수)]")
             logger.info(f"   - 평균 길이: {avg_len:.1f} 자")
-            logger.info(
-                f"   - 최소/최대 길이: {min(child_lengths)} / {max(child_lengths)} 자"
-            )
+            logger.info(f"   - 최소/최대 길이: {min(child_lengths)} / {max(child_lengths)} 자")
 
         logger.info("-" * 60)
         logger.info("[표준 스키마 검증 샘플]")
         if data:
             sample_parent = data[0]
-            sample_child = (
-                sample_parent["children"][0] if sample_parent["children"] else None
-            )
+            sample_child = sample_parent["children"][0] if sample_parent["children"] else None
 
-            logger.info(
-                f"   [Source ID] : {sample_parent['metadata'][MetadataFields.SOURCE_ID]}"
-            )
-            logger.info(
-                f"   [Doc Type]  : {sample_parent['metadata'][MetadataFields.DOC_TYPE]}"
-            )
+            logger.info(f"   [Source ID] : {sample_parent['metadata'][MetadataFields.SOURCE_ID]}")
+            logger.info(f"   [Doc Type]  : {sample_parent['metadata'][MetadataFields.DOC_TYPE]}")
             if sample_child:
-                logger.info(
-                    f"   [Child ID]  : {sample_child['metadata'][MetadataFields.CHUNK_ID]}"
-                )
+                logger.info(f"   [Child ID]  : {sample_child['metadata'][MetadataFields.CHUNK_ID]}")
                 logger.info(f"   [Preview]   : {sample_child['text'][:100]}...")
 
         logger.info("=" * 60)

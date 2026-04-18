@@ -26,18 +26,14 @@ def get_rag_chain(retriever):
         formatted = []
         for doc in docs:
             # 표준 메타데이터 규격(src_name, pg_num) 우선 사용
-            source = doc.metadata.get("src_name") or doc.metadata.get(
-                "source", "알 수 없는 파일"
-            )
+            source = doc.metadata.get("src_name") or doc.metadata.get("source", "알 수 없는 파일")
             page = doc.metadata.get("pg_num") or doc.metadata.get("page", "-")
             content = f"내용: {doc.page_content}\n출처: [{source}, p.{page}]"
             formatted.append(content)
         return "\n\n".join(formatted)
 
     # 3. 프롬프트 구성
-    prompt = ChatPromptTemplate.from_messages(
-        [("system", RAG_SYSTEM_PROMPT), ("human", "{question}")]
-    )
+    prompt = ChatPromptTemplate.from_messages([("system", RAG_SYSTEM_PROMPT), ("human", "{question}")])
 
     # 4. RAG 체인 구성 (원본 문서를 보존하기 위해 RunnableParallel 사용)
     def combine_answer_and_citations(input_dict):

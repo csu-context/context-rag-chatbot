@@ -4,9 +4,7 @@ from src.pipeline import PreprocessingPipeline
 from src.utils.paths import ensure_directories
 
 # 로깅 설정
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 
@@ -27,9 +25,7 @@ def main():
     processed_data = pipeline.run()
 
     if processed_data:
-        logger.info(
-            f"전처리 완료: {len(processed_data)}개의 섹션(부모 청크)이 처리되었습니다."
-        )
+        logger.info(f"전처리 완료: {len(processed_data)}개의 섹션(부모 청크)이 처리되었습니다.")
     else:
         logger.warning("전처리된 데이터가 없습니다. data/raw 폴더를 확인하세요.")
 

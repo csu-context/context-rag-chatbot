@@ -27,11 +27,7 @@ class ManualParser:
         self.file_name = self.file_path.name
 
         # 카테고리 자동 추출 (상위 폴더명 활용)
-        self.category = (
-            self.file_path.parent.name
-            if self.file_path.parent != RAW_DATA_DIR
-            else "일반"
-        )
+        self.category = self.file_path.parent.name if self.file_path.parent != RAW_DATA_DIR else "일반"
 
         # 확장자 추출 (마침표 제외)
         self.extension = self.file_path.suffix.lower().replace(".", "")
@@ -146,9 +142,7 @@ class ManualParser:
             blocks = page.get_text("dict").get("blocks", [])
 
             for block in blocks:
-                self._process_pdf_block(
-                    block, page_num, base_font_size, state, structured_data
-                )
+                self._process_pdf_block(block, page_num, base_font_size, state, structured_data)
 
         if state["content"]:
             self._add_chunk(
@@ -194,9 +188,7 @@ class ManualParser:
 
         # 중제목(조) 탐지
         normalized_text = block_text.replace(" ", "")
-        is_article = re.match(r"^제\d+조", normalized_text) or re.match(
-            r"^제조\d+", normalized_text
-        )
+        is_article = re.match(r"^제\d+조", normalized_text) or re.match(r"^제조\d+", normalized_text)
 
         if is_article:
             if state["content"]:
@@ -293,6 +285,4 @@ if __name__ == "__main__":
         except Exception as e:
             logger.error(f"파싱 중 에러 발생: {e}")
     else:
-        logger.warning(
-            f"테스트를 위한 지원 파일(.pdf, .md)이 {RAW_DATA_DIR} 에 없습니다."
-        )
+        logger.warning(f"테스트를 위한 지원 파일(.pdf, .md)이 {RAW_DATA_DIR} 에 없습니다.")

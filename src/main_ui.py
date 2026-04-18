@@ -16,9 +16,7 @@ with st.sidebar:
 
     # [목표 1] 모델 설정
     st.subheader("모델 설정")
-    selected_model = st.selectbox(
-        "사용할 LLM 모델 선택", ["gpt-3.5-turbo", "gpt-4o", "llama-3-70b"], index=0
-    )
+    selected_model = st.selectbox("사용할 LLM 모델 선택", ["gpt-3.5-turbo", "gpt-4o", "llama-3-70b"], index=0)
 
     # [목표 1] 검색 결과 개수(K) 조절 슬라이더
     st.subheader("검색 설정")

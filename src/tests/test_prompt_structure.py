@@ -212,9 +212,7 @@ def test_with_api():
             print(f"\n📌 {tc['name']}")
             print(f"   질문: {tc['question']}")
 
-            prompt = ChatPromptTemplate.from_messages(
-                [("system", RAG_SYSTEM_PROMPT), ("human", "{question}")]
-            )
+            prompt = ChatPromptTemplate.from_messages([("system", RAG_SYSTEM_PROMPT), ("human", "{question}")])
             chain = prompt | llm
 
             # context가 테스트 케이스에 포함되어 있으면 이를 함께 전달합니다.

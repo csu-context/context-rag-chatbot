@@ -11,9 +11,7 @@ def format_citations(docs: list[Document]) -> str:
 
     sources = set()
     for doc in docs:
-        src_name = doc.metadata.get("src_name") or doc.metadata.get(
-            "source", "알 수 없는 파일"
-        )
+        src_name = doc.metadata.get("src_name") or doc.metadata.get("source", "알 수 없는 파일")
         pg_num = doc.metadata.get("pg_num") or doc.metadata.get("page")
 
         # 페이지 정보가 있으면 파일명 옆에 표시, 없으면 '정보 없음' 안내

@@ -48,17 +48,11 @@ def test_gemini_rag_foundation():
 
     # 5. 세부 예외 처리 로직 (사용자 요청 사항 반영)
     except exceptions.InvalidArgument as e:
-        print(
-            f"\n[연결 실패] 에러 발생: API 키가 올바르지 않거나 모델 설정이 잘못되었습니다.\n상세내용: {e}"
-        )
+        print(f"\n[연결 실패] 에러 발생: API 키가 올바르지 않거나 모델 설정이 잘못되었습니다.\n상세내용: {e}")
     except exceptions.DeadlineExceeded:
-        print(
-            "\n[연결 실패] 에러 발생: Google 서버 응답 시간이 초과되었습니다 (Timeout)."
-        )
+        print("\n[연결 실패] 에러 발생: Google 서버 응답 시간이 초과되었습니다 (Timeout).")
     except exceptions.ResourceExhausted:
-        print(
-            "\n[연결 실패] 에러 발생: 무료 티어 할당량(Quota)을 초과했습니다. 잠시 후 다시 시도하세요."
-        )
+        print("\n[연결 실패] 에러 발생: 무료 티어 할당량(Quota)을 초과했습니다. 잠시 후 다시 시도하세요.")
     except Exception as e:
         print(f"\n[연결 실패] 기타 에러 발생: {e}")
 
