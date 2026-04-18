@@ -27,7 +27,11 @@ class ManualParser:
         self.file_name = self.file_path.name
 
         # 카테고리 자동 추출 (상위 폴더명 활용)
-        self.category = self.file_path.parent.name if self.file_path.parent != RAW_DATA_DIR else "일반"
+        self.category = (
+            self.file_path.parent.name
+            if self.file_path.parent != RAW_DATA_DIR
+            else "일반"
+        )
 
         # 확장자 추출 (마침표 제외)
         self.extension = self.file_path.suffix.lower().replace(".", "")
@@ -64,7 +68,14 @@ class ManualParser:
 
         return text
 
-    def _add_chunk(self, data_list: list[dict[str, Any]], chapter: str, article: str, content: list[str], page: int):
+    def _add_chunk(
+        self,
+        data_list: list[dict[str, Any]],
+        chapter: str,
+        article: str,
+        content: list[str],
+        page: int,
+    ):
         """구조화된 청크 데이터 생성 및 리스트 추가 (표준 규격 준수)"""
         cleaned_content = self._clean_text(" ".join(content))
         if not cleaned_content or len(cleaned_content) < 5:
@@ -135,15 +146,30 @@ class ManualParser:
             blocks = page.get_text("dict").get("blocks", [])
 
             for block in blocks:
-                self._process_pdf_block(block, page_num, base_font_size, state, structured_data)
+                self._process_pdf_block(
+                    block, page_num, base_font_size, state, structured_data
+                )
 
         if state["content"]:
-            self._add_chunk(structured_data, state["chapter"], state["article"], state["content"], state["start_page"])
+            self._add_chunk(
+                structured_data,
+                state["chapter"],
+                state["article"],
+                state["content"],
+                state["start_page"],
+            )
 
         doc.close()
         return structured_data
 
-    def _process_pdf_block(self, block: dict, page_num: int, base_font_size: float, state: dict, structured_data: list):
+    def _process_pdf_block(
+        self,
+        block: dict,
+        page_num: int,
+        base_font_size: float,
+        state: dict,
+        structured_data: list,
+    ):
         """단일 PDF 블록을 분석하여 상태 업데이트 및 청크 추가"""
         block_text, max_size = self._extract_block_info(block)
         if not block_text or max_size < base_font_size - 0.5:
@@ -153,7 +179,11 @@ class ManualParser:
         if max_size >= base_font_size + 1.5:
             if state["content"]:
                 self._add_chunk(
-                    structured_data, state["chapter"], state["article"], state["content"], state["start_page"]
+                    structured_data,
+                    state["chapter"],
+                    state["article"],
+                    state["content"],
+                    state["start_page"],
                 )
                 state["content"] = []
 
@@ -164,12 +194,18 @@ class ManualParser:
 
         # 중제목(조) 탐지
         normalized_text = block_text.replace(" ", "")
-        is_article = re.match(r"^제\d+조", normalized_text) or re.match(r"^제조\d+", normalized_text)
+        is_article = re.match(r"^제\d+조", normalized_text) or re.match(
+            r"^제조\d+", normalized_text
+        )
 
         if is_article:
             if state["content"]:
                 self._add_chunk(
-                    structured_data, state["chapter"], state["article"], state["content"], state["start_page"]
+                    structured_data,
+                    state["chapter"],
+                    state["article"],
+                    state["content"],
+                    state["start_page"],
                 )
 
             if normalized_text.startswith("제조"):
@@ -257,4 +293,6 @@ if __name__ == "__main__":
         except Exception as e:
             logger.error(f"파싱 중 에러 발생: {e}")
     else:
-        logger.warning(f"테스트를 위한 지원 파일(.pdf, .md)이 {RAW_DATA_DIR} 에 없습니다.")
+        logger.warning(
+            f"테스트를 위한 지원 파일(.pdf, .md)이 {RAW_DATA_DIR} 에 없습니다."
+        )

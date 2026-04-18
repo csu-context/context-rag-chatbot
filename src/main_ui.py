@@ -16,7 +16,9 @@ with st.sidebar:
 
     # [목표 1] 모델 설정
     st.subheader("모델 설정")
-    selected_model = st.selectbox("사용할 LLM 모델 선택", ["gpt-3.5-turbo", "gpt-4o", "llama-3-70b"], index=0)
+    selected_model = st.selectbox(
+        "사용할 LLM 모델 선택", ["gpt-3.5-turbo", "gpt-4o", "llama-3-70b"], index=0
+    )
 
     # [목표 1] 검색 결과 개수(K) 조절 슬라이더
     st.subheader("검색 설정")
@@ -31,7 +33,9 @@ with st.sidebar:
     # [목표 3] 파일 업로더 구현 (전처리 파이프라인 연동용)
     st.subheader("문서 관리")
     uploaded_files = st.file_uploader(
-        "매뉴얼 파일 업로드 (PDF, DOCX)", type=["pdf", "docx"], accept_multiple_files=True
+        "매뉴얼 파일 업로드 (PDF, DOCX)",
+        type=["pdf", "docx"],
+        accept_multiple_files=True,
     )
 
     if uploaded_files:

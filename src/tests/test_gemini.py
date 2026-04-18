@@ -27,8 +27,14 @@ def test_gemini_rag_foundation():
 
         # 3. RAG 시스템 프롬프트 설정 (기초 환경 검증용)
         messages = [
-            ("system", "당신은 로컬 데이터(BGE-M3 임베딩)를 기반으로 답변하는 RAG 시스템의 비서입니다."),
-            ("human", f"현재 설정된 데이터 경로({os.getenv('DATA_PATH')})를 인지하고 있나요? 연결 상태를 확인해줘."),
+            (
+                "system",
+                "당신은 로컬 데이터(BGE-M3 임베딩)를 기반으로 답변하는 RAG 시스템의 비서입니다.",
+            ),
+            (
+                "human",
+                f"현재 설정된 데이터 경로({os.getenv('DATA_PATH')})를 인지하고 있나요? 연결 상태를 확인해줘.",
+            ),
         ]
 
         # 4. 응답 수신 테스트
@@ -42,11 +48,17 @@ def test_gemini_rag_foundation():
 
     # 5. 세부 예외 처리 로직 (사용자 요청 사항 반영)
     except exceptions.InvalidArgument as e:
-        print(f"\n[연결 실패] 에러 발생: API 키가 올바르지 않거나 모델 설정이 잘못되었습니다.\n상세내용: {e}")
+        print(
+            f"\n[연결 실패] 에러 발생: API 키가 올바르지 않거나 모델 설정이 잘못되었습니다.\n상세내용: {e}"
+        )
     except exceptions.DeadlineExceeded:
-        print("\n[연결 실패] 에러 발생: Google 서버 응답 시간이 초과되었습니다 (Timeout).")
+        print(
+            "\n[연결 실패] 에러 발생: Google 서버 응답 시간이 초과되었습니다 (Timeout)."
+        )
     except exceptions.ResourceExhausted:
-        print("\n[연결 실패] 에러 발생: 무료 티어 할당량(Quota)을 초과했습니다. 잠시 후 다시 시도하세요.")
+        print(
+            "\n[연결 실패] 에러 발생: 무료 티어 할당량(Quota)을 초과했습니다. 잠시 후 다시 시도하세요."
+        )
     except Exception as e:
         print(f"\n[연결 실패] 기타 에러 발생: {e}")
 

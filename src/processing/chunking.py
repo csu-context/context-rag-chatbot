@@ -2,7 +2,10 @@ import json
 import uuid
 from typing import Any, TypedDict, cast
 
-from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
+from langchain_text_splitters import (
+    MarkdownHeaderTextSplitter,
+    RecursiveCharacterTextSplitter,
+)
 
 from src.common.constants import MetadataFields
 from src.utils.paths import ensure_directories
@@ -21,10 +24,14 @@ class ChunkMetadata(TypedDict):
 
 # 자식 청크 분할을 위한 공통 스플리터 설정
 def get_child_splitter() -> RecursiveCharacterTextSplitter:
-    return RecursiveCharacterTextSplitter(chunk_size=400, chunk_overlap=50, separators=["\n\n", "\n", " ", ""])
+    return RecursiveCharacterTextSplitter(
+        chunk_size=400, chunk_overlap=50, separators=["\n\n", "\n", " ", ""]
+    )
 
 
-def split_into_children(parent_text: str, parent_id: str, base_metadata: dict[str, Any]) -> list[dict[str, Any]]:
+def split_into_children(
+    parent_text: str, parent_id: str, base_metadata: dict[str, Any]
+) -> list[dict[str, Any]]:
     """
     부모 텍스트를 자식 청크들로 분할하고 표준 메타데이터를 입힙니다.
     """
@@ -47,11 +54,19 @@ def split_into_children(parent_text: str, parent_id: str, base_metadata: dict[st
         }
         child_metadata = cast(ChunkMetadata, cast(object, child_metadata_dict))
 
-        children_list.append({MetadataFields.CHUNK_ID: child_id, "metadata": child_metadata, "text": child_text})
+        children_list.append(
+            {
+                MetadataFields.CHUNK_ID: child_id,
+                "metadata": child_metadata,
+                "text": child_text,
+            }
+        )
     return children_list
 
 
-def create_parent_child_chunks(markdown_text: str, base_metadata: dict[str, Any]) -> list[dict[str, Any]]:
+def create_parent_child_chunks(
+    markdown_text: str, base_metadata: dict[str, Any]
+) -> list[dict[str, Any]]:
     """
     마크다운 텍스트를 계층적(Parent-Child)으로 분할합니다.
     """
@@ -61,7 +76,9 @@ def create_parent_child_chunks(markdown_text: str, base_metadata: dict[str, Any]
         ("##", "Header 2"),
         ("###", "Header 3"),
     ]
-    markdown_splitter = MarkdownHeaderTextSplitter(headers_to_split_on=headers_to_split_on)
+    markdown_splitter = MarkdownHeaderTextSplitter(
+        headers_to_split_on=headers_to_split_on
+    )
     parent_docs = markdown_splitter.split_text(markdown_text)
 
     hierarchical_data = []
@@ -73,14 +90,19 @@ def create_parent_child_chunks(markdown_text: str, base_metadata: dict[str, Any]
         parent_id = str(uuid.uuid4())
         # [수정] 너무 긴 라인 분할
         sec_title = (
-            doc.metadata.get("Header 3") or doc.metadata.get("Header 2") or doc.metadata.get("Header 1") or "기본 섹션"
+            doc.metadata.get("Header 3")
+            or doc.metadata.get("Header 2")
+            or doc.metadata.get("Header 1")
+            or "기본 섹션"
         )
 
         # 공통 자식 분할 로직 호출
         meta_for_children = base_metadata.copy()
         meta_for_children[MetadataFields.SEC_TITLE] = sec_title
 
-        children_list = split_into_children(doc.page_content, parent_id, meta_for_children)
+        children_list = split_into_children(
+            doc.page_content, parent_id, meta_for_children
+        )
 
         # 부모 데이터 구조 완성
         hierarchical_data.append(
@@ -88,9 +110,15 @@ def create_parent_child_chunks(markdown_text: str, base_metadata: dict[str, Any]
                 MetadataFields.PARENT_ID: parent_id,
                 "parent_text": doc.page_content,
                 "metadata": {
-                    MetadataFields.SOURCE_ID: base_metadata.get(MetadataFields.SOURCE_ID, "UNKNOWN"),
-                    MetadataFields.SRC_NAME: base_metadata.get(MetadataFields.SRC_NAME, "UNKNOWN_FILE"),
-                    MetadataFields.DOC_TYPE: base_metadata.get(MetadataFields.DOC_TYPE, "markdown"),
+                    MetadataFields.SOURCE_ID: base_metadata.get(
+                        MetadataFields.SOURCE_ID, "UNKNOWN"
+                    ),
+                    MetadataFields.SRC_NAME: base_metadata.get(
+                        MetadataFields.SRC_NAME, "UNKNOWN_FILE"
+                    ),
+                    MetadataFields.DOC_TYPE: base_metadata.get(
+                        MetadataFields.DOC_TYPE, "markdown"
+                    ),
                     MetadataFields.PG_NUM: base_metadata.get(MetadataFields.PG_NUM, 1),
                     MetadataFields.SEC_TITLE: sec_title,
                 },

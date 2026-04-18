@@ -13,12 +13,16 @@ from src.processing.chunking import create_parent_child_chunks, split_into_child
 from src.utils.paths import PROCESSED_DATA_DIR, RAW_DATA_DIR, ensure_directories
 
 # 로깅 설정
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 
 class PreprocessingPipeline:
-    def __init__(self, raw_dir: Path = RAW_DATA_DIR, processed_dir: Path = PROCESSED_DATA_DIR):
+    def __init__(
+        self, raw_dir: Path = RAW_DATA_DIR, processed_dir: Path = PROCESSED_DATA_DIR
+    ):
         """
         통합 전처리 파이프라인 (#18 이슈 대응)
         """
@@ -62,9 +66,13 @@ class PreprocessingPipeline:
 
                         # [상수 적용] MetadataFields 사용
                         meta_for_children = sec["metadata"].copy()
-                        meta_for_children[MetadataFields.SEC_TITLE] = f"{sec['chapter']} > {sec['article']}"
+                        meta_for_children[MetadataFields.SEC_TITLE] = (
+                            f"{sec['chapter']} > {sec['article']}"
+                        )
 
-                        children = split_into_children(sec["content"], parent_id, meta_for_children)
+                        children = split_into_children(
+                            sec["content"], parent_id, meta_for_children
+                        )
 
                         all_hierarchical_data.append(
                             {
@@ -102,7 +110,9 @@ class PreprocessingPipeline:
             with open(save_path, "w", encoding="utf-8") as f:
                 json.dump(all_hierarchical_data, f, ensure_ascii=False, indent=2)
 
-            logger.info(f"성공: 전처리 완료 ({len(all_hierarchical_data)}개 섹션) -> {save_path}")
+            logger.info(
+                f"성공: 전처리 완료 ({len(all_hierarchical_data)}개 섹션) -> {save_path}"
+            )
 
         return all_hierarchical_data
 

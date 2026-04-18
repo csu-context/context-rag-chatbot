@@ -15,7 +15,9 @@ os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 warnings.filterwarnings("ignore", module="huggingface_hub")
 
 # 로깅 설정
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 
@@ -47,9 +49,13 @@ class ChromaDBManager:
 
         if chroma_host:
             # 서버(Http) 모드: Docker 환경 등에서 별도 컨테이너로 실행 중인 ChromaDB 서버에 접속
-            logger.info(f"ChromaDB 서버 모드 접속 시도 (Host: {chroma_host}, Port: {chroma_port})")
+            logger.info(
+                f"ChromaDB 서버 모드 접속 시도 (Host: {chroma_host}, Port: {chroma_port})"
+            )
             self.client = chromadb.HttpClient(
-                host=chroma_host, port=int(chroma_port), settings=Settings(anonymized_telemetry=False)
+                host=chroma_host,
+                port=int(chroma_port),
+                settings=Settings(anonymized_telemetry=False),
             )
         else:
             # 로컬(Persistent) 모드: 로컬 파일 시스템에 직접 데이터 저장
@@ -65,12 +71,21 @@ class ChromaDBManager:
         # 3. 컬렉션 가져오기 또는 생성
         # BGE-M3 모델은 주로 코사인 유사도(cosine similarity) 검색에 최적화되어 있습니다.
         self.collection = self.client.get_or_create_collection(
-            name=collection_name, embedding_function=self.embedding_fn, metadata={"hnsw:space": "cosine"}
+            name=collection_name,
+            embedding_function=self.embedding_fn,
+            metadata={"hnsw:space": "cosine"},
         )
 
-        logger.info(f"ChromaDB 로드 완료 (컬렉션: {collection_name}, 데이터 개수: {self.collection.count()})")
+        logger.info(
+            f"ChromaDB 로드 완료 (컬렉션: {collection_name}, 데이터 개수: {self.collection.count()})"
+        )
 
-    def upsert_documents(self, ids: list[str], documents: list[str], metadatas: list[dict[str, Any]] | None = None):
+    def upsert_documents(
+        self,
+        ids: list[str],
+        documents: list[str],
+        metadatas: list[dict[str, Any]] | None = None,
+    ):
         """
         문서 청크를 DB에 업서트(Upsert)합니다.
         기존에 동일한 ID가 존재하면 업데이트(Update)를 수행하여 중복 저장을 방지합니다.
@@ -94,8 +109,12 @@ class ChromaDBManager:
                 cleaned_metadatas.append(cleaned)
 
         # Upsert 실행
-        self.collection.upsert(ids=ids, documents=documents, metadatas=cleaned_metadatas)
-        logger.info(f"{len(ids)}개의 문서 청크가 ChromaDB에 성공적으로 업서트되었습니다.")
+        self.collection.upsert(
+            ids=ids, documents=documents, metadatas=cleaned_metadatas
+        )
+        logger.info(
+            f"{len(ids)}개의 문서 청크가 ChromaDB에 성공적으로 업서트되었습니다."
+        )
 
     def query(self, query_texts: list[str], n_results: int = 3) -> dict:
         """
@@ -136,15 +155,21 @@ if __name__ == "__main__":
     ]
 
     # 첫 번째 업서트 (최초 삽입)
-    db_manager.upsert_documents(ids=sample_ids, documents=sample_texts, metadatas=sample_metadatas)
+    db_manager.upsert_documents(
+        ids=sample_ids, documents=sample_texts, metadatas=sample_metadatas
+    )
 
     # 두 번째 업서트 (동일 ID로 덮어쓰기 - 중복 데이터 방지 검증)
     logger.info("--- 3. 중복 저장 방지(Upsert) 검증 ---")
-    db_manager.upsert_documents(ids=sample_ids, documents=sample_texts, metadatas=sample_metadatas)
+    db_manager.upsert_documents(
+        ids=sample_ids, documents=sample_texts, metadatas=sample_metadatas
+    )
     final_count = db_manager.get_count()
 
     logger.info(f"-> 초기 데이터 개수: {initial_count}")
-    logger.info(f"-> 현재 데이터 개수: {final_count} (동일 ID 재업로드 시 데이터가 중복 증가하지 않음 확인)")
+    logger.info(
+        f"-> 현재 데이터 개수: {final_count} (동일 ID 재업로드 시 데이터가 중복 증가하지 않음 확인)"
+    )
 
     logger.info("--- 4. 유사도 검색 테스트 ---")
     queries = ["수습 기간 동안 월급은 어떻게 되나요?", "1년 다니면 휴가 며칠 나와요?"]
@@ -158,4 +183,6 @@ if __name__ == "__main__":
             doc_meta = search_results["metadatas"][i][j]
             doc_dist = search_results["distances"][i][j]
             # hnsw:space 가 cosine일 경우, distance 값이 작을수록 (0에 가까울수록) 유사도가 높습니다.
-            logger.info(f"  - 결과 {j + 1} (거리: {doc_dist:.4f}): {doc_text} (출처: {doc_meta['sec_title']})")
+            logger.info(
+                f"  - 결과 {j + 1} (거리: {doc_dist:.4f}): {doc_text} (출처: {doc_meta['sec_title']})"
+            )

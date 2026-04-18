@@ -38,12 +38,15 @@ if __name__ == "__main__":
             metadata={"source": "연봉규정_2026.pdf", "page": "5"},
         )
     ]
-    run_test_scenario("정상 답변 및 출처 테스트", "올해 신입 사원 연봉이 얼마야?", docs_a)
+    run_test_scenario(
+        "정상 답변 및 출처 테스트", "올해 신입 사원 연봉이 얼마야?", docs_a
+    )
 
     # 시나리오 B: 문서 내 정보가 없는 경우
     docs_b = [
         Document(
-            page_content="회사의 점심 시간은 12시부터 1시까지입니다.", metadata={"source": "복지안내.pdf", "page": "2"}
+            page_content="회사의 점심 시간은 12시부터 1시까지입니다.",
+            metadata={"source": "복지안내.pdf", "page": "2"},
         )
     ]
     run_test_scenario("환각 방지 테스트", "회사에서 법인 차량을 빌릴 수 있어?", docs_b)

@@ -76,7 +76,11 @@ def test_chain_structure():
         from src.core import chains
 
         imports = dir(chains)
-        required_imports = ["get_rag_chain", "ChatPromptTemplate", "RunnablePassthrough"]
+        required_imports = [
+            "get_rag_chain",
+            "ChatPromptTemplate",
+            "RunnablePassthrough",
+        ]
 
         for imp in required_imports:
             if imp in imports:
@@ -167,7 +171,10 @@ def test_with_api():
             return False
 
         llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash", temperature=0.1, google_api_key=api_key, safety_settings=None
+            model="gemini-2.5-flash",
+            temperature=0.1,
+            google_api_key=api_key,
+            safety_settings=None,
         )
 
         print("\n" + "=" * 60)
@@ -205,7 +212,9 @@ def test_with_api():
             print(f"\n📌 {tc['name']}")
             print(f"   질문: {tc['question']}")
 
-            prompt = ChatPromptTemplate.from_messages([("system", RAG_SYSTEM_PROMPT), ("human", "{question}")])
+            prompt = ChatPromptTemplate.from_messages(
+                [("system", RAG_SYSTEM_PROMPT), ("human", "{question}")]
+            )
             chain = prompt | llm
 
             # context가 테스트 케이스에 포함되어 있으면 이를 함께 전달합니다.
