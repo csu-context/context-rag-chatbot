@@ -41,7 +41,7 @@ class ChromaDBManager:
         환경 변수 CHROMA_SERVER_HOST 존재 여부에 따라 로컬(Persistent) 또는 서버(Http) 모드로 동작하며,
         DB 연결 실패 시 재시도(Retry) 로직을 수행합니다.
         """
-      self.collection_name = collection_name
+        self.collection_name = collection_name
         self.embedding_fn = BGEChromaEmbeddingFunction()
 
         # 클라이언트 초기화 및 DB 연결 재시도 로직
