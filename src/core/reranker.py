@@ -1,4 +1,4 @@
-﻿"""Cross-Encoder 기반 문서 리랭킹 모듈.
+"""Cross-Encoder 기반 문서 리랭킹 모듈.
 
 Two-stage Search의 2단계로, Bi-Encoder(Vector DB) 검색 결과 상위 N개를
 Cross-Encoder로 재정렬하여 관련성 스코어를 재계산하고 임계치 이하 문서를 필터링합니다.
@@ -14,7 +14,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Optional
 
 import torch
 from langchain_core.documents import Document
@@ -26,8 +26,9 @@ logger = logging.getLogger(__name__)
 @dataclass
 class RerankResult:
     """리랭킹 결과."""
-    documents: List[Document]
-    scores: List[float]
+
+    documents: list[Document]
+    scores: list[float]
     filtered_count: int = 0
     elapsed_time_sec: float = field(default=0.0)
 
@@ -42,7 +43,7 @@ class CrossEncoderReranker:
     """
 
     _instance: Optional["CrossEncoderReranker"] = None
-    _model: Optional[CrossEncoder] = None
+    _model: CrossEncoder | None = None
     _lock = threading.Lock()
 
     # --- 기본 설정값 ---
@@ -55,8 +56,8 @@ class CrossEncoderReranker:
         self,
         model_name: str = DEFAULT_MODEL_NAME,
         top_k: int = DEFAULT_TOP_K,
-        threshold: Optional[float] = None,
-        device: Optional[str] = None,
+        threshold: float | None = None,
+        device: str | None = None,
     ):
         """리랭커 초기화.
 
@@ -94,17 +95,15 @@ class CrossEncoderReranker:
         else:
             # 기본 (MS MARCO MiniLM) - tanh 활성화로 -1~1 범위, 0.3이 적정
             self.threshold = 0.3
-            logger.info(
-                "Default reranker (MS MARCO MiniLM) detected - threshold auto-set to 0.3"
-            )
+            logger.info("Default reranker (MS MARCO MiniLM) detected - threshold auto-set to 0.3")
 
     @classmethod
     def get_instance(
         cls,
         model_name: str = DEFAULT_MODEL_NAME,
         top_k: int = DEFAULT_TOP_K,
-        threshold: Optional[float] = None,
-        device: Optional[str] = None,
+        threshold: float | None = None,
+        device: str | None = None,
     ) -> "CrossEncoderReranker":
         """싱글톤 인스턴스 반환. 최초 호출 시 모델도 로드.
 
@@ -159,9 +158,9 @@ class CrossEncoderReranker:
     def rerank(
         self,
         query: str,
-        documents: List[Document],
-        top_k: Optional[int] = None,
-        threshold: Optional[float] = None,
+        documents: list[Document],
+        top_k: int | None = None,
+        threshold: float | None = None,
     ) -> RerankResult:
         """쿼리와 문서 리스트를 입력받아 관련성 스코어로 재정렬 및 필터링.
 
@@ -184,9 +183,7 @@ class CrossEncoderReranker:
 
         # --- 검색 결과가 너무 적으면 리랭킹 생략 ---
         if len(documents) < 2:
-            logger.debug(
-                f"Search results too few ({len(documents)} docs). Skipping reranking."
-            )
+            logger.debug(f"Search results too few ({len(documents)} docs). Skipping reranking.")
             return RerankResult(
                 documents=documents,
                 scores=[0.5] * len(documents),
@@ -220,21 +217,16 @@ class CrossEncoderReranker:
 
         # --- 점수 기반 정렬 (내림차순) ---
         scored_docs = sorted(
-            zip(scores, documents),
+            zip(scores, documents, strict=True),
             key=lambda x: x[0],
             reverse=True,
         )
 
         # --- 임계치 필터링 ---
-        filtered = [
-            (score, doc) for score, doc in scored_docs if score >= effective_threshold
-        ]
+        filtered = [(score, doc) for score, doc in scored_docs if score >= effective_threshold]
 
         # --- 최소 1개 이상 보장 로직 ---
-        if not filtered and scored_docs:
-            ranked = [scored_docs[0]]
-        else:
-            ranked = filtered[:effective_top_k]
+        ranked = [scored_docs[0]] if not filtered and scored_docs else filtered[:effective_top_k]
 
         final_scores = [score for score, _ in ranked]
         final_docs = [doc for _, doc in ranked]
@@ -249,8 +241,8 @@ class CrossEncoderReranker:
     def rerank_with_timeout(
         self,
         query: str,
-        documents: List[Document],
-        max_k: Optional[int] = None,
+        documents: list[Document],
+        max_k: int | None = None,
     ) -> RerankResult:
         """지연 시간 고려하여 동적으로 top_k를 조절하는 리랭킹.
 
@@ -290,8 +282,7 @@ class CrossEncoderReranker:
                 # 인스턴스 설정을 스레드 안전하게 업데이트 (다음 호출부터 적용)
                 self.top_k = reduced_k
                 logger.warning(
-                    f"Reranking took {result.elapsed_time_sec:.2f}s. "
-                    f"Reduced top_k to {reduced_k} for subsequent calls."
+                    f"Reranking took {result.elapsed_time_sec:.2f}s. Reduced top_k to {reduced_k} for subsequent calls."
                 )
 
         return result

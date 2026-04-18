@@ -1,6 +1,8 @@
-﻿import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
+import pytest
 from langchain_core.documents import Document
+
 from src.core.reranker import CrossEncoderReranker
 
 
@@ -37,7 +39,7 @@ class TestCrossEncoderReranker:
 
     def test_rerank_sorting(self, sample_docs):
         """리랭킹 정렬 검증: 높은 점수 문서가 상위"""
-        with patch.object(CrossEncoderReranker, '_load_model') as mock_load:
+        with patch.object(CrossEncoderReranker, "_load_model") as mock_load:
             # Mock 모델 설정 - .tolist() 메서드 필요
             mock_model = MagicMock()
             mock_scores = MagicMock()
@@ -54,7 +56,7 @@ class TestCrossEncoderReranker:
 
     def test_threshold_filtering(self, sample_docs):
         """임계치 필터링 검증: threshold 미만 문서 제거"""
-        with patch.object(CrossEncoderReranker, '_load_model') as mock_load:
+        with patch.object(CrossEncoderReranker, "_load_model") as mock_load:
             mock_model = MagicMock()
             # 첫 번째 문서는 임계치(0.3) 미만, 나머지는 초과
             mock_scores = MagicMock()
@@ -70,7 +72,7 @@ class TestCrossEncoderReranker:
 
     def test_min_one_document_guarantee(self, sample_docs):
         """최소 1개 보장: 모든 문서가 threshold 미만일 경우 최고 점수 유지"""
-        with patch.object(CrossEncoderReranker, '_load_model') as mock_load:
+        with patch.object(CrossEncoderReranker, "_load_model") as mock_load:
             mock_model = MagicMock()
             # 모든 문서가 임계치(0.9) 미만
             mock_scores = MagicMock()
@@ -95,7 +97,7 @@ class TestCrossEncoderReranker:
 
     def test_exception_handling(self, sample_docs):
         """예외 발생 시 원본 문서 반환"""
-        with patch.object(CrossEncoderReranker, '_load_model') as mock_load:
+        with patch.object(CrossEncoderReranker, "_load_model") as mock_load:
             mock_model = MagicMock()
             mock_model.predict.side_effect = Exception("Model Error")
             mock_load.return_value = mock_model
@@ -107,7 +109,7 @@ class TestCrossEncoderReranker:
 
     def test_timeout_dynamic_top_k(self, sample_docs):
         """시간 초과 시 동적 top_k 조절"""
-        with patch.object(CrossEncoderReranker, '_load_model') as mock_load:
+        with patch.object(CrossEncoderReranker, "_load_model") as mock_load:
             mock_model = MagicMock()
             mock_scores = MagicMock()
             mock_scores.tolist.return_value = [0.8, 0.5, 0.2]
@@ -117,7 +119,7 @@ class TestCrossEncoderReranker:
             reranker = CrossEncoderReranker.get_instance(top_k=10, threshold=0.1)
 
             # time.time를 모킹하여 5초 이상 소요되도록 설정 (시작: 1.0, 종료: 6.5)
-            with patch('time.time', side_effect=[1.0, 6.5]):
+            with patch("time.time", side_effect=[1.0, 6.5]):
                 result = reranker.rerank_with_timeout("Python 특징", sample_docs)
 
                 # result를 검증하여 변수 경고 해결
@@ -142,7 +144,7 @@ class TestCrossEncoderReranker:
 
     def test_elapsed_time_tracking(self, sample_docs):
         """추론 시간 측정 검증"""
-        with patch.object(CrossEncoderReranker, '_load_model') as mock_load:
+        with patch.object(CrossEncoderReranker, "_load_model") as mock_load:
             mock_model = MagicMock()
             mock_scores = MagicMock()
             mock_scores.tolist.return_value = [0.8, 0.5]
@@ -152,7 +154,7 @@ class TestCrossEncoderReranker:
             reranker = CrossEncoderReranker.get_instance()
 
             # time.time를 모킹하여 0.5초 소요되도록 설정 (시작: 1.0, 종료: 1.5)
-            with patch('time.time', side_effect=[1.0, 1.5]):
+            with patch("time.time", side_effect=[1.0, 1.5]):
                 result = reranker.rerank("Python 특징", sample_docs)
 
                 assert result.elapsed_time_sec == pytest.approx(0.5)

@@ -1,19 +1,17 @@
-import os
 import logging
-from typing import List, Dict, Any
+import os
+from typing import Any
 
-logger = logging.getLogger(__name__)
-
-from langchain_core.runnables import RunnableLambda
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import RunnablePassthrough
 from langchain_core.documents import Document
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables import RunnableLambda, RunnablePassthrough
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 from src.core.prompts import RAG_SYSTEM_PROMPT
-from src.utils.citation import format_citations
 from src.core.reranker import CrossEncoderReranker
+from src.utils.citation import format_citations
 
+logger = logging.getLogger(__name__)
 
 def get_rag_chain(retriever):
     llm = ChatGoogleGenerativeAI(
@@ -23,7 +21,7 @@ def get_rag_chain(retriever):
         safety_settings=None,
     )
 
-    def retrieve_and_rerank(input_dict: Dict[str, Any]) -> List[Document]:
+    def retrieve_and_rerank(input_dict: dict[str, Any]) -> list[Document]:
         """검색 → 리랭킹 → 상위 문서 반환 파이프라인."""
         query = input_dict.get("question", "")
 
@@ -41,14 +39,11 @@ def get_rag_chain(retriever):
         result = reranker.rerank_with_timeout(query, docs)
 
         if result.filtered_count > 0:
-            logger.debug(
-                f"Reranked {len(docs)} → {len(result.documents)} docs "
-                f"(filtered {result.filtered_count})"
-            )
+            logger.debug(f"Reranked {len(docs)} → {len(result.documents)} docs (filtered {result.filtered_count})")
 
         return result.documents
 
-    def format_docs(docs: List[Document]) -> str:
+    def format_docs(docs: list[Document]) -> str:
         formatted = []
         for doc in docs:
             source = doc.metadata.get("src_name") or doc.metadata.get("source", "unknown")
@@ -57,20 +52,15 @@ def get_rag_chain(retriever):
             formatted.append(content)
         return "\n\n".join(formatted)
 
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", RAG_SYSTEM_PROMPT),
-        ("human", "{question}")
-    ])
+    prompt = ChatPromptTemplate.from_messages([("system", RAG_SYSTEM_PROMPT), ("human", "{question}")])
 
-    def combine_answer_and_citations(input_dict: Dict[str, Any]) -> str:
+    def combine_answer_and_citations(input_dict: dict[str, Any]) -> str:
         answer = input_dict["answer"].content
         citations = format_citations(input_dict["docs"])
         return f"{answer}{citations}"
 
     rag_chain = (
-        RunnablePassthrough.assign(
-            docs=RunnableLambda(retrieve_and_rerank)
-        )
+        RunnablePassthrough.assign(docs=RunnableLambda(retrieve_and_rerank))
         .assign(context=lambda x: format_docs(x["docs"]))
         .assign(answer=prompt | llm)
     ) | combine_answer_and_citations
