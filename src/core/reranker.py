@@ -19,6 +19,7 @@ from typing import Optional
 import torch
 from langchain_core.documents import Document
 from sentence_transformers import CrossEncoder
+
 from src.utils.paths import CROSS_ENCODER_CACHE_DIR  # 경로 상수 import
 
 logger = logging.getLogger(__name__)
