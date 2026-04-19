@@ -51,18 +51,21 @@ class ChromaDBManager:
         chroma_host = os.getenv("CHROMA_SERVER_HOST")
         chroma_port = os.getenv("CHROMA_SERVER_PORT", "8000")
 
+        # 공통 설정 변수로 추출 (DRY 원칙 적용)
+        common_settings = Settings(anonymized_telemetry=False)
+
         for attempt in range(max_retries):
             try:
                 if chroma_host:
                     logger.info(f"ChromaDB 서버 모드 접속 시도 (Host: {chroma_host}, Port: {chroma_port})")
                     self.client = chromadb.HttpClient(
-                        host=chroma_host, port=int(chroma_port), settings=Settings(anonymized_telemetry=False)
+                        host=chroma_host, port=int(chroma_port), settings=common_settings
                     )
                 else:
                     ensure_directories()
                     logger.info(f"ChromaDB 로컬 모드 활성화 (Path: {VECTOR_DB_DIR})")
                     self.client = chromadb.PersistentClient(
-                        path=str(VECTOR_DB_DIR), settings=Settings(anonymized_telemetry=False)
+                        path=str(VECTOR_DB_DIR), settings=common_settings
                     )
 
                 # 컬렉션 로드 (실질적인 연결 테스트 구간)
@@ -91,14 +94,24 @@ class ChromaDBManager:
     def embed_query(self, query_text: str) -> list[float]:
         """
         사용자 쿼리를 벡터(Embedding)로 변환합니다.
+
+        Raises:
+            RuntimeError: 임베딩 생성 실패 시 하이브리드 리트리버 등
+                          상위 모듈에서 방어 로직을 수행할 수 있도록 에러를 전파합니다.
         """
         try:
             return self.embedding_fn([query_text])[0]
         except Exception as e:
             logger.error(f"쿼리 임베딩 중 오류 발생: {e}")
-            return []
+            # 빈 리스트를 반환하지 않고 에러를 명시적으로 발생시킴
+            raise RuntimeError(f"Failed to embed query: '{query_text}'") from e
 
-    def upsert_documents(self, ids: list[str], documents: list[str], metadatas: list[dict[str, Any]] | None = None):
+    def upsert_documents(
+        self,
+        ids: list[str],
+        documents: list[str],
+        metadatas: list[dict[str, Any]] | None = None,
+    ):
         """
         문서 청크를 DB에 업서트(Upsert)합니다.
         기존에 동일한 ID가 존재하면 업데이트(Update)를 수행하여 중복 저장을 방지합니다.
