@@ -58,15 +58,11 @@ class ChromaDBManager:
             try:
                 if chroma_host:
                     logger.info(f"ChromaDB 서버 모드 접속 시도 (Host: {chroma_host}, Port: {chroma_port})")
-                    self.client = chromadb.HttpClient(
-                        host=chroma_host, port=int(chroma_port), settings=common_settings
-                    )
+                    self.client = chromadb.HttpClient(host=chroma_host, port=int(chroma_port), settings=common_settings)
                 else:
                     ensure_directories()
                     logger.info(f"ChromaDB 로컬 모드 활성화 (Path: {VECTOR_DB_DIR})")
-                    self.client = chromadb.PersistentClient(
-                        path=str(VECTOR_DB_DIR), settings=common_settings
-                    )
+                    self.client = chromadb.PersistentClient(path=str(VECTOR_DB_DIR), settings=common_settings)
 
                 # 컬렉션 로드 (실질적인 연결 테스트 구간)
                 self.collection = self.client.get_or_create_collection(
