@@ -1,16 +1,19 @@
 import os
 import sys
-os.environ['KMP_DUPLICATE_LIB_OK'] = 'True'
 from pathlib import Path
+
+# KMP 에러 방지 (최상단 배치)
+os.environ["KMP_DUPLICATE_LIB_OK"] = "True"
 
 # 파이썬 모듈 경로 강제 추가
 PROJECT_ROOT = Path(__file__).resolve().parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
-from langchain_community.document_loaders import PyPDFLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from src.vector_db.chroma_manager import ChromaDBManager
+# sys.path 추가 후 import 되어야 하므로 린트 예외(noqa: E402) 처리
+from langchain_community.document_loaders import PyPDFLoader  # noqa: E402
+from langchain_text_splitters import RecursiveCharacterTextSplitter  # noqa: E402
+from src.vector_db.chroma_manager import ChromaDBManager  # noqa: E402
 
 
 def test_pdf_to_chroma():
@@ -52,7 +55,7 @@ def test_pdf_to_chroma():
     test_queries = [
         "조선대학교 학칙의 제정 목적이 무엇인가요?",
         "졸업 요건이나 기준은 어떻게 되나요?",
-        "성적 평가는 어떤 방식으로 이루어집니까?"
+        "성적 평가는 어떤 방식으로 이루어집니까?",
     ]
 
     for query in test_queries:
@@ -64,9 +67,9 @@ def test_pdf_to_chroma():
             continue
 
         for i, res in enumerate(results):
-            score = res.get('score', 0)
-            content = res.get('content', '').replace('\n', ' ')[:100] + "..."
-            page = res.get('metadata', {}).get('page', '알수없음')
+            score = res.get("score", 0)
+            content = res.get("content", "").replace("\n", " ")[:100] + "..."
+            page = res.get("metadata", {}).get("page", "알수없음")
             display_page = page + 1 if isinstance(page, int) else page
 
             print(f"  -> 순위 {i + 1} (Score: {score:.4f}) | 출처: {display_page}페이지")
