@@ -19,6 +19,7 @@ from typing import Optional
 import torch
 from langchain_core.documents import Document
 from sentence_transformers import CrossEncoder
+from src.utils.paths import CROSS_ENCODER_CACHE_DIR  # 경로 상수 import
 
 logger = logging.getLogger(__name__)
 
@@ -143,10 +144,11 @@ class CrossEncoderReranker:
 
             logger.info(f"Loading CrossEncoder model: {self.model_name} on {self.device}")
             try:
+                # paths.py의 공통 경로 상수를 사용하여 캐시 디렉토리 관리
                 self._model = CrossEncoder(
                     self.model_name,
                     device=self.device,
-                    cache_dir="./.cache/cross-encoder",
+                    cache_dir=str(CROSS_ENCODER_CACHE_DIR),  # 하드코딩 제거
                 )
                 logger.info("CrossEncoder model loaded successfully")
             except Exception as e:
@@ -176,7 +178,7 @@ class CrossEncoderReranker:
         Note:
             - 문서 수가 2개 미만이면 리랭킹 생략 후 원본 반환
             - 임계치 이하 문서는 과감히 제거 (환각 방지)
-            - 필터링 후 결과가 비어있을 경우, 최고 점수 문서 1개를 유지
+            - 필터링 결과가 없는 경우 빈 리스트 반환 (무관한 질문에 대한 억력 답변 방지)
         """
         effective_top_k = top_k or self.top_k
         effective_threshold = threshold if threshold is not None else self.threshold
@@ -223,10 +225,12 @@ class CrossEncoderReranker:
         )
 
         # --- 임계치 필터링 ---
+        # 임계치 미만인 문서는 모두 제거. 관련성이 낮은 경우 빈 리스트가 반환될 수 있음.
         filtered = [(score, doc) for score, doc in scored_docs if score >= effective_threshold]
 
-        # --- 최소 1개 이상 보장 로직 ---
-        ranked = [scored_docs[0]] if not filtered and scored_docs else filtered[:effective_top_k]
+        # --- 상위 K개 선택 (빈 리스트 허용) ---
+        # 무관한 질문일 경우 filtered가 비어있을 수 있으며, 이는 '정보 없음' 처리로 이어짐.
+        ranked = filtered[:effective_top_k]
 
         final_scores = [score for score, _ in ranked]
         final_docs = [doc for _, doc in ranked]
