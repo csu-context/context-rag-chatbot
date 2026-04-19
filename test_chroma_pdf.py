@@ -13,6 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
 # sys.path 추가 후 import 되어야 하므로 린트 예외(noqa: E402) 처리
 from langchain_community.document_loaders import PyPDFLoader  # noqa: E402
 from langchain_text_splitters import RecursiveCharacterTextSplitter  # noqa: E402
+
 from src.vector_db.chroma_manager import ChromaDBManager  # noqa: E402
 
 
