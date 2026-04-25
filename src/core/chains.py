@@ -1,5 +1,6 @@
 import logging
 import os
+import time
 from typing import Any
 
 from langchain_core.documents import Document
@@ -37,11 +38,10 @@ def get_rag_chain(vector_db):
         query = input_dict.get("question", "")
         k = input_dict.get("k", 5)
 
+        # 1. DB 검색 시간 측정
+        search_start = time.time()
         try:
-            # 1. ChromaDBManager.search 호출 (dict 리스트 반환)
             search_results = vector_db.search(query_text=query, k=k)
-            
-            # 2. dict -> Document 객체로 변환
             docs = [
                 Document(
                     page_content=res["content"],
@@ -52,15 +52,32 @@ def get_rag_chain(vector_db):
         except Exception as e:
             logger.error(f"DB 검색 중 오류 발생: {e}")
             return []
+        search_end = time.time()
+        search_duration = search_end - search_start
 
         if not docs:
-            logger.info("검색 결과가 없습니다.")
+            logger.info(f"검색 결과 없음 (소요시간: {search_duration:.2f}s)")
             return []
 
-        # 3. 리랭킹 (CrossEncoderReranker 사용)
+        # 2. 리랭킹 시간 측정
+        rerank_start = time.time()
         try:
             reranker = CrossEncoderReranker.get_instance()
             result = reranker.rerank_with_timeout(query, docs)
+            rerank_duration = time.time() - rerank_start
+            
+            # 성능 데이터 기록 (1. 일반 로그)
+            logger.info(f"단계별 성능 측정: 검색={search_duration:.2f}s, 리랭킹={rerank_duration:.2f}s")
+            
+            # 성능 데이터 기록 (2. 전용 파일 로그)
+            try:
+                from src.utils.logger import PerformanceLogger
+                perf_logger = PerformanceLogger()
+                perf_logger.log("Search", search_duration, f"k={k} docs={len(docs)}")
+                perf_logger.log("Rerank", rerank_duration, f"filtered={len(docs)}->{len(result.documents)}")
+            except Exception as log_e:
+                logger.error(f"성능 로그 기록 실패: {log_e}")
+            
             return result.documents
         except Exception as e:
             logger.error(f"리랭킹 실패: {e}")

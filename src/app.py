@@ -1,13 +1,19 @@
 import streamlit as st
 import os
+import time
+import logging
 from dotenv import load_dotenv
+from src.utils.paths import ensure_directories
+from src.utils.logger import setup_global_logging, PerformanceLogger
 
-# 환경 변수 로드
+# 환경 변수 및 로깅 설정
 load_dotenv()
+setup_global_logging()
+perf_logger = PerformanceLogger() # 전용 로거 인스턴스 생성
+logger = logging.getLogger(__name__)
 
 from src.vector_db.chroma_manager import ChromaDBManager
 from src.core.chains import get_rag_chain
-from src.utils.paths import ensure_directories
 
 # --- 1. 페이지 설정 (가장 상단에 위치) ---
 st.set_page_config(
@@ -89,16 +95,28 @@ if prompt := st.chat_input("규정에 대해 궁금한 점을 물어보세요.")
     # 어시스턴트 답변 생성
     with st.chat_message("assistant"):
         with st.spinner("관련 규정을 분석하여 답변을 생성하고 있습니다..."):
+            start_time = time.time() # 전체 시작 시간
+            
             try:
-                # 실제 RAG 체인 호출
-                # k_value를 입력 변수로 전달하여 검색 정확도 조절
+                # 1. RAG 체인 호출
+                # chains.py 내부에서 검색 및 리랭킹이 수행됨
                 response = rag_chain.invoke({"question": prompt, "k": k_value})
+                
+                end_time = time.time() # 전체 종료 시간
+                elapsed_time = end_time - start_time
+                
+                # 성능 전용 클래스를 통해 기록
+                perf_logger.log("Total", elapsed_time, prompt[:30])
                 
                 # 답변 출력 및 저장
                 st.markdown(response)
                 st.session_state.messages.append({"role": "assistant", "content": response})
                 
+                # 성능 정보 (선택적 표시 - 디버깅용)
+                # st.caption(f"⏱️ 응답 시간: {elapsed_time:.2f}초")
+                
             except Exception as e:
+                logger.error(f"답변 생성 오류: {e}", exc_info=True)
                 st.error(f"답변 생성 중 오류가 발생했습니다: {e}")
                 st.session_state.messages.append({
                     "role": "assistant", 

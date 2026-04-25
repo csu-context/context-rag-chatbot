@@ -9,7 +9,6 @@ services:
     volumes:
       - ./src:/app/src
       - ./data:/app/data
-      - ./vector_db:/app/vector_db
       - ./models:/app/models
       - ./logs:/app/logs
       - ./.env:/app/.env
