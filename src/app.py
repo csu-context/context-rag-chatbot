@@ -1,19 +1,19 @@
-import streamlit as st
-import os
-import time
 import logging
+import time
+
+import streamlit as st
 from dotenv import load_dotenv
+
+from src.core.chains import get_rag_chain
+from src.utils.logger import PerformanceLogger, setup_global_logging
 from src.utils.paths import ensure_directories
-from src.utils.logger import setup_global_logging, PerformanceLogger
+from src.vector_db.chroma_manager import ChromaDBManager
 
 # 환경 변수 및 로깅 설정
 load_dotenv()
 setup_global_logging()
-perf_logger = PerformanceLogger() # 전용 로거 인스턴스 생성
+perf_logger = PerformanceLogger()  # 전용 로거 인스턴스 생성
 logger = logging.getLogger(__name__)
-
-from src.vector_db.chroma_manager import ChromaDBManager
-from src.core.chains import get_rag_chain
 
 # --- 1. 페이지 설정 (가장 상단에 위치) ---
 st.set_page_config(
@@ -24,6 +24,7 @@ st.set_page_config(
 # 필수 디렉토리 확인 및 생성
 ensure_directories()
 
+
 # --- 2. RAG 시스템 초기화 (캐싱) ---
 @st.cache_resource
 def initialize_rag_system():
@@ -33,6 +34,7 @@ def initialize_rag_system():
     # RAG 체인 생성 (vector_db 인스턴스 주입)
     rag_chain = get_rag_chain(db_manager)
     return db_manager, rag_chain
+
 
 try:
     db_manager, rag_chain = initialize_rag_system()
@@ -61,7 +63,7 @@ with st.sidebar:
     st.subheader("📊 데이터베이스 상태")
     count = db_manager.get_count()
     st.write(f"현재 저장된 청크 수: **{count}**")
-    
+
     if st.button("🔄 상태 새로고침"):
         st.rerun()
 
@@ -93,35 +95,33 @@ if prompt := st.chat_input("규정에 대해 궁금한 점을 물어보세요.")
     st.session_state.messages.append({"role": "user", "content": prompt})
 
     # 어시스턴트 답변 생성
-    with st.chat_message("assistant"):
-        with st.spinner("관련 규정을 분석하여 답변을 생성하고 있습니다..."):
-            start_time = time.time() # 전체 시작 시간
-            
-            try:
-                # 1. RAG 체인 호출
-                # chains.py 내부에서 검색 및 리랭킹이 수행됨
-                response = rag_chain.invoke({"question": prompt, "k": k_value})
-                
-                end_time = time.time() # 전체 종료 시간
-                elapsed_time = end_time - start_time
-                
-                # 성능 전용 클래스를 통해 기록
-                perf_logger.log("Total", elapsed_time, prompt[:30])
-                
-                # 답변 출력 및 저장
-                st.markdown(response)
-                st.session_state.messages.append({"role": "assistant", "content": response})
-                
-                # 성능 정보 (선택적 표시 - 디버깅용)
-                # st.caption(f"⏱️ 응답 시간: {elapsed_time:.2f}초")
-                
-            except Exception as e:
-                logger.error(f"답변 생성 오류: {e}", exc_info=True)
-                st.error(f"답변 생성 중 오류가 발생했습니다: {e}")
-                st.session_state.messages.append({
-                    "role": "assistant", 
-                    "content": "죄송합니다. 내부 시스템 오류로 답변을 생성할 수 없습니다."
-                })
+    with st.chat_message("assistant"), st.spinner("관련 규정을 분석하여 답변을 생성하고 있습니다..."):
+        start_time = time.time()  # 전체 시작 시간
+
+        try:
+            # 1. RAG 체인 호출
+            # chains.py 내부에서 검색 및 리랭킹이 수행됨
+            response = rag_chain.invoke({"question": prompt, "k": k_value})
+
+            end_time = time.time()  # 전체 종료 시간
+            elapsed_time = end_time - start_time
+
+            # 성능 전용 클래스를 통해 기록
+            perf_logger.log("Total", elapsed_time, prompt[:30])
+
+            # 답변 출력 및 저장
+            st.markdown(response)
+            st.session_state.messages.append({"role": "assistant", "content": response})
+
+            # 성능 정보 (선택적 표시 - 디버깅용)
+            # st.caption(f"⏱️ 응답 시간: {elapsed_time:.2f}초")
+
+        except Exception as e:
+            logger.error(f"답변 생성 오류: {e}", exc_info=True)
+            st.error(f"답변 생성 중 오류가 발생했습니다: {e}")
+            st.session_state.messages.append(
+                {"role": "assistant", "content": "죄송합니다. 내부 시스템 오류로 답변을 생성할 수 없습니다."}
+            )
 
 # --- 7. 푸터 ---
 st.markdown("---")

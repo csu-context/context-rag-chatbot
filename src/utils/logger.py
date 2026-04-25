@@ -1,8 +1,9 @@
 import logging
-import os
 import threading
 from datetime import datetime
+
 from src.utils.paths import LOGS_DIR
+
 
 class PerformanceLogger:
     """성능 데이터를 중복 없이 확실히 기록하기 위한 전용 클래스 (싱글톤)"""
@@ -12,7 +13,7 @@ class PerformanceLogger:
     def __new__(cls):
         with cls._lock:
             if cls._instance is None:
-                cls._instance = super(PerformanceLogger, cls).__new__(cls)
+                cls._instance = super().__new__(cls)
                 cls._instance._setup()
             return cls._instance
 
@@ -29,11 +30,10 @@ class PerformanceLogger:
         # 콤마나 개행 문자 제거하여 CSV 형식 유지
         info = info.replace(",", " ").replace("\n", " ").strip()
         log_entry = f"{timestamp},{log_type},{duration:.2f},{info}\n"
-        
+
         # Thread-safe하게 파일 쓰기
-        with self._lock:
-            with open(self.log_file, "a", encoding="utf-8") as f:
-                f.write(log_entry)
+        with self._lock, open(self.log_file, "a", encoding="utf-8") as f:
+            f.write(log_entry)
 
 def setup_global_logging():
     """시스템 기본 로깅 설정 (app.log 용)"""

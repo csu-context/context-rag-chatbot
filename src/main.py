@@ -7,7 +7,7 @@ from src.vector_db.chroma_manager import ChromaDBManager
 
 # 로깅 설정
 logging.basicConfig(
-    level=logging.INFO, 
+    level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[
         logging.StreamHandler(sys.stdout)
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 def main():
     """
     RAG 챗봇 데이터 구축(Ingestion) CLI 도구.
-    
+
     기능:
     1. data/raw 디렉토리의 문서(PDF, MD) 스캔
     2. 문서 파싱 및 계층적 청킹 (Parent-Child)
@@ -47,9 +47,9 @@ def main():
         if processed_data:
             total_parents = len(processed_data)
             total_children = sum(len(p["children"]) for p in processed_data)
-            
+
             final_count = db_manager.get_count()
-            
+
             logger.info("-" * 50)
             logger.info("✅ 데이터 구축 완료!")
             logger.info(f"- 처리된 문서 섹션 수: {total_parents}")

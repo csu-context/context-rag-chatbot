@@ -15,7 +15,7 @@ from src.utils.citation import format_citations
 logger = logging.getLogger(__name__)
 
 
-def get_rag_chain(vector_db):
+def get_rag_chain(vector_db): # noqa: C901
     """
     RAG 파이프라인 체인을 생성합니다.
     vector_db: src.vector_db.chroma_manager.ChromaDBManager 인스턴스
@@ -26,9 +26,9 @@ def get_rag_chain(vector_db):
         logger.info(f"GOOGLE_API_KEY 로드됨: {api_key[:4]}****")
     else:
         logger.error("GOOGLE_API_KEY를 찾을 수 없습니다! .env 파일을 확인하세요.")
-        
+
     llm = ChatGoogleGenerativeAI(
-        model="gemini-flash-latest", 
+        model="gemini-flash-latest",
         temperature=0.1,
         google_api_key=api_key,
     )
@@ -65,10 +65,10 @@ def get_rag_chain(vector_db):
             reranker = CrossEncoderReranker.get_instance()
             result = reranker.rerank_with_timeout(query, docs)
             rerank_duration = time.time() - rerank_start
-            
+
             # 성능 데이터 기록 (1. 일반 로그)
             logger.info(f"단계별 성능 측정: 검색={search_duration:.2f}s, 리랭킹={rerank_duration:.2f}s")
-            
+
             # 성능 데이터 기록 (2. 전용 파일 로그)
             try:
                 from src.utils.logger import PerformanceLogger
@@ -77,7 +77,7 @@ def get_rag_chain(vector_db):
                 perf_logger.log("Rerank", rerank_duration, f"filtered={len(docs)}->{len(result.documents)}")
             except Exception as log_e:
                 logger.error(f"성능 로그 기록 실패: {log_e}")
-            
+
             return result.documents
         except Exception as e:
             logger.error(f"리랭킹 실패: {e}")
@@ -101,7 +101,7 @@ def get_rag_chain(vector_db):
     def combine_answer_and_citations(input_dict: dict[str, Any]) -> str:
         """답변과 인용 정보를 결합하여 최종 응답 생성."""
         answer_obj = input_dict["answer"]
-        
+
         # 1. 텍스트 추출
         if hasattr(answer_obj, "content"):
             content = answer_obj.content
@@ -113,12 +113,12 @@ def get_rag_chain(vector_db):
                 answer = str(content)
         else:
             answer = str(answer_obj)
-            
+
         # 2. 인용 정보 결합
         docs = input_dict["docs"]
         if not docs:
             return answer
-            
+
         citations = format_citations(docs)
         return f"{answer}\n\n{citations}"
 

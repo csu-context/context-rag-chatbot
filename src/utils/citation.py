@@ -1,5 +1,7 @@
 import unicodedata
+
 from langchain_core.documents import Document
+
 
 def normalize_text(text: str) -> str:
     """NFD(자소 분리) 한글을 NFC로 정규화하여 깨짐 현상을 방지합니다."""
@@ -17,18 +19,18 @@ def format_citations(docs: list[Document]) -> str:
 
     sources = []
     seen = set()
-    
+
     for doc in docs:
         src_name = doc.metadata.get("src_name") or doc.metadata.get("source", "알 수 없는 파일")
         pg_num = doc.metadata.get("pg_num") or doc.metadata.get("page")
 
         # NFD -> NFC 정규화 적용 (한글 깨짐 방지)
         safe_src_name = normalize_text(src_name)
-        
+
         # 페이지 정보 포맷팅
         page_info = f"p.{pg_num}" if pg_num else "-"
         citation_str = f"{safe_src_name} ({page_info})"
-        
+
         if citation_str not in seen:
             sources.append(citation_str)
             seen.add(citation_str)

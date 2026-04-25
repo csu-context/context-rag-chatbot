@@ -26,7 +26,7 @@ class PreprocessingPipeline:
         self.processed_dir = processed_dir
         ensure_directories()
 
-    def run(self, save_filename: str | None = None) -> list[dict[str, Any]]:
+    def run(self, save_filename: str | None = None) -> list[dict[str, Any]]: # noqa: C901
         """
         전체 전처리 파이프라인 실행: 스캔 -> (파싱+표준화) -> 계층적 청킹 -> 저장
         """
@@ -108,14 +108,14 @@ class PreprocessingPipeline:
         if all_hierarchical_data:
             from src.vector_db.chroma_manager import ChromaDBManager
             db_manager = ChromaDBManager(collection_name="rag_collection")
-            
+
             ids, docs, metas = [], [], []
             for parent in all_hierarchical_data:
                 for child in parent["children"]:
                     ids.append(child["chunk_id"])
                     docs.append(child["text"])
                     metas.append(child["metadata"])
-            
+
             if ids:
                 logger.info(f"ChromaDB 업서트 시작 ({len(ids)}개 청크)...")
                 db_manager.upsert_documents(ids=ids, documents=docs, metadatas=metas)
