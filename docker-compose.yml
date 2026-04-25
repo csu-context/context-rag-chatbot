@@ -10,6 +10,7 @@ services:
       - ./src:/app/src
       - ./data:/app/data
       - ./vector_db:/app/vector_db
+      - ./models:/app/models
       - ./logs:/app/logs
       - ./.env:/app/.env
     # .env 파일 로드
@@ -18,6 +19,7 @@ services:
     environment:
       - CHROMA_SERVER_HOST=chromadb
       - CHROMA_SERVER_PORT=8000
+      - HF_HOME=/app/models
     ports:
       - "8501:8501"
     # ChromaDB 서버가 준비될 때까지 대기
