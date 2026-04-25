@@ -15,7 +15,7 @@ from src.utils.citation import format_citations
 logger = logging.getLogger(__name__)
 
 
-def get_rag_chain(vector_db): # noqa: C901
+def get_rag_chain(vector_db):  # noqa: C901
     """
     RAG 파이프라인 체인을 생성합니다.
     vector_db: src.vector_db.chroma_manager.ChromaDBManager 인스턴스
@@ -43,10 +43,7 @@ def get_rag_chain(vector_db): # noqa: C901
         try:
             search_results = vector_db.search(query_text=query, k=k)
             docs = [
-                Document(
-                    page_content=res["content"],
-                    metadata={**res["metadata"], "score": res["score"]}
-                )
+                Document(page_content=res["content"], metadata={**res["metadata"], "score": res["score"]})
                 for res in search_results
             ]
         except Exception as e:
@@ -72,6 +69,7 @@ def get_rag_chain(vector_db): # noqa: C901
             # 성능 데이터 기록 (2. 전용 파일 로그)
             try:
                 from src.utils.logger import PerformanceLogger
+
                 perf_logger = PerformanceLogger()
                 perf_logger.log("Search", search_duration, f"k={k} docs={len(docs)}")
                 perf_logger.log("Rerank", rerank_duration, f"filtered={len(docs)}->{len(result.documents)}")
@@ -93,10 +91,7 @@ def get_rag_chain(vector_db): # noqa: C901
             formatted.append(content)
         return "\n\n".join(formatted)
 
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", RAG_SYSTEM_PROMPT),
-        ("human", "{question}")
-    ])
+    prompt = ChatPromptTemplate.from_messages([("system", RAG_SYSTEM_PROMPT), ("human", "{question}")])
 
     def combine_answer_and_citations(input_dict: dict[str, Any]) -> str:
         """답변과 인용 정보를 결합하여 최종 응답 생성."""
@@ -124,15 +119,9 @@ def get_rag_chain(vector_db): # noqa: C901
 
     # 통합 RAG 체인 구성 (LCEL)
     rag_chain = (
-        RunnablePassthrough.assign(
-            docs=RunnableLambda(retrieve_and_rerank)
-        )
-        .assign(
-            context=lambda x: format_docs(x["docs"])
-        )
-        .assign(
-            answer=prompt | llm
-        )
+        RunnablePassthrough.assign(docs=RunnableLambda(retrieve_and_rerank))
+        .assign(context=lambda x: format_docs(x["docs"]))
+        .assign(answer=prompt | llm)
     ) | combine_answer_and_citations
 
     return rag_chain

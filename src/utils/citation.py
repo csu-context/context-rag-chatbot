@@ -9,6 +9,7 @@ def normalize_text(text: str) -> str:
         return text
     return unicodedata.normalize("NFC", text)
 
+
 def format_citations(docs: list[Document]) -> str:
     """
     검색된 문서들(Document 객체 리스트)에서 메타데이터를 추출하여

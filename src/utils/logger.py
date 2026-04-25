@@ -7,6 +7,7 @@ from src.utils.paths import LOGS_DIR
 
 class PerformanceLogger:
     """성능 데이터를 중복 없이 확실히 기록하기 위한 전용 클래스 (싱글톤)"""
+
     _instance = None
     _lock = threading.Lock()
 
@@ -35,17 +36,15 @@ class PerformanceLogger:
         with self._lock, open(self.log_file, "a", encoding="utf-8") as f:
             f.write(log_entry)
 
+
 def setup_global_logging():
     """시스템 기본 로깅 설정 (app.log 용)"""
     log_file = LOGS_DIR / "app.log"
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(levelname)s - %(message)s",
-        handlers=[
-            logging.StreamHandler(),
-            logging.FileHandler(log_file, encoding="utf-8")
-        ],
-        force=True
+        handlers=[logging.StreamHandler(), logging.FileHandler(log_file, encoding="utf-8")],
+        force=True,
     )
     # 노이즈 제거
     for name in ["httpx", "google", "langchain"]:

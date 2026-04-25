@@ -7,11 +7,7 @@ from src.vector_db.chroma_manager import ChromaDBManager
 
 # 로깅 설정
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.StreamHandler(sys.stdout)
-    ]
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler(sys.stdout)]
 )
 logger = logging.getLogger(__name__)
 
@@ -26,9 +22,9 @@ def main():
     3. 전처리 결과를 JSON으로 저장 (data/processed)
     4. ChromaDB 벡터 데이터베이스에 인덱싱 (Upsert)
     """
-    logger.info("="*50)
+    logger.info("=" * 50)
     logger.info("🚀 RAG 데이터 구축 시스템을 시작합니다.")
-    logger.info("="*50)
+    logger.info("=" * 50)
 
     try:
         # 1. 필수 디렉토리 확인 및 생성
