@@ -66,7 +66,7 @@ class HierarchicalChunker:
             r"^[ \t]*\|?.*\|.*\n"  # 1. 헤더 줄
             r"^[ \t]*\|?[ \t]*[-:]+[ \t]*\|[ \t]*[-:]+.*(?:\n|$)"  # 2. 필수 구분선 줄 (---|---)
             r"(?:^[ \t]*\|?.*\|.*(?:\n|$))*",  # 3. 데이터 줄
-            re.MULTILINE
+            re.MULTILINE,
         )
 
         def replace_with_token(match):
