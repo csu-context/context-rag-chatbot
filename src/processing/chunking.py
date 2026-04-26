@@ -15,12 +15,12 @@ from src.utils.paths import ensure_directories
 
 class HierarchicalChunker:
     def __init__(
-            self,
-            parent_chunk_size: int = 1500,
-            parent_chunk_overlap: int = 150,
-            child_chunk_size: int = 400,
-            child_chunk_overlap: int = 50,
-            min_chunk_size: int = 50,
+        self,
+        parent_chunk_size: int = 1500,
+        parent_chunk_overlap: int = 150,
+        child_chunk_size: int = 400,
+        child_chunk_overlap: int = 50,
+        min_chunk_size: int = 50,
     ):
         """
         계층적 청킹을 수행하는 클래스
@@ -47,20 +47,18 @@ class HierarchicalChunker:
         self.parent_splitter = RecursiveCharacterTextSplitter(
             chunk_size=self.parent_chunk_size,
             chunk_overlap=self.parent_chunk_overlap,
-            separators=["\n\n", "\n", " ", ""]
+            separators=["\n\n", "\n", " ", ""],
         )
 
         self.child_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=self.child_chunk_size,
-            chunk_overlap=self.child_chunk_overlap,
-            separators=["\n\n", "\n", " ", ""]
+            chunk_size=self.child_chunk_size, chunk_overlap=self.child_chunk_overlap, separators=["\n\n", "\n", " ", ""]
         )
 
     def _protect_tables(self, text: str) -> tuple[str, dict[str, str]]:
         """표(Table) 데이터가 청킹 도중 잘리지 않도록 특수 토큰으로 일시 치환"""
         tables = {}
         # 마크다운 표 감지 정규식 (앞뒤 공백 무시하고 파이프(|) 문자가 포함된 연속된 줄)
-        table_pattern = re.compile(r'(?:^[ \t]*\|.*\|.*[ \t]*(?:\n|$))+', re.MULTILINE)
+        table_pattern = re.compile(r"(?:^[ \t]*\|.*\|.*[ \t]*(?:\n|$))+", re.MULTILINE)
 
         def replace_with_token(match):
             token = f"@@TABLE_{uuid.uuid4().hex}@@"
@@ -119,14 +117,16 @@ class HierarchicalChunker:
                 "sec_title": base_metadata.get(MetadataFields.SEC_TITLE, "기본 섹션"),
                 "chunk_id": child_id,
                 "parent_id": parent_id,
-                "header_path": base_metadata.get("header_path", "기본 섹션")
+                "header_path": base_metadata.get("header_path", "기본 섹션"),
             }
 
-            children_list.append({
-                "chunk_id": child_id,
-                "metadata": child_metadata_dict,
-                "text": restored_text,
-            })
+            children_list.append(
+                {
+                    "chunk_id": child_id,
+                    "metadata": child_metadata_dict,
+                    "text": restored_text,
+                }
+            )
 
         return children_list
 
@@ -140,8 +140,12 @@ class HierarchicalChunker:
                 continue
 
             header_path = self._get_header_path(doc.metadata)
-            sec_title = doc.metadata.get("Header 3") or doc.metadata.get("Header 2") or doc.metadata.get(
-                "Header 1") or "기본 섹션"
+            sec_title = (
+                doc.metadata.get("Header 3")
+                or doc.metadata.get("Header 2")
+                or doc.metadata.get("Header 1")
+                or "기본 섹션"
+            )
 
             # 부모(Parent) 단위로 한 번 더 분할 (너무 긴 문맥 단위 처리)
             parent_splits = self.parent_splitter.split_text(doc.page_content)
@@ -166,15 +170,17 @@ class HierarchicalChunker:
                     "sec_title": sec_title,
                     "chunk_id": parent_id,
                     "parent_id": None,
-                    "header_path": header_path
+                    "header_path": header_path,
                 }
 
-                hierarchical_data.append({
-                    "parent_id": parent_id,
-                    "parent_text": p_text,
-                    "metadata": parent_metadata,
-                    "children": children_list,
-                })
+                hierarchical_data.append(
+                    {
+                        "parent_id": parent_id,
+                        "parent_text": p_text,
+                        "metadata": parent_metadata,
+                        "children": children_list,
+                    }
+                )
 
         return hierarchical_data
 
