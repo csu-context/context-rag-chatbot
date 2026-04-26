@@ -1,14 +1,14 @@
-from typing import TypedDict
+from typing import Optional, TypedDict
 
 
 class ChunkMetadata(TypedDict, total=False):
     source_id: str
     src_name: str
-    doc_type: str | None
+    doc_type: Optional[str]
     pg_num: int
     sec_title: str
     chunk_id: str
-    parent_id: str | None
+    parent_id: Optional[str]
     header_path: str
 
 

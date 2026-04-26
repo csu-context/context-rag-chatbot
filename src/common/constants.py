@@ -17,3 +17,4 @@ class MetadataFields:
     CHUNK_ID: Final[str] = "chunk_id"
     SEC_TITLE: Final[str] = "sec_title"
     CONTENT_PREVIEW: Final[str] = "content_preview"
+    HEADER_PATH: Final[str] = "header_path"

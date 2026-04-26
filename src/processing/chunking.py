@@ -57,8 +57,17 @@ class HierarchicalChunker:
     def _protect_tables(self, text: str) -> tuple[str, dict[str, str]]:
         """표(Table) 데이터가 청킹 도중 잘리지 않도록 특수 토큰으로 일시 치환"""
         tables = {}
-        # 마크다운 표 감지 정규식 (앞뒤 공백 무시하고 파이프(|) 문자가 포함된 연속된 줄)
-        table_pattern = re.compile(r"(?:^[ \t]*\|.*\|.*[ \t]*(?:\n|$))+", re.MULTILINE)
+
+        # [완벽하게 개선된 정규식]
+        # 1. 헤더 줄: 파이프(|)가 1개 이상 존재
+        # 2. 구분선 줄: 반드시 ---|--- 또는 :---:|--- 형태를 띰 (이것이 표라는 확실한 증거)
+        # 3. 데이터 줄: 파이프(|)가 1개 이상 존재하는 줄이 0개 이상 이어짐
+        table_pattern = re.compile(
+            r"^[ \t]*\|?.*\|.*\n"  # 1. 헤더 줄
+            r"^[ \t]*\|?[ \t]*[-:]+[ \t]*\|[ \t]*[-:]+.*(?:\n|$)"  # 2. 필수 구분선 줄 (---|---)
+            r"(?:^[ \t]*\|?.*\|.*(?:\n|$))*",  # 3. 데이터 줄
+            re.MULTILINE
+        )
 
         def replace_with_token(match):
             token = f"@@TABLE_{uuid.uuid4().hex}@@"
@@ -117,7 +126,7 @@ class HierarchicalChunker:
                 "sec_title": base_metadata.get(MetadataFields.SEC_TITLE, "기본 섹션"),
                 "chunk_id": child_id,
                 "parent_id": parent_id,
-                "header_path": base_metadata.get("header_path", "기본 섹션"),
+                MetadataFields.HEADER_PATH: base_metadata.get(MetadataFields.HEADER_PATH, "기본 섹션"),
             }
 
             children_list.append(
@@ -155,7 +164,7 @@ class HierarchicalChunker:
 
                 meta_for_children = base_metadata.copy()
                 meta_for_children[MetadataFields.SEC_TITLE] = sec_title
-                meta_for_children["header_path"] = header_path
+                meta_for_children[MetadataFields.HEADER_PATH] = header_path
 
                 children_list = self.split_into_children(p_text, parent_id, meta_for_children)
 
@@ -170,7 +179,7 @@ class HierarchicalChunker:
                     "sec_title": sec_title,
                     "chunk_id": parent_id,
                     "parent_id": None,
-                    "header_path": header_path,
+                    MetadataFields.HEADER_PATH: header_path,
                 }
 
                 hierarchical_data.append(
