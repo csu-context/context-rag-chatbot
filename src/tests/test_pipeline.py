@@ -10,9 +10,9 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
-from src.common.constants import MetadataFields
-from src.processing.chunking import create_parent_child_chunks
-from src.vector_db.chroma_manager import ChromaDBManager
+from src.common.constants import MetadataFields  # noqa: E402
+from src.processing.chunking import create_parent_child_chunks  # noqa: E402
+from src.vector_db.chroma_manager import ChromaDBManager  # noqa: E402
 
 
 def run_integration_test():
