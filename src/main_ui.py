@@ -1,9 +1,11 @@
 import streamlit as st
+from pathlib import Path
 
 # --- 1. 페이지 설정 (가장 상단에 위치) ---
 st.set_page_config(
     page_title="기업 매뉴얼 챗봇",
-    layout="wide",  # 넓은 화면 레이아웃 사용
+    page_icon="🤖",
+    layout="wide"  # 넓은 화면 레이아웃 사용
 )
 
 # --- 2. 초기 세션 상태 설정 (대화 기록 유지용) ---
@@ -16,7 +18,11 @@ with st.sidebar:
 
     # [목표 1] 모델 설정
     st.subheader("모델 설정")
-    selected_model = st.selectbox("사용할 LLM 모델 선택", ["gpt-3.5-turbo", "gpt-4o", "llama-3-70b"], index=0)
+    selected_model = st.selectbox(
+        "사용할 LLM 모델 선택",
+        ["gpt-3.5-turbo", "gpt-4o", "llama-3-70b"],
+        index=0
+    )
 
     # [목표 1] 검색 결과 개수(K) 조절 슬라이더
     st.subheader("검색 설정")
@@ -25,7 +31,7 @@ with st.sidebar:
         min_value=1,
         max_value=10,
         value=4,  # 기본값
-        step=1,
+        step=1
     )
 
     # [목표 3] 파일 업로더 구현 (전처리 파이프라인 연동용)
@@ -33,7 +39,7 @@ with st.sidebar:
     uploaded_files = st.file_uploader(
         "매뉴얼 파일 업로드 (PDF, DOCX)",
         type=["pdf", "docx"],
-        accept_multiple_files=True,
+        accept_multiple_files=True
     )
 
     if uploaded_files:
@@ -78,19 +84,16 @@ if prompt := st.chat_input("궁금한 점을 입력해 주세요."):
     st.session_state.messages.append({"role": "user", "content": prompt})
 
     # 5-3. 챗봇의 답변을 생성하는 로직 (추후 백엔드 엔진 연동)
-    with st.chat_message("assistant"), st.spinner("생각 중..."):
-        # 예시 답변 (추후 RAG 엔진 답변으로 대체)
-        import time
+    with st.chat_message("assistant"):
+        with st.spinner("생각 중..."):
+            # 예시 답변 (추후 RAG 엔진 답변으로 대체)
+            import time
 
-        time.sleep(1)  # RAG 연동 전 가짜 대기 시간
+            time.sleep(1)  # RAG 연동 전 가짜 대기 시간
 
-        # 답변 예시
-        response = (
-            f"'{prompt}'에 대한 답변입니다. "
-            "(추후 RAG 백엔드와 연동되어 실제 매뉴얼 내용을 기반으로 답변합니다.)\n\n"
-            "**인용 출처:** [운영매뉴얼.pdf, 12p]"
-        )
-        st.markdown(response)
+            # 답변 예시
+            response = f"'{prompt}'에 대한 답변입니다. (추후 RAG 백엔드와 연동되어 실제 매뉴얼 내용을 기반으로 답변합니다.)\n\n**인용 출처:** [운영매뉴얼.pdf, 12p]"
+            st.markdown(response)
 
     # 5-4. 챗봇의 답변을 세션 상태(히스토리)에 저장
     st.session_state.messages.append({"role": "assistant", "content": response})
