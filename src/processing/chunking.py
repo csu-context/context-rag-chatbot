@@ -1,6 +1,7 @@
 import json
+import re
 import uuid
-from typing import Any, TypedDict, cast
+from typing import Any, cast
 
 from langchain_text_splitters import (
     MarkdownHeaderTextSplitter,
@@ -8,113 +9,200 @@ from langchain_text_splitters import (
 )
 
 from src.common.constants import MetadataFields
+from src.common.schema import ChildChunk, ChunkMetadata, ParentChunk
 from src.utils.paths import ensure_directories
 
 
-# 청크 단위 메타데이터 스키마 정의 (표준 규격 준수)
-class ChunkMetadata(TypedDict):
-    source_id: str
-    src_name: str
-    doc_type: str | None
-    pg_num: int
-    sec_title: str
-    chunk_id: str
-    parent_id: str | None
+class HierarchicalChunker:
+    def __init__(
+        self,
+        parent_chunk_size: int = 1500,
+        parent_chunk_overlap: int = 150,
+        child_chunk_size: int = 400,
+        child_chunk_overlap: int = 50,
+        min_chunk_size: int = 50,
+    ):
+        """
+        계층적 청킹을 수행하는 클래스
+        :param parent_chunk_size: 부모 청크 최대 문자 수
+        :param parent_chunk_overlap: 부모 청크 중복 문자 수
+        :param child_chunk_size: 자식 청크 최대 문자 수 (토큰 한계 최적화)
+        :param child_chunk_overlap: 자식 청크 중복 문자 수
+        :param min_chunk_size: 자식 청크 최소 문자 수 (짧은 문단 병합)
+        """
+        self.parent_chunk_size = parent_chunk_size
+        self.parent_chunk_overlap = parent_chunk_overlap
+        self.child_chunk_size = child_chunk_size
+        self.child_chunk_overlap = child_chunk_overlap
+        self.min_chunk_size = min_chunk_size
 
+        self.headers_to_split_on = [
+            ("#", "Header 1"),
+            ("##", "Header 2"),
+            ("###", "Header 3"),
+            ("####", "Header 4"),
+        ]
+        self.md_splitter = MarkdownHeaderTextSplitter(headers_to_split_on=self.headers_to_split_on)
 
-# 자식 청크 분할을 위한 공통 스플리터 설정
-def get_child_splitter() -> RecursiveCharacterTextSplitter:
-    return RecursiveCharacterTextSplitter(chunk_size=400, chunk_overlap=50, separators=["\n\n", "\n", " ", ""])
-
-
-def split_into_children(parent_text: str, parent_id: str, base_metadata: dict[str, Any]) -> list[dict[str, Any]]:
-    """
-    부모 텍스트를 자식 청크들로 분할하고 표준 메타데이터를 입힙니다.
-    """
-    child_splitter = get_child_splitter()
-    child_docs = child_splitter.split_text(parent_text)
-
-    children_list = []
-    for idx, child_text in enumerate(child_docs):
-        child_id = f"{parent_id}_c{idx}"
-
-        # [타입 보정] 엄격한 타입 체킹을 위해 object를 거쳐 ChunkMetadata로 캐스팅
-        child_metadata_dict = {
-            "source_id": base_metadata.get(MetadataFields.SOURCE_ID, "UNKNOWN"),
-            "src_name": base_metadata.get(MetadataFields.SRC_NAME, "UNKNOWN_FILE"),
-            "doc_type": base_metadata.get(MetadataFields.DOC_TYPE, "markdown"),
-            "pg_num": base_metadata.get(MetadataFields.PG_NUM, 1),
-            "sec_title": base_metadata.get(MetadataFields.SEC_TITLE, "기본 섹션"),
-            "chunk_id": child_id,
-            "parent_id": parent_id,
-        }
-        child_metadata = cast(ChunkMetadata, cast(object, child_metadata_dict))
-
-        children_list.append(
-            {
-                MetadataFields.CHUNK_ID: child_id,
-                "metadata": child_metadata,
-                "text": child_text,
-            }
+        self.parent_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=self.parent_chunk_size,
+            chunk_overlap=self.parent_chunk_overlap,
+            separators=["\n\n", "\n", " ", ""],
         )
-    return children_list
+
+        self.child_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=self.child_chunk_size, chunk_overlap=self.child_chunk_overlap, separators=["\n\n", "\n", " ", ""]
+        )
+
+    def _protect_tables(self, text: str) -> tuple[str, dict[str, str]]:
+        """표(Table) 데이터가 청킹 도중 잘리지 않도록 특수 토큰으로 일시 치환"""
+        tables = {}
+
+        # [완벽하게 개선된 정규식]
+        # 1. 헤더 줄: 파이프(|)가 1개 이상 존재
+        # 2. 구분선 줄: 반드시 ---|--- 또는 :---:|--- 형태를 띰 (이것이 표라는 확실한 증거)
+        # 3. 데이터 줄: 파이프(|)가 1개 이상 존재하는 줄이 0개 이상 이어짐
+        table_pattern = re.compile(
+            r"^[ \t]*\|?.*\|.*\n"  # 1. 헤더 줄
+            r"^[ \t]*\|?[ \t]*[-:]+[ \t]*\|[ \t]*[-:]+.*(?:\n|$)"  # 2. 필수 구분선 줄 (---|---)
+            r"(?:^[ \t]*\|?.*\|.*(?:\n|$))*",  # 3. 데이터 줄
+            re.MULTILINE,
+        )
+
+        def replace_with_token(match):
+            token = f"@@TABLE_{uuid.uuid4().hex}@@"
+            table_text = match.group(0).strip()
+            tables[token] = table_text
+            return f"\n\n{token}\n\n"
+
+        protected_text = table_pattern.sub(replace_with_token, text)
+        return protected_text, tables
+
+    def _restore_tables(self, text: str, tables: dict[str, str]) -> str:
+        """특수 토큰을 다시 원래 표 데이터로 복원"""
+        for token, table_text in tables.items():
+            text = text.replace(token, table_text)
+        return text
+
+    def _get_header_path(self, metadata: dict[str, str]) -> str:
+        """마크다운 메타데이터에서 헤더 경로 생성 (예: 제1장 > 제1조 > 정의)"""
+        path_parts = []
+        for i in range(1, 5):
+            header_val = metadata.get(f"Header {i}")
+            if header_val:
+                path_parts.append(header_val)
+        return " > ".join(path_parts) if path_parts else "기본 섹션"
+
+    def split_into_children(self, parent_text: str, parent_id: str, base_metadata: dict[str, Any]) -> list[ChildChunk]:
+        """부모 텍스트를 자식 청크들로 분할하고 표준 메타데이터 상속"""
+        protected_text, tables = self._protect_tables(parent_text)
+        child_docs = self.child_splitter.split_text(protected_text)
+
+        merged_docs = []
+        for doc_text in child_docs:
+            doc_text = doc_text.strip()
+            if not doc_text:
+                continue
+
+            # 짧은 문단 병합 (Minimum chunk size 적용)
+            if merged_docs and len(doc_text) < self.min_chunk_size:
+                merged_docs[-1] += "\n" + doc_text
+            else:
+                merged_docs.append(doc_text)
+
+        children_list: list[ChildChunk] = []
+        for idx, child_text in enumerate(merged_docs):
+            restored_text = self._restore_tables(child_text, tables).strip()
+            if not restored_text:
+                continue
+
+            child_id = f"{parent_id}_c{idx}"
+
+            child_metadata_dict: ChunkMetadata = {
+                "source_id": base_metadata.get(MetadataFields.SOURCE_ID, "UNKNOWN"),
+                "src_name": base_metadata.get(MetadataFields.SRC_NAME, "UNKNOWN_FILE"),
+                "doc_type": base_metadata.get(MetadataFields.DOC_TYPE, "markdown"),
+                "pg_num": base_metadata.get(MetadataFields.PG_NUM, 1),
+                "sec_title": base_metadata.get(MetadataFields.SEC_TITLE, "기본 섹션"),
+                "chunk_id": child_id,
+                "parent_id": parent_id,
+                MetadataFields.HEADER_PATH: base_metadata.get(MetadataFields.HEADER_PATH, "기본 섹션"),
+            }
+
+            children_list.append(
+                {
+                    "chunk_id": child_id,
+                    "metadata": child_metadata_dict,
+                    "text": restored_text,
+                }
+            )
+
+        return children_list
+
+    def chunk(self, markdown_text: str, base_metadata: dict[str, Any]) -> list[ParentChunk]:
+        """마크다운 텍스트를 계층적(Parent-Child)으로 분할합니다."""
+        header_docs = self.md_splitter.split_text(markdown_text)
+        hierarchical_data: list[ParentChunk] = []
+
+        for doc in header_docs:
+            if not doc.page_content.strip():
+                continue
+
+            header_path = self._get_header_path(doc.metadata)
+            sec_title = (
+                doc.metadata.get("Header 3")
+                or doc.metadata.get("Header 2")
+                or doc.metadata.get("Header 1")
+                or "기본 섹션"
+            )
+
+            # 부모(Parent) 단위로 한 번 더 분할 (너무 긴 문맥 단위 처리)
+            parent_splits = self.parent_splitter.split_text(doc.page_content)
+
+            for p_text in parent_splits:
+                parent_id = str(uuid.uuid4())
+
+                meta_for_children = base_metadata.copy()
+                meta_for_children[MetadataFields.SEC_TITLE] = sec_title
+                meta_for_children[MetadataFields.HEADER_PATH] = header_path
+
+                children_list = self.split_into_children(p_text, parent_id, meta_for_children)
+
+                if not children_list:
+                    continue
+
+                parent_metadata: ChunkMetadata = {
+                    "source_id": base_metadata.get(MetadataFields.SOURCE_ID, "UNKNOWN"),
+                    "src_name": base_metadata.get(MetadataFields.SRC_NAME, "UNKNOWN_FILE"),
+                    "doc_type": base_metadata.get(MetadataFields.DOC_TYPE, "markdown"),
+                    "pg_num": base_metadata.get(MetadataFields.PG_NUM, 1),
+                    "sec_title": sec_title,
+                    "chunk_id": parent_id,
+                    "parent_id": None,
+                    MetadataFields.HEADER_PATH: header_path,
+                }
+
+                hierarchical_data.append(
+                    {
+                        "parent_id": parent_id,
+                        "parent_text": p_text,
+                        "metadata": parent_metadata,
+                        "children": children_list,
+                    }
+                )
+
+        return hierarchical_data
 
 
+# 기존 코드 하위 호환성 래핑 함수
 def create_parent_child_chunks(markdown_text: str, base_metadata: dict[str, Any]) -> list[dict[str, Any]]:
-    """
-    마크다운 텍스트를 계층적(Parent-Child)으로 분할합니다.
-    """
-    # 1. 부모 청크: 마크다운 헤더 기준 분할
-    headers_to_split_on = [
-        ("#", "Header 1"),
-        ("##", "Header 2"),
-        ("###", "Header 3"),
-    ]
-    markdown_splitter = MarkdownHeaderTextSplitter(headers_to_split_on=headers_to_split_on)
-    parent_docs = markdown_splitter.split_text(markdown_text)
-
-    hierarchical_data = []
-
-    for doc in parent_docs:
-        if not doc.page_content.strip():
-            continue
-
-        parent_id = str(uuid.uuid4())
-        # [수정] 너무 긴 라인 분할
-        sec_title = (
-            doc.metadata.get("Header 3") or doc.metadata.get("Header 2") or doc.metadata.get("Header 1") or "기본 섹션"
-        )
-
-        # 공통 자식 분할 로직 호출
-        meta_for_children = base_metadata.copy()
-        meta_for_children[MetadataFields.SEC_TITLE] = sec_title
-
-        children_list = split_into_children(doc.page_content, parent_id, meta_for_children)
-
-        # 부모 데이터 구조 완성
-        hierarchical_data.append(
-            {
-                MetadataFields.PARENT_ID: parent_id,
-                "parent_text": doc.page_content,
-                "metadata": {
-                    MetadataFields.SOURCE_ID: base_metadata.get(MetadataFields.SOURCE_ID, "UNKNOWN"),
-                    MetadataFields.SRC_NAME: base_metadata.get(MetadataFields.SRC_NAME, "UNKNOWN_FILE"),
-                    MetadataFields.DOC_TYPE: base_metadata.get(MetadataFields.DOC_TYPE, "markdown"),
-                    MetadataFields.PG_NUM: base_metadata.get(MetadataFields.PG_NUM, 1),
-                    MetadataFields.SEC_TITLE: sec_title,
-                },
-                "children": children_list,
-            }
-        )
-
-    return hierarchical_data
+    chunker = HierarchicalChunker()
+    return cast(list[dict[str, Any]], chunker.chunk(markdown_text, base_metadata))
 
 
 if __name__ == "__main__":
-    # 필수 디렉토리 확인 및 생성
     ensure_directories()
 
-    # 테스트용 더미 메타데이터
     dummy_metadata = {
         MetadataFields.SOURCE_ID: "TEST_001",
         MetadataFields.SRC_NAME: "test_manual.md",
@@ -122,6 +210,16 @@ if __name__ == "__main__":
         MetadataFields.PG_NUM: 1,
     }
 
-    sample_text = "# 테스트\n## 섹션 1\n내용입니다."
+    sample_text = """# 제1장
+## 제1조 정의
+이것은 테스트 문서입니다.
+
+표 테스트:
+| 항목 | 내용 |
+|---|---|
+| 1 | 테스트 1 |
+| 2 | 테스트 2 |
+
+매우 짧은 문단"""
     chunking_result = create_parent_child_chunks(sample_text, dummy_metadata)
     print(json.dumps(chunking_result, ensure_ascii=False, indent=2))
