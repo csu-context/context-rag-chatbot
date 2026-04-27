@@ -41,6 +41,7 @@ COPY --from=builder /opt/venv /opt/venv
 
 # 환경 변수 설정: 가상환경을 기본 파이썬으로 사용
 ENV PATH="/opt/venv/bin:$PATH"
+ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
@@ -54,4 +55,4 @@ COPY src/ /app/src/
 EXPOSE 8501
 
 # 컨테이너 실행 명령
-CMD ["streamlit", "run", "src/main_ui.py", "--server.address=0.0.0.0"]
+CMD ["streamlit", "run", "src/app.py", "--server.address=0.0.0.0"]
