@@ -12,8 +12,10 @@ VECTOR_DB_DIR = (BASE_DIR / "vector_db").resolve()
 MODELS_DIR = (BASE_DIR / "models").resolve()
 LOGS_DIR = (BASE_DIR / "logs").resolve()
 
-# 4. 모델 캐시 디렉토리
+# 4. 설정 및 사전 파일 경로
+SYNONYMS_FILE = (BASE_DIR / "src" / "common" / "synonyms.json").resolve()
 CACHE_DIR = (BASE_DIR / ".cache").resolve()
+BM25_CACHE_FILE = CACHE_DIR / "bm25_index.pkl"
 CROSS_ENCODER_CACHE_DIR = CACHE_DIR / "cross-encoder"
 
 
