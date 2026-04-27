@@ -120,42 +120,9 @@ class BM25Manager:
 
 
 if __name__ == "__main__":
-    # 임시 테스트용 데이터 생성
-    import tempfile
-    from pathlib import Path
-
-    test_data = [
-        {"content": "조선대학교 휴학 신청 기간은 3월부터입니다.", "metadata": {"src_name": "test.pdf", "pg_num": 1}},
-        {"content": "복학 신청 방법은 홈페이지를 참조하세요.", "metadata": {"src_name": "test.pdf", "pg_num": 2}},
-        {"content": "성적 장학금 지급 기준 안내입니다.", "metadata": {"src_name": "test.pdf", "pg_num": 3}},
-    ]
-
-    # 임시 파일 경로를 Path 객체로 관리
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as tf:
-        json.dump(test_data, tf)
-        temp_path = Path(tf.name)
-
-    try:
-        print("\n" + "=" * 55)
-        print("BM25 엔진 최종 테스트 (Pathlib 표준화 버전)")
-        print("=" * 55)
-
-        manager = BM25Manager(data_path=temp_path)
-        test_queries = ["휴학 신청 기간", "복학", "장학금", "조대"]
-
-        for q in test_queries:
-            results = manager.get_top_n(q, n=1, return_scores=True)
-            print(f"\n질의어: '{q}'")
-            if results:
-                r = results[0]
-                print(f"추출 문장: {r['content']}")
-                print(f"BM25 점수: {r['_bm25_score']}")
-            else:
-                print("결과: 검색 결과가 없습니다.")
-            print("-" * 55)
-    finally:
-        if temp_path.exists():
-            temp_path.unlink()
-        pkl_path = temp_path.with_name(temp_path.stem + "_index.pkl")
-        if pkl_path.exists():
-            pkl_path.unlink()
+    # 유틸리티 단독 실행 시 인덱스 로드 상태만 가볍게 확인
+    manager = BM25Manager()
+    if manager.bm25:
+        logger.info("BM25 인덱스가 정상적으로 로드되었습니다.")
+    else:
+        logger.warning("BM25 인덱스를 로드할 수 없습니다. (데이터 파일 확인 필요)")
