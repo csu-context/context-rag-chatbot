@@ -1,9 +1,11 @@
-import os
 import json
-import pickle
 import logging
-from rank_bm25 import BM25Plus
+import os
+import pickle
+
 from konlpy.tag import Okt
+from rank_bm25 import BM25Plus
+
 from src.utils.paths import DATA_DIR
 
 logging.basicConfig(level=logging.INFO)
@@ -37,11 +39,8 @@ class BM25Manager:
 
         text = self._apply_synonyms(text)
 
-        KEEP_POS = {"Noun", "Verb", "Adjective", "Alpha", "Number"}
-        tokens = [
-            word for word, pos in self.okt.pos(text, stem=False)
-            if pos in KEEP_POS and len(word) > 1
-        ]
+        keep_pos = {"Noun", "Verb", "Adjective", "Alpha", "Number"}
+        tokens = [word for word, pos in self.okt.pos(text, stem=False) if pos in keep_pos and len(word) > 1]
         return tokens
 
     def load_index(self):
@@ -54,12 +53,11 @@ class BM25Manager:
             return
 
         try:
-            with open(self.data_path, "r", encoding="utf-8") as f:
+            with open(self.data_path, encoding="utf-8") as f:
                 self.corpus_data = json.load(f)
 
-            pkl_is_stale = (
-                not os.path.exists(pickle_path)
-                or os.path.getmtime(self.data_path) > os.path.getmtime(pickle_path)
+            pkl_is_stale = not os.path.exists(pickle_path) or os.path.getmtime(self.data_path) > os.path.getmtime(
+                pickle_path
             )
 
             if not pkl_is_stale:
@@ -68,10 +66,7 @@ class BM25Manager:
                 logger.info(f"인덱스 로드 완료 (Pickle 사용): {len(self.corpus_data)} docs")
             else:
                 logger.info("신규 인덱스 빌드를 시작합니다.")
-                tokenized_corpus = [
-                    self._tokenizer(doc.get("content", ""))
-                    for doc in self.corpus_data
-                ]
+                tokenized_corpus = [self._tokenizer(doc.get("content", "")) for doc in self.corpus_data]
                 self.bm25 = BM25Plus(tokenized_corpus)
 
                 with open(pickle_path, "wb") as f:
@@ -106,7 +101,7 @@ class BM25Manager:
         normalized = [(s - s_min) / denom for s in top_scores]
 
         results = []
-        for rank, (idx, norm_score) in enumerate(zip(top_indices, normalized)):
+        for rank, (idx, norm_score) in enumerate(zip(top_indices, normalized, strict=True)):
             doc = self.corpus_data[idx]
             if return_scores:
                 results.append({**doc, "_bm25_score": round(norm_score, 4), "_rank": rank + 1})
