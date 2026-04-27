@@ -1,28 +1,41 @@
 import json
-import unittest
 import tempfile
+import unittest
 from pathlib import Path
+
 from src.vector_db.bm25_manager import BM25Manager
+
 
 class TestBM25Manager(unittest.TestCase):
     def setUp(self):
         """테스트용 임시 디렉토리 및 여러 데이터 파일 세팅"""
         self.temp_dir = tempfile.TemporaryDirectory()
         self.data_dir = Path(self.temp_dir.name)
-        
+
         # 파일 1: 조선대 관련
-        data1 = [{"content": "조선대학교 휴학 신청 기간은 3월부터입니다.", "metadata": {"src_name": "manual1.pdf", "pg_num": 1}}]
+        data1 = [
+            {
+                "content": "조선대학교 휴학 신청 기간은 3월부터입니다.",
+                "metadata": {"src_name": "manual1.pdf", "pg_num": 1},
+            }
+        ]
         with open(self.data_dir / "data1.json", "w", encoding="utf-8") as f:
             json.dump(data1, f)
-            
+
         # 파일 2: 복학 및 장학금 관련
         data2 = [
-            {"content": "복학 신청 방법은 홈페이지를 참조하세요.", "metadata": {"src_name": "manual2.pdf", "pg_num": 2}},
-            {"content": "성적 장학금 지급 기준 안내입니다.", "metadata": {"src_name": "manual2.pdf", "pg_num": 3}}
+            {
+                "content": "복학 신청 방법은 홈페이지를 참조하세요.",
+                "metadata": {"src_name": "manual2.pdf", "pg_num": 2},
+            },
+            {
+                "content": "성적 장학금 지급 기준 안내입니다.",
+                "metadata": {"src_name": "manual2.pdf", "pg_num": 3},
+            },
         ]
         with open(self.data_dir / "data2.json", "w", encoding="utf-8") as f:
             json.dump(data2, f)
-            
+
         self.manager = BM25Manager(data_dir=self.data_dir)
 
     def tearDown(self):
@@ -48,6 +61,7 @@ class TestBM25Manager(unittest.TestCase):
     def test_no_result(self):
         results = self.manager.get_top_n("전혀없는단어", n=1)
         self.assertEqual(len(results), 0)
+
 
 if __name__ == "__main__":
     unittest.main()
