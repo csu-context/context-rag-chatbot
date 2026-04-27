@@ -1,20 +1,21 @@
-import os
 import json
 import pickle
 import logging
 from rank_bm25 import BM25Plus
 from kiwipiepy import Kiwi
-from src.utils.paths import DATA_DIR
+from src.utils.paths import PROCESSED_DATA_DIR
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-_DEFAULT_DATA_PATH = os.path.join(DATA_DIR, "processed", "data.json")
+# [표준화] utils.paths에서 정의된 경로를 기반으로 설정
+_DEFAULT_DATA_PATH = PROCESSED_DATA_DIR / "data.json"
 
 
 class BM25Manager:
     def __init__(self, data_path=_DEFAULT_DATA_PATH):
-        self.data_path = data_path
+        # 입력받은 data_path가 문자열일 경우 Path 객체로 변환하여 통일
+        self.data_path = PROCESSED_DATA_DIR / data_path if isinstance(data_path, str) and not data_path.startswith("/") else data_path
         self.kiwi = Kiwi()
         self.bm25 = None
         self.corpus_data = []
@@ -38,7 +39,6 @@ class BM25Manager:
         text = self._apply_synonyms(text)
 
         # Kiwi 형태소 분석 (명사, 용언, 외국어, 숫자 추출)
-        # N: 명사, V: 용언(동사/형용사), S: 외국어/숫자
         tokens = [
             t.form for t in self.kiwi.tokenize(text)
             if t.tag.startswith(("N", "V", "S")) and len(t.form) > 1
@@ -46,9 +46,10 @@ class BM25Manager:
         return tokens
 
     def load_index(self):
-        pickle_path = self.data_path.replace(".json", "_index.pkl")
+        # [표준화] pathlib를 활용한 파일 경로 조작
+        pickle_path = self.data_path.with_name(self.data_path.stem + "_index.pkl")
 
-        if not os.path.exists(self.data_path):
+        if not self.data_path.exists():
             logger.warning(f"파일을 찾을 수 없습니다: {self.data_path} → 빈 인덱스로 초기화")
             self.bm25 = None
             self.corpus_data = []
@@ -58,9 +59,10 @@ class BM25Manager:
             with open(self.data_path, "r", encoding="utf-8") as f:
                 self.corpus_data = json.load(f)
 
+            # [표준화] pathlib.stat()을 활용한 mtime 비교
             pkl_is_stale = (
-                not os.path.exists(pickle_path)
-                or os.path.getmtime(self.data_path) > os.path.getmtime(pickle_path)
+                not pickle_path.exists()
+                or self.data_path.stat().st_mtime > pickle_path.stat().st_mtime
             )
 
             if not pkl_is_stale:
@@ -118,8 +120,9 @@ class BM25Manager:
 
 
 if __name__ == "__main__":
-    # 임시 테스트용 데이터 생성 (실제 파일 없을 경우 대비)
+    # 임시 테스트용 데이터 생성
     import tempfile
+    from pathlib import Path
 
     test_data = [
         {"content": "조선대학교 휴학 신청 기간은 3월부터입니다.", "metadata": {"src_name": "test.pdf", "pg_num": 1}},
@@ -127,13 +130,14 @@ if __name__ == "__main__":
         {"content": "성적 장학금 지급 기준 안내입니다.", "metadata": {"src_name": "test.pdf", "pg_num": 3}},
     ]
 
+    # 임시 파일 경로를 Path 객체로 관리
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as tf:
         json.dump(test_data, tf)
-        temp_path = tf.name
+        temp_path = Path(tf.name)
 
     try:
         print("\n" + "=" * 55)
-        print("BM25 엔진 최종 테스트 (Kiwi 버전 - Java 의존성 제거)")
+        print("BM25 엔진 최종 테스트 (Pathlib 표준화 버전)")
         print("=" * 55)
 
         manager = BM25Manager(data_path=temp_path)
@@ -150,8 +154,8 @@ if __name__ == "__main__":
                 print("결과: 검색 결과가 없습니다.")
             print("-" * 55)
     finally:
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-        pkl_path = temp_path.replace(".json", "_index.pkl")
-        if os.path.exists(pkl_path):
-            os.remove(pkl_path)
+        if temp_path.exists():
+            temp_path.unlink()
+        pkl_path = temp_path.with_name(temp_path.stem + "_index.pkl")
+        if pkl_path.exists():
+            pkl_path.unlink()
