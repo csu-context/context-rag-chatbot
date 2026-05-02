@@ -214,6 +214,8 @@ __marimo__/
 /logs/
 /data/raw/
 /data/processed/
+/data/eval/*
+!/data/eval/*.example
 
 # 벡터 데이터베이스 (ChromaDB 등 로컬 DB 파일)
 database/
