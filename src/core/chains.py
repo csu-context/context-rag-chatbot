@@ -1,15 +1,14 @@
 import logging
-import os
 import time
 from typing import Any
 
 from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda, RunnablePassthrough
-from langchain_google_genai import ChatGoogleGenerativeAI
 
 from src.core.prompts import RAG_SYSTEM_PROMPT
 from src.core.reranker import CrossEncoderReranker
+from src.models.factory import LLMFactory
 from src.utils.citation import format_citations
 
 logger = logging.getLogger(__name__)
@@ -20,18 +19,9 @@ def get_rag_chain(vector_db):  # noqa: C901
     RAG 파이프라인 체인을 생성합니다.
     vector_db: src.vector_db.chroma_manager.ChromaDBManager 인스턴스
     """
-    api_key = os.getenv("GOOGLE_API_KEY")
-    if api_key:
-        # 보안을 위해 앞 4자리만 출력
-        logger.info(f"GOOGLE_API_KEY 로드됨: {api_key[:4]}****")
-    else:
-        logger.error("GOOGLE_API_KEY를 찾을 수 없습니다! .env 파일을 확인하세요.")
-
-    llm = ChatGoogleGenerativeAI(
-        model="gemini-flash-latest",
-        temperature=0.1,
-        google_api_key=api_key,
-    )
+    # 추상화된 LLM 인스턴스 생성
+    llm_instance = LLMFactory.create_llm(temperature=0.1)
+    llm = llm_instance.get_model()
 
     def retrieve_and_rerank(input_dict: dict[str, Any]) -> list[Document]:
         """ChromaDB 검색 -> Document 변환 -> 리랭킹 파이프라인."""
