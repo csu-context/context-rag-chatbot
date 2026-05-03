@@ -1,6 +1,5 @@
 import logging
 from pathlib import Path
-from typing import Any
 
 from langchain_core.documents import Document
 
@@ -20,24 +19,22 @@ class EnhancedPDFParser:
     def parse(self, file_path: str | Path) -> list[Document]:
         try:
             from unstructured.partition.pdf import partition_pdf
-        except ImportError:
+        except ImportError as err:
             raise ImportError(
-                "unstructured 라이브러리가 필요합니다.\n"
-                "설치: pip install unstructured[pdf] pandas"
-            )
+                "unstructured 라이브러리가 필요합니다.\n설치: pip install unstructured[pdf] pandas"
+            ) from err
 
         logger.info(f"파싱 시작: {file_path} (전략: {self.strategy})")
-        
+
         elements = partition_pdf(
             filename=str(file_path),
             strategy=self.strategy,
             infer_table_structure=True,  # 표 구조 추론 활성화
-            extract_images_in_pdf=False, # 1차 목표에 따라 이미지 OCR은 비활성화
+            extract_images_in_pdf=False,  # 1차 목표에 따라 이미지 OCR은 비활성화
         )
 
         docs = []
-        current_section = "기본 섹션"
-        
+
         for el in elements:
             el_type = el.category
             text = el.text
@@ -45,17 +42,14 @@ class EnhancedPDFParser:
             # 표 요소인 경우 마크다운 표 구조로 강제 변환
             if el_type == "Table":
                 html_table = el.metadata.text_as_html if hasattr(el.metadata, "text_as_html") else None
-                if html_table:
-                    text = self._html_to_markdown_table(html_table)
-                else:
-                    text = f"\n| {text} |\n|---|---|\n"
+                text = self._html_to_markdown_table(html_table) if html_table else f"\n| {text} |\n|---|---|\n"
 
             metadata = {
                 "source": str(file_path),
                 "page": el.metadata.page_number if hasattr(el.metadata, "page_number") else 1,
                 "category": el_type,
             }
-            
+
             docs.append(Document(page_content=text, metadata=metadata))
 
         return docs
@@ -64,6 +58,7 @@ class EnhancedPDFParser:
         """HTML 표 데이터를 Pandas를 통해 깔끔한 마크다운으로 변환"""
         try:
             import pandas as pd
+
             dfs = pd.read_html(html)
             if dfs:
                 return "\n" + dfs[0].to_markdown(index=False) + "\n"

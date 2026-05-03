@@ -1,5 +1,3 @@
-import json
-import os
 import sys
 from pathlib import Path
 
@@ -23,7 +21,9 @@ def run_table_chunking_test():
     }
 
     # 의도적으로 자식 청크 사이즈(400자)를 아득히 초과하는 거대한 표 생성
-    massive_table_rows = "\n".join([f"| {i} | 테스트 데이터 {i} | 길이가 꽤 긴 텍스트를 넣어서 용량을 늘립니다. |" for i in range(1, 15)])
+    massive_table_rows = "\n".join(
+        [f"| {i} | 테스트 데이터 {i} | 길이가 꽤 긴 텍스트를 넣어서 용량을 늘립니다. |" for i in range(1, 15)]
+    )
 
     sample_text = f"""# 제1장 총칙
 ## 제3조 (데이터베이스 구조)

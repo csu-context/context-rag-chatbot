@@ -75,7 +75,7 @@ class HierarchicalChunker:
         for row in data_rows:
             row_size = len(row) + 1
             if current_size + row_size > max_size and current_rows:
-                chunks.append("\n".join([header, separator] + current_rows))
+                chunks.append("\n".join([header, separator, *current_rows]))
                 current_rows = [row]
                 current_size = base_size + row_size
             else:
@@ -83,7 +83,7 @@ class HierarchicalChunker:
                 current_size += row_size
 
         if current_rows:
-            chunks.append("\n".join([header, separator] + current_rows))
+            chunks.append("\n".join([header, separator, *current_rows]))
 
         return chunks
 
