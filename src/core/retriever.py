@@ -1,6 +1,8 @@
-import os
 import logging
+import os
+
 from dotenv import load_dotenv
+
 from src.vector_db.bm25_manager import BM25Manager
 
 load_dotenv()
@@ -96,11 +98,13 @@ class EnsembleRetriever:
         results = []
         for rank, doc_id in enumerate(sorted_ids, start=1):
             doc = docs[doc_id]
-            results.append({
-                **doc,
-                "_rrf_score": round(scores[doc_id], 6),
-                "_rank": rank,
-            })
+            results.append(
+                {
+                    **doc,
+                    "_rrf_score": round(scores[doc_id], 6),
+                    "_rank": rank,
+                }
+            )
 
         return results
 
@@ -141,7 +145,7 @@ class EnsembleRetriever:
         hybrid_results = self.get_relevant_documents(query, n)
         print(f"\n[하이브리드 RRF] {len(hybrid_results)}개")
         for r in hybrid_results:
-            score = r.get('_rrf_score') or r.get('_bm25_score', '-')
+            score = r.get("_rrf_score") or r.get("_bm25_score", "-")
             print(f"  - {r.get('content', '')[:50]}  (rrf: {score})")
 
         print(f"{'=' * 60}\n")
