@@ -54,26 +54,74 @@ class HierarchicalChunker:
             chunk_size=self.child_chunk_size, chunk_overlap=self.child_chunk_overlap, separators=["\n\n", "\n", " ", ""]
         )
 
+    def _split_markdown_table(self, table_text: str, max_size: int) -> list[str]:
+        """마크다운 표가 max_size를 초과할 경우, 헤더(컬럼)를 유지하며 여러 표로 분할합니다."""
+        lines = table_text.strip().split("\n")
+        # 표의 형태를 갖추지 않았거나 분할할 행이 부족한 경우 원본 반환
+        if len(lines) < 3:
+            return [table_text]
+
+        header = lines[0]
+        separator = lines[1]
+        data_rows = lines[2:]
+
+        # 기본 크기: 헤더 + 구분선 + 개행 문자 길이
+        base_size = len(header) + len(separator) + 2
+
+        chunks = []
+        current_rows = []
+        current_size = base_size
+
+        for row in data_rows:
+            row_size = len(row) + 1
+            if current_size + row_size > max_size and current_rows:
+                chunks.append("\n".join([header, separator] + current_rows))
+                current_rows = [row]
+                current_size = base_size + row_size
+            else:
+                current_rows.append(row)
+                current_size += row_size
+
+        if current_rows:
+            chunks.append("\n".join([header, separator] + current_rows))
+
+        return chunks
+
     def _protect_tables(self, text: str) -> tuple[str, dict[str, str]]:
         """표(Table) 데이터가 청킹 도중 잘리지 않도록 특수 토큰으로 일시 치환"""
         tables = {}
 
-        # [완벽하게 개선된 정규식]
-        # 1. 헤더 줄: 파이프(|)가 1개 이상 존재
-        # 2. 구분선 줄: 반드시 ---|--- 또는 :---:|--- 형태를 띰 (이것이 표라는 확실한 증거)
-        # 3. 데이터 줄: 파이프(|)가 1개 이상 존재하는 줄이 0개 이상 이어짐
         table_pattern = re.compile(
-            r"^[ \t]*\|?.*\|.*\n"  # 1. 헤더 줄
-            r"^[ \t]*\|?[ \t]*[-:]+[ \t]*\|[ \t]*[-:]+.*(?:\n|$)"  # 2. 필수 구분선 줄 (---|---)
-            r"(?:^[ \t]*\|?.*\|.*(?:\n|$))*",  # 3. 데이터 줄
+            r"^[ \t]*\|?.*\|.*\n"
+            r"^[ \t]*\|?[ \t]*[-:]+[ \t]*\|[ \t]*[-:]+.*(?:\n|$)"
+            r"(?:^[ \t]*\|?.*\|.*(?:\n|$))*",
             re.MULTILINE,
         )
 
         def replace_with_token(match):
-            token = f"@@TABLE_{uuid.uuid4().hex}@@"
             table_text = match.group(0).strip()
-            tables[token] = table_text
-            return f"\n\n{token}\n\n"
+
+            # [예외 처리] 표 크기가 청크 사이즈를 초과할 경우 분할 전략 적용
+            if len(table_text) > self.child_chunk_size:
+                split_tables = self._split_markdown_table(table_text, self.child_chunk_size)
+                result_tokens = []
+                for st in split_tables:
+                    token_base = f"@@TABLE_{uuid.uuid4().hex}@@"
+                    # 🚀 핵심 트릭: 분할된 표의 실제 길이만큼 언더바(_)로 패딩을 채워 TextSplitter의 오작동 방지
+                    padding = "_" * max(0, len(st) - len(token_base))
+                    padded_token = token_base + padding
+
+                    tables[padded_token] = st
+                    result_tokens.append(f"\n\n{padded_token}\n\n")
+                return "".join(result_tokens)
+            else:
+                token_base = f"@@TABLE_{uuid.uuid4().hex}@@"
+                # 원본 표의 길이만큼 패딩
+                padding = "_" * max(0, len(table_text) - len(token_base))
+                padded_token = token_base + padding
+
+                tables[padded_token] = table_text
+                return f"\n\n{padded_token}\n\n"
 
         protected_text = table_pattern.sub(replace_with_token, text)
         return protected_text, tables
@@ -112,6 +160,9 @@ class HierarchicalChunker:
 
         children_list: list[ChildChunk] = []
         for idx, child_text in enumerate(merged_docs):
+            # 복원 전 텍스트에 표 토큰이 포함되어 있다면 해당 청크는 표 데이터를 포함함을 의미함
+            has_table = "@@TABLE_" in child_text
+
             restored_text = self._restore_tables(child_text, tables).strip()
             if not restored_text:
                 continue
@@ -127,6 +178,7 @@ class HierarchicalChunker:
                 "chunk_id": child_id,
                 "parent_id": parent_id,
                 MetadataFields.HEADER_PATH: base_metadata.get(MetadataFields.HEADER_PATH, "기본 섹션"),
+                MetadataFields.IS_TABLE: has_table,
             }
 
             children_list.append(
