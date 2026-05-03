@@ -79,6 +79,17 @@ def run_integration_test():
         print("  ⚠️ 검색 결과가 없습니다.")
     print("=================================================================")
 
+    print("\n💬 [5단계] RAG 답변 생성을 테스트합니다...")
+    from src.core.chains import get_rag_chain
+
+    chain = get_rag_chain(db_manager)
+    try:
+        response = chain.invoke({"question": test_query, "k": 1})
+        print(f"\n[최종 응답]:\n{response}")
+        print("\n✅ 파이프라인 통합 테스트 성공!")
+    except Exception as e:
+        print(f"\n❌ 답변 생성 중 오류 발생: {e}")
+
 
 if __name__ == "__main__":
     run_integration_test()
