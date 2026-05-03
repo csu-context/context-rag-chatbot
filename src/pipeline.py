@@ -28,8 +28,17 @@ class PreprocessingPipeline:
 
     def run(self, save_filename: str | None = None) -> list[dict[str, Any]]:  # noqa: C901
         """
-        전체 전처리 파이프라인 실행: 스캔 -> (파싱+표준화) -> 계층적 청킹 -> 저장
+        전체 전처리 파이프라인 실행: (자가 진단) -> 스캔 -> (파싱+표준화) -> 계층적 청킹 -> 저장
         """
+        # [DevOps] 시스템 자가 진단 선행 수행 (#56)
+        # 파이프라인 지연 방지를 위해 무거운 모델 체크는 제외
+        from src.utils.health_check import run_full_diagnostics
+
+        is_healthy, report = run_full_diagnostics(silent=True, check_model=False)
+        if not is_healthy:
+            logger.error(f"시스템 진단 실패: 전처리를 중단합니다. (상세: {report})")
+            return []
+
         all_hierarchical_data = []
 
         # 1. 파일 목록 스캔

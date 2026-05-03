@@ -1,7 +1,12 @@
+import sys
 from pathlib import Path
 
 # 1. BASE_DIR 정의: src/utils/paths.py 기준으로 프로젝트 루트를 가리킴
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
+
+# [DevOps] 프로젝트 루트를 sys.path에 추가하여 어디서든 src 패키지 임포트 가능하게 설정
+if str(BASE_DIR) not in sys.path:
+    sys.path.append(str(BASE_DIR))
 
 # 2. 주요 디렉토리 상수화 (상대 경로 기반 resolve() 처리)
 DATA_DIR = (BASE_DIR / "data").resolve()
