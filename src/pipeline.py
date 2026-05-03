@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 from src.common.constants import MetadataFields
 from src.data.parser import ManualParser
-from src.processing.chunking import create_parent_child_chunks, split_into_children
+from src.processing.chunking import HierarchicalChunker, create_parent_child_chunks
 from src.utils.paths import PROCESSED_DATA_DIR, RAW_DATA_DIR, ensure_directories
 
 # 로깅 설정
@@ -28,8 +28,17 @@ class PreprocessingPipeline:
 
     def run(self, save_filename: str | None = None) -> list[dict[str, Any]]:  # noqa: C901
         """
-        전체 전처리 파이프라인 실행: 스캔 -> (파싱+표준화) -> 계층적 청킹 -> 저장
+        전체 전처리 파이프라인 실행: (자가 진단) -> 스캔 -> (파싱+표준화) -> 계층적 청킹 -> 저장
         """
+        # [DevOps] 시스템 자가 진단 선행 수행 (#56)
+        # 파이프라인 지연 방지를 위해 무거운 모델 체크는 제외
+        from src.utils.health_check import run_full_diagnostics
+
+        is_healthy, report = run_full_diagnostics(silent=True, check_model=False)
+        if not is_healthy:
+            logger.error(f"시스템 진단 실패: 전처리를 중단합니다. (상세: {report})")
+            return []
+
         all_hierarchical_data = []
 
         # 1. 파일 목록 스캔
@@ -45,6 +54,7 @@ class PreprocessingPipeline:
         logger.info(f"총 {len(files_to_process)}개의 파일에 대해 전처리를 시작합니다.")
 
         # tqdm으로 진행률 표시
+        chunker = HierarchicalChunker()
         for file_path in tqdm(files_to_process, desc="Preprocessing Files"):
             relative_path = file_path.relative_to(self.raw_dir)
 
@@ -64,7 +74,7 @@ class PreprocessingPipeline:
                         meta_for_children = sec["metadata"].copy()
                         meta_for_children[MetadataFields.SEC_TITLE] = f"{sec['chapter']} > {sec['article']}"
 
-                        children = split_into_children(sec["content"], parent_id, meta_for_children)
+                        children = chunker.split_into_children(sec["content"], parent_id, meta_for_children)
 
                         all_hierarchical_data.append(
                             {
