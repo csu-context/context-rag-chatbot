@@ -26,6 +26,9 @@ tqdm
 # 데이터 파싱 (PDF 및 워드)
 pymupdf
 docx2txt
+unstructured[pdf]
+pandas
+tabulate
 
 # UI 및 환경 설정
 streamlit>=1.55.0
