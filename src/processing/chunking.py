@@ -127,9 +127,10 @@ class HierarchicalChunker:
         return protected_text, tables
 
     def _restore_tables(self, text: str, tables: dict[str, str]) -> str:
-        """특수 토큰을 다시 원래 표 데이터로 복원"""
-        for token, table_text in tables.items():
-            text = text.replace(token, table_text)
+        """패딩된 특수 토큰을 다시 원래 표 데이터로 복원"""
+        # 긴 토큰부터 교체하여 부분 일치 문제 방지
+        for token in sorted(tables.keys(), key=len, reverse=True):
+            text = text.replace(token, tables[token])
         return text
 
     def _get_header_path(self, metadata: dict[str, str]) -> str:
@@ -170,13 +171,13 @@ class HierarchicalChunker:
             child_id = f"{parent_id}_c{idx}"
 
             child_metadata_dict: ChunkMetadata = {
-                "source_id": base_metadata.get(MetadataFields.SOURCE_ID, "UNKNOWN"),
-                "src_name": base_metadata.get(MetadataFields.SRC_NAME, "UNKNOWN_FILE"),
-                "doc_type": base_metadata.get(MetadataFields.DOC_TYPE, "markdown"),
-                "pg_num": base_metadata.get(MetadataFields.PG_NUM, 1),
-                "sec_title": base_metadata.get(MetadataFields.SEC_TITLE, "기본 섹션"),
-                "chunk_id": child_id,
-                "parent_id": parent_id,
+                MetadataFields.SOURCE_ID: base_metadata.get(MetadataFields.SOURCE_ID, "UNKNOWN"),
+                MetadataFields.SRC_NAME: base_metadata.get(MetadataFields.SRC_NAME, "UNKNOWN_FILE"),
+                MetadataFields.DOC_TYPE: base_metadata.get(MetadataFields.DOC_TYPE, "markdown"),
+                MetadataFields.PG_NUM: base_metadata.get(MetadataFields.PG_NUM, 1),
+                MetadataFields.SEC_TITLE: base_metadata.get(MetadataFields.SEC_TITLE, "기본 섹션"),
+                MetadataFields.CHUNK_ID: child_id,
+                MetadataFields.PARENT_ID: parent_id,
                 MetadataFields.HEADER_PATH: base_metadata.get(MetadataFields.HEADER_PATH, "기본 섹션"),
                 MetadataFields.IS_TABLE: has_table,
             }
@@ -224,13 +225,13 @@ class HierarchicalChunker:
                     continue
 
                 parent_metadata: ChunkMetadata = {
-                    "source_id": base_metadata.get(MetadataFields.SOURCE_ID, "UNKNOWN"),
-                    "src_name": base_metadata.get(MetadataFields.SRC_NAME, "UNKNOWN_FILE"),
-                    "doc_type": base_metadata.get(MetadataFields.DOC_TYPE, "markdown"),
-                    "pg_num": base_metadata.get(MetadataFields.PG_NUM, 1),
-                    "sec_title": sec_title,
-                    "chunk_id": parent_id,
-                    "parent_id": None,
+                    MetadataFields.SOURCE_ID: base_metadata.get(MetadataFields.SOURCE_ID, "UNKNOWN"),
+                    MetadataFields.SRC_NAME: base_metadata.get(MetadataFields.SRC_NAME, "UNKNOWN_FILE"),
+                    MetadataFields.DOC_TYPE: base_metadata.get(MetadataFields.DOC_TYPE, "markdown"),
+                    MetadataFields.PG_NUM: base_metadata.get(MetadataFields.PG_NUM, 1),
+                    MetadataFields.SEC_TITLE: sec_title,
+                    MetadataFields.CHUNK_ID: parent_id,
+                    MetadataFields.PARENT_ID: None,
                     MetadataFields.HEADER_PATH: header_path,
                 }
 
