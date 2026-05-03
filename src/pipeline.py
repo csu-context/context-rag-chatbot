@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 from src.common.constants import MetadataFields
 from src.data.parser import ManualParser
-from src.processing.chunking import create_parent_child_chunks, split_into_children
+from src.processing.chunking import HierarchicalChunker, create_parent_child_chunks
 from src.utils.paths import PROCESSED_DATA_DIR, RAW_DATA_DIR, ensure_directories
 
 # 로깅 설정
@@ -54,6 +54,7 @@ class PreprocessingPipeline:
         logger.info(f"총 {len(files_to_process)}개의 파일에 대해 전처리를 시작합니다.")
 
         # tqdm으로 진행률 표시
+        chunker = HierarchicalChunker()
         for file_path in tqdm(files_to_process, desc="Preprocessing Files"):
             relative_path = file_path.relative_to(self.raw_dir)
 
@@ -73,7 +74,7 @@ class PreprocessingPipeline:
                         meta_for_children = sec["metadata"].copy()
                         meta_for_children[MetadataFields.SEC_TITLE] = f"{sec['chapter']} > {sec['article']}"
 
-                        children = split_into_children(sec["content"], parent_id, meta_for_children)
+                        children = chunker.split_into_children(sec["content"], parent_id, meta_for_children)
 
                         all_hierarchical_data.append(
                             {

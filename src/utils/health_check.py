@@ -95,7 +95,7 @@ def check_model_loading():
 
 def check_database_status():
     """ChromaDB 연결 및 데이터 정합성 점검"""
-    logger.info("지 [4/4] 벡터 데이터베이스(ChromaDB) 상태 점검")
+    logger.info("🗄️ [4/4] 벡터 데이터베이스(ChromaDB) 상태 점검")
 
     try:
         from src.vector_db.chroma_manager import ChromaDBManager
@@ -110,6 +110,7 @@ def check_database_status():
             logger.warning("  ⚠️ DB가 비어 있습니다. 전처리가 필요합니다.")
             return
 
+        # TODO: 향후 데이터 증가 시 페이징(limit, offset) 처리 필요
         all_data = db_manager.collection.get(include=["metadatas"])
         metadatas = all_data["metadatas"]
 

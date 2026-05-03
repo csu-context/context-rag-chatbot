@@ -1,5 +1,9 @@
+import logging
 import sys
 from pathlib import Path
+
+# 로깅 설정
+logger = logging.getLogger(__name__)
 
 # 1. BASE_DIR 정의: src/utils/paths.py 기준으로 프로젝트 루트를 가리킴
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -43,7 +47,7 @@ def ensure_directories():
     for directory in REQUIRED_DIRECTORIES:
         if not directory.exists():
             directory.mkdir(parents=True, exist_ok=True)
-            print(f"Created directory: {directory}")
+            logger.info(f"Created directory: {directory}")
         else:
             # 선택사항: 이미 존재할 경우 로그를 남기지 않거나 디버깅용으로만 사용
             pass
@@ -51,6 +55,6 @@ def ensure_directories():
 
 if __name__ == "__main__":
     # 유틸리티 단독 실행 시 테스트 및 초기화 수행
-    print(f"Project Base Directory: {BASE_DIR}")
+    logger.info(f"Project Base Directory: {BASE_DIR}")
     ensure_directories()
-    print("All required directories are verified/created.")
+    logger.info("All required directories are verified/created.")
