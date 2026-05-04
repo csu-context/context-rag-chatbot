@@ -1,4 +1,5 @@
 import logging
+import os
 import time
 
 import streamlit as st
@@ -28,11 +29,24 @@ ensure_directories()
 # --- 2. RAG 시스템 초기화 (캐싱) ---
 @st.cache_resource
 def initialize_rag_system():
-    """ChromaDB와 RAG 체인을 초기화하고 캐싱합니다."""
-    # ChromaDBManager 초기화 (기본 컬렉션 사용)
+    """리트리버 및 RAG 체인을 초기화하고 캐싱합니다."""
+    retriever_type = os.getenv("RETRIEVER_TYPE", "vector").lower()
     db_manager = ChromaDBManager(collection_name="rag_collection")
-    # RAG 체인 생성 (vector_db 인스턴스 주입)
-    rag_chain = get_rag_chain(db_manager)
+
+    retriever = db_manager  # 기본값: Vector 전용
+
+    if retriever_type in ["hybrid", "ensemble"]:
+        try:
+            # 다른 이슈(#46)에서 개발 중인 EnsembleRetriever 임포트 시도
+            from src.core.retriever import EnsembleRetriever
+
+            retriever = EnsembleRetriever(chroma_manager=db_manager)
+            logger.info("EnsembleRetriever (Hybrid) 활성화")
+        except (ImportError, ModuleNotFoundError):
+            logger.warning("EnsembleRetriever를 찾을 수 없습니다. Vector 전용 모드로 실행합니다.")
+
+    # RAG 체인 생성 (추상화된 리트리버 주입)
+    rag_chain = get_rag_chain(retriever)
     return db_manager, rag_chain
 
 

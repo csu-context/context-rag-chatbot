@@ -1,5 +1,4 @@
 import logging
-import time
 from typing import Any
 
 from langchain_core.documents import Document
@@ -14,104 +13,92 @@ from src.utils.citation import format_citations
 logger = logging.getLogger(__name__)
 
 
-def get_rag_chain(vector_db):  # noqa: C901
+def _perform_retrieval(retriever_or_db: Any, query: str, k: int) -> list[Document]:
+    """리트리버 유연화에 따른 검색 수행 로직 분리"""
+    if hasattr(retriever_or_db, "get_relevant_documents"):
+        results = retriever_or_db.get_relevant_documents(query, n=k)
+        docs = []
+        for res in results:
+            if isinstance(res, Document):
+                docs.append(res)
+            else:
+                docs.append(
+                    Document(
+                        page_content=res.get("content", ""),
+                        metadata={**res.get("metadata", {}), "score": res.get("score") or res.get("_rrf_score", 0)},
+                    )
+                )
+        return docs
+
+    # 기존 ChromaDBManager 호환성 유지
+    search_results = retriever_or_db.search(query_text=query, k=k)
+    return [
+        Document(page_content=res["content"], metadata={**res["metadata"], "score": res["score"]})
+        for res in search_results
+    ]
+
+
+def _format_docs(docs: list[Document]) -> str:
+    """프롬프트 주입을 위한 컨텍스트 포맷팅."""
+    formatted = []
+    for doc in docs:
+        source = doc.metadata.get("src_name") or "알 수 없는 파일"
+        page = doc.metadata.get("pg_num") or "-"
+        content = f"내용: {doc.page_content}\n출처: [{source}, p.{page}]"
+        formatted.append(content)
+    return "\n\n".join(formatted)
+
+
+def _combine_answer_and_citations(input_dict: dict[str, Any]) -> str:
+    """답변과 인용 정보를 결합하여 최종 응답 생성."""
+    answer_obj = input_dict["answer"]
+
+    if hasattr(answer_obj, "content"):
+        content = answer_obj.content
+        if isinstance(content, list):
+            text_parts = [part.get("text", "") if isinstance(part, dict) else str(part) for part in content]
+            answer = "".join(text_parts)
+        else:
+            answer = str(content)
+    else:
+        answer = str(answer_obj)
+
+    docs = input_dict["docs"]
+    if not docs:
+        return answer
+
+    citations = format_citations(docs)
+    return f"{answer}\n\n{citations}"
+
+
+def get_rag_chain(retriever_or_db):
     """
     RAG 파이프라인 체인을 생성합니다.
-    vector_db: src.vector_db.chroma_manager.ChromaDBManager 인스턴스
+    retriever_or_db: ChromaDBManager 인스턴스 또는 get_relevant_documents를 지원하는 리트리버
     """
-    # 추상화된 LLM 인스턴스 생성
-    llm_instance = LLMFactory.create_llm(temperature=0.1)
+    llm_instance = LLMFactory.create_llm()
     llm = llm_instance.get_model()
 
     def retrieve_and_rerank(input_dict: dict[str, Any]) -> list[Document]:
-        """ChromaDB 검색 -> Document 변환 -> 리랭킹 파이프라인."""
         query = input_dict.get("question", "")
         k = input_dict.get("k", 5)
 
-        # 1. DB 검색 시간 측정
-        search_start = time.time()
         try:
-            search_results = vector_db.search(query_text=query, k=k)
-            docs = [
-                Document(page_content=res["content"], metadata={**res["metadata"], "score": res["score"]})
-                for res in search_results
-            ]
-        except Exception as e:
-            logger.error(f"DB 검색 중 오류 발생: {e}")
-            return []
-        search_end = time.time()
-        search_duration = search_end - search_start
+            docs = _perform_retrieval(retriever_or_db, query, k)
+            if not docs:
+                return []
 
-        if not docs:
-            logger.info(f"검색 결과 없음 (소요시간: {search_duration:.2f}s)")
-            return []
-
-        # 2. 리랭킹 시간 측정
-        rerank_start = time.time()
-        try:
             reranker = CrossEncoderReranker.get_instance()
             result = reranker.rerank_with_timeout(query, docs)
-            rerank_duration = time.time() - rerank_start
-
-            # 성능 데이터 기록 (1. 일반 로그)
-            logger.info(f"단계별 성능 측정: 검색={search_duration:.2f}s, 리랭킹={rerank_duration:.2f}s")
-
-            # 성능 데이터 기록 (2. 전용 파일 로그)
-            try:
-                from src.utils.logger import PerformanceLogger
-
-                perf_logger = PerformanceLogger()
-                perf_logger.log("Search", search_duration, f"k={k} docs={len(docs)}")
-                perf_logger.log("Rerank", rerank_duration, f"filtered={len(docs)}->{len(result.documents)}")
-            except Exception as log_e:
-                logger.error(f"성능 로그 기록 실패: {log_e}")
-
             return result.documents
         except Exception as e:
-            logger.error(f"리랭킹 실패: {e}")
-            return docs
-
-    def format_docs(docs: list[Document]) -> str:
-        """프롬프트 주입을 위한 컨텍스트 포맷팅."""
-        formatted = []
-        for doc in docs:
-            source = doc.metadata.get("src_name") or "알 수 없는 파일"
-            page = doc.metadata.get("pg_num") or "-"
-            content = f"내용: {doc.page_content}\n출처: [{source}, p.{page}]"
-            formatted.append(content)
-        return "\n\n".join(formatted)
+            logger.warning(f"검색/리랭킹 실패: {e}")
+            return []
 
     prompt = ChatPromptTemplate.from_messages([("system", RAG_SYSTEM_PROMPT), ("human", "{question}")])
 
-    def combine_answer_and_citations(input_dict: dict[str, Any]) -> str:
-        """답변과 인용 정보를 결합하여 최종 응답 생성."""
-        answer_obj = input_dict["answer"]
-
-        # 1. 텍스트 추출
-        if hasattr(answer_obj, "content"):
-            content = answer_obj.content
-            # content가 리스트인 경우 (Gemini 멀티모달 응답 등) 첫 번째 텍스트 추출
-            if isinstance(content, list):
-                text_parts = [part.get("text", "") if isinstance(part, dict) else str(part) for part in content]
-                answer = "".join(text_parts)
-            else:
-                answer = str(content)
-        else:
-            answer = str(answer_obj)
-
-        # 2. 인용 정보 결합
-        docs = input_dict["docs"]
-        if not docs:
-            return answer
-
-        citations = format_citations(docs)
-        return f"{answer}\n\n{citations}"
-
-    # 통합 RAG 체인 구성 (LCEL)
-    rag_chain = (
+    return (
         RunnablePassthrough.assign(docs=RunnableLambda(retrieve_and_rerank))
-        .assign(context=lambda x: format_docs(x["docs"]))
+        .assign(context=lambda x: _format_docs(x["docs"]))
         .assign(answer=prompt | llm)
-    ) | combine_answer_and_citations
-
-    return rag_chain
+    ) | _combine_answer_and_citations
