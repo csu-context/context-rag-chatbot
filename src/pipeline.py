@@ -89,20 +89,23 @@ class EnhancedPDFParserStrategy(ParserStrategy):
             # 리소스 해제 (Memory Leak 방지)
             del documents
             import gc
+
             gc.collect()
 
             # 📌 3. 최종 결과물 정의
-            result = [{
-                "is_combined": True,
-                "content": combined_md,
-                "metadata": {
-                    MetadataFields.SOURCE_ID: source_id,
-                    MetadataFields.SRC_NAME: file_path.name,
-                    MetadataFields.PG_NUM: 1,
-                    MetadataFields.DOC_TYPE: "pdf",
-                    MetadataFields.CATEGORY: file_path.parent.name,
+            result = [
+                {
+                    "is_combined": True,
+                    "content": combined_md,
+                    "metadata": {
+                        MetadataFields.SOURCE_ID: source_id,
+                        MetadataFields.SRC_NAME: file_path.name,
+                        MetadataFields.PG_NUM: 1,
+                        MetadataFields.DOC_TYPE: "pdf",
+                        MetadataFields.CATEGORY: file_path.parent.name,
+                    },
                 }
-            }]
+            ]
 
             # 📌 4. 다음 실행을 위해 파싱 결과 캐시 저장
             with open(cache_file, "wb") as f:
@@ -184,12 +187,14 @@ class IngestionPipeline:
                                     MetadataFields.HEADER_PATH: sec_title,
                                     MetadataFields.IS_TABLE: False,
                                 }
-                                all_hierarchical_data.append({
-                                    "parent_id": parent_id,
-                                    "parent_text": sec["content"],
-                                    "metadata": parent_metadata,
-                                    "children": children,
-                                })
+                                all_hierarchical_data.append(
+                                    {
+                                        "parent_id": parent_id,
+                                        "parent_text": sec["content"],
+                                        "metadata": parent_metadata,
+                                        "children": children,
+                                    }
+                                )
                 else:
                     # Markdown 또는 기타 포맷 처리
                     if sections:
