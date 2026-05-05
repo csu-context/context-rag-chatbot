@@ -1,6 +1,9 @@
+import gc
+import hashlib
 import json
 import logging
 import os
+import pickle
 import time
 import uuid
 from abc import ABC, abstractmethod
@@ -8,13 +11,17 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from tqdm import tqdm
 
 from src.common.constants import MetadataFields
 from src.data.parser import ManualParser
 from src.processing.chunking import HierarchicalChunker, create_parent_child_chunks
 from src.processing.pdf_parser import EnhancedPDFParser
-from src.utils.paths import PROCESSED_DATA_DIR, RAW_DATA_DIR, ensure_directories
+from src.utils.paths import CACHE_DIR, PROCESSED_DATA_DIR, RAW_DATA_DIR, ensure_directories
 from src.vector_db.chroma_manager import ChromaDBManager
 
 # 로깅 설정
@@ -48,10 +55,6 @@ class EnhancedPDFParserStrategy(ParserStrategy):
 
     def parse(self, file_path: Path) -> list[dict[str, Any]]:
         if file_path.suffix.lower() == ".pdf":
-            import pickle
-
-            from src.utils.paths import CACHE_DIR
-
             # 📌 1. 캐시 파일 경로 설정 (파일 변경 시 source_id도 바뀌어 안전함)
             source_id = self._generate_source_id(file_path)
             cache_file = CACHE_DIR / f"{source_id}_parsed.pkl"
@@ -68,50 +71,72 @@ class EnhancedPDFParserStrategy(ParserStrategy):
             elapsed = time.time() - start_time
             logger.info(f"파싱 완료: {file_path.name} (소요 시간: {elapsed:.2f}초)")
 
-            # unstructured의 반환값을 마크다운 텍스트로 결합하여 계층적 청킹 활용
-            md_lines = []
+            # unstructured의 반환값을 페이지 단위로 그룹화하여 마크다운 텍스트로 결합 (페이지 정보 보존)
+            results = []
+            current_page = 1
+            current_content = []
+            last_title = ""
+
             for doc in documents:
-                cat = doc.metadata.get("category", "")
+                pg = doc.metadata.get(MetadataFields.PG_NUM, 1)
+                cat = doc.metadata.get(MetadataFields.CATEGORY, "")
                 content = doc.page_content.strip()
                 if not content:
                     continue
 
-                # Title 카테고리를 마크다운 헤더로 변환하여 Parent-Child 계층 생성 유도
-                if cat == "Title":
-                    md_lines.append(f"\n# {content}\n")
-                elif cat == "Table":
-                    md_lines.append(f"\n{content}\n")
-                else:
-                    md_lines.append(content)
+                if pg != current_page and current_content:
+                    results.append(
+                        {
+                            "is_combined": True,
+                            "content": "\n\n".join(current_content),
+                            "metadata": {
+                                MetadataFields.SOURCE_ID: source_id,
+                                MetadataFields.SRC_NAME: file_path.name,
+                                MetadataFields.PG_NUM: current_page,
+                                MetadataFields.DOC_TYPE: "pdf",
+                                MetadataFields.CATEGORY: file_path.parent.name,
+                            },
+                        }
+                    )
+                    current_content = []
+                    # 다음 페이지에도 직전 타이틀(Context)을 상속시켜 계층 구조가 유지되도록 함
+                    if last_title:
+                        current_content.append(f"\n# {last_title}\n")
 
-            combined_md = "\n\n".join(md_lines)
+                if cat == "Title":
+                    current_content.append(f"\n# {content}\n")
+                    last_title = content
+                elif cat == "Table":
+                    current_content.append(f"\n{content}\n")
+                else:
+                    current_content.append(content)
+
+                current_page = pg
+
+            if current_content:
+                results.append(
+                    {
+                        "is_combined": True,
+                        "content": "\n\n".join(current_content),
+                        "metadata": {
+                            MetadataFields.SOURCE_ID: source_id,
+                            MetadataFields.SRC_NAME: file_path.name,
+                            MetadataFields.PG_NUM: current_page,
+                            MetadataFields.DOC_TYPE: "pdf",
+                            MetadataFields.CATEGORY: file_path.parent.name,
+                        },
+                    }
+                )
 
             # 리소스 해제 (Memory Leak 방지)
             del documents
-            import gc
-
             gc.collect()
-
-            # 📌 3. 최종 결과물 정의
-            result = [
-                {
-                    "is_combined": True,
-                    "content": combined_md,
-                    "metadata": {
-                        MetadataFields.SOURCE_ID: source_id,
-                        MetadataFields.SRC_NAME: file_path.name,
-                        MetadataFields.PG_NUM: 1,
-                        MetadataFields.DOC_TYPE: "pdf",
-                        MetadataFields.CATEGORY: file_path.parent.name,
-                    },
-                }
-            ]
 
             # 📌 4. 다음 실행을 위해 파싱 결과 캐시 저장
             with open(cache_file, "wb") as f:
-                pickle.dump(result, f)
+                pickle.dump(results, f)
 
-            return result
+            return results
         else:
             # PDF가 아닌 경우 ManualParser로 Fallback
             relative_path = file_path.relative_to(RAW_DATA_DIR)
@@ -119,8 +144,6 @@ class EnhancedPDFParserStrategy(ParserStrategy):
             return parser.parse()
 
     def _generate_source_id(self, file_path: Path) -> str:
-        import hashlib
-
         stats = file_path.stat()
         unique_str = f"{file_path.name}_{stats.st_mtime}"
         return hashlib.md5(unique_str.encode()).hexdigest()[:12]
@@ -160,10 +183,11 @@ class IngestionPipeline:
                 if file_path.suffix.lower() == ".pdf":
                     # EnhancedPDFParserStrategy 결과인 경우 마크다운 통째로 계층적 청킹 수행
                     if sections and sections[0].get("is_combined"):
-                        base_metadata = sections[0]["metadata"]
-                        md_text = sections[0]["content"]
-                        file_chunks = create_parent_child_chunks(md_text, base_metadata)
-                        all_hierarchical_data.extend(file_chunks)
+                        for sec in sections:
+                            base_metadata = sec["metadata"]
+                            md_text = sec["content"]
+                            file_chunks = create_parent_child_chunks(md_text, base_metadata)
+                            all_hierarchical_data.extend(file_chunks)
                     else:
                         # 기존 ManualParser PDF 처리 방식 (Fallback 호환성)
                         for sec in sections:

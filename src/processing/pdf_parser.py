@@ -2,6 +2,7 @@ import logging
 from pathlib import Path
 
 from langchain_core.documents import Document
+from src.common.constants import MetadataFields
 
 logger = logging.getLogger(__name__)
 
@@ -45,9 +46,9 @@ class EnhancedPDFParser:
                 text = self._html_to_markdown_table(html_table) if html_table else f"\n| {text} |\n|---|---|\n"
 
             metadata = {
-                "source": str(file_path),
-                "page": el.metadata.page_number if hasattr(el.metadata, "page_number") else 1,
-                "category": el_type,
+                MetadataFields.SOURCE_ID: str(file_path),
+                MetadataFields.PG_NUM: el.metadata.page_number if hasattr(el.metadata, "page_number") else 1,
+                MetadataFields.CATEGORY: el_type,
             }
 
             docs.append(Document(page_content=text, metadata=metadata))

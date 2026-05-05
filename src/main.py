@@ -1,6 +1,10 @@
 import logging
 import sys
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from src.pipeline import PipelineOrchestrator
 from src.utils.logger import setup_global_logging
 from src.utils.paths import ensure_directories
