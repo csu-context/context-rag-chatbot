@@ -7,7 +7,7 @@ from src.models.llm_gemini import GeminiModel
 
 def test_factory_creation():
     """팩토리가 Gemini 모델을 정상적으로 생성하는지 확인"""
-    with patch.dict("os.environ", {"MODEL_TYPE": "gemini", "MODEL_NAME": "gemini-pro"}):
+    with patch.dict("os.environ", {"MODEL_TYPE": "gemini", "MODEL_NAME": "gemini-pro", "GOOGLE_API_KEY": "dummy-key"}):
         llm = LLMFactory.create_llm()
         assert isinstance(llm, GeminiModel)
         assert llm.model_name == "gemini-pro"
@@ -23,16 +23,17 @@ def test_llm_response_structure():
 @patch("langchain_google_genai.ChatGoogleGenerativeAI.invoke")
 def test_gemini_model_invoke(mock_invoke):
     """Gemini 모델 호출 시 LLMResponse로 변환되는지 확인 (Mock)"""
-    # Mock 설정
-    mock_res = MagicMock()
-    mock_res.content = "가짜 답변"
-    mock_res.usage_metadata = {"total_token_count": 5}
-    mock_res.response_metadata = {"finish_reason": "stop"}
-    mock_invoke.return_value = mock_res
+    with patch.dict("os.environ", {"GOOGLE_API_KEY": "dummy-key"}):
+        # Mock 설정
+        mock_res = MagicMock()
+        mock_res.content = "가짜 답변"
+        mock_res.usage_metadata = {"total_token_count": 5}
+        mock_res.response_metadata = {"finish_reason": "stop"}
+        mock_invoke.return_value = mock_res
 
-    model = GeminiModel(model_name="test")
-    result = model.invoke("안녕")
+        model = GeminiModel(model_name="test")
+        result = model.invoke("안녕")
 
-    assert isinstance(result, LLMResponse)
-    assert result.content == "가짜 답변"
-    assert result.usage["total_tokens"] == 5
+        assert isinstance(result, LLMResponse)
+        assert result.content == "가짜 답변"
+        assert result.usage["total_tokens"] == 5

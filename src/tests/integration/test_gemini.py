@@ -9,7 +9,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 load_dotenv()
 
 
-@pytest.mark.skipif(not os.getenv("GOOGLE_API_KEY"), reason="GOOGLE_API_KEY가 설정되지 않았습니다.")
+@pytest.mark.skipif(os.getenv("GOOGLE_API_KEY", "") in ["", "None"], reason="GOOGLE_API_KEY가 설정되지 않았습니다.")
 def test_gemini_connection():
     """Gemini API 연결 확인 - 사용 가능한 모델을 동적으로 찾아 테스트"""
     api_key = os.getenv("GOOGLE_API_KEY")
