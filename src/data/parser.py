@@ -261,6 +261,7 @@ class ManualParser:
 
 if __name__ == "__main__":
     import json
+
     from src.utils.logger import setup_global_logging
 
     # 단독 실행 시 테스트 로직

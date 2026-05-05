@@ -1,6 +1,9 @@
 import json
+
 import pytest
+
 from src.vector_db.bm25_manager import BM25Manager
+
 
 @pytest.fixture
 def bm25_manager(tmp_path):
@@ -34,15 +37,18 @@ def bm25_manager(tmp_path):
 
     return BM25Manager(data_dir=data_dir)
 
+
 def test_multi_file_loading(bm25_manager):
     """여러 JSON 파일이 하나로 통합 로드되는지 확인"""
     assert bm25_manager.bm25 is not None
     assert len(bm25_manager.corpus_data) == 3
 
+
 def test_search_basic(bm25_manager):
     results = bm25_manager.get_top_n("휴학", n=1)
     assert len(results) == 1
     assert "휴학" in results[0]["content"]
+
 
 def test_synonyms_from_file(bm25_manager):
     """외부 synonyms.json 기반 동의어 치환 확인"""
@@ -50,7 +56,7 @@ def test_synonyms_from_file(bm25_manager):
     assert len(results) == 1
     assert "조선대학교" in results[0]["content"]
 
+
 def test_no_result(bm25_manager):
     results = bm25_manager.get_top_n("전혀없는단어", n=1)
     assert len(results) == 0
-

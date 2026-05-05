@@ -1,16 +1,18 @@
 import os
+
 import pytest
+from dotenv import load_dotenv
 from google.api_core import exceptions
 from langchain_google_genai import ChatGoogleGenerativeAI
-from dotenv import load_dotenv
 
 load_dotenv()
+
 
 @pytest.mark.skipif(not os.getenv("GOOGLE_API_KEY"), reason="GOOGLE_API_KEY가 설정되지 않았습니다.")
 def test_gemini_connection():
     """Gemini API 연결 및 기본적인 응답 생성 테스트"""
     api_key = os.getenv("GOOGLE_API_KEY")
-    
+
     try:
         llm = ChatGoogleGenerativeAI(
             model="gemini-1.5-flash",
@@ -29,4 +31,3 @@ def test_gemini_connection():
 
     except (exceptions.InvalidArgument, exceptions.DeadlineExceeded, exceptions.ResourceExhausted) as e:
         pytest.fail(f"Gemini API 호출 실패: {e}")
-

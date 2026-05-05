@@ -1,8 +1,8 @@
-import pytest
 from src.common.constants import MetadataFields
+from src.core.chains import get_rag_chain
 from src.processing.chunking import create_parent_child_chunks
 from src.vector_db.chroma_manager import ChromaDBManager
-from src.core.chains import get_rag_chain
+
 
 def test_full_rag_pipeline():
     """데이터 전처리부터 RAG 답변 생성까지의 전체 파이프라인 테스트"""
@@ -29,7 +29,7 @@ def test_full_rag_pipeline():
 
     # 2. 계층적 청킹
     chunks = create_parent_child_chunks(sample_markdown, base_metadata)
-    
+
     flat_ids, flat_texts, flat_metadatas = [], [], []
     for parent in chunks:
         for child in parent["children"]:
@@ -44,11 +44,10 @@ def test_full_rag_pipeline():
     # 4. RAG 체인 호출 및 검증
     test_query = "복수전공의 정의가 뭐야?"
     rag_chain = get_rag_chain(db_manager)
-    
+
     response = rag_chain.invoke({"question": test_query, "k": 1})
-    
+
     assert response is not None
     assert "복수전공" in response
     # 출처 인용 포함 여부 확인 (chains.py에서 결합됨)
     assert "조선대학교_학칙_샘플.md" in response
-

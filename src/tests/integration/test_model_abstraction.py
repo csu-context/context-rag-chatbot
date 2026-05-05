@@ -1,8 +1,9 @@
-import pytest
 from unittest.mock import MagicMock, patch
+
 from src.models.base import LLMResponse
 from src.models.factory import LLMFactory
 from src.models.llm_gemini import GeminiModel
+
 
 def test_factory_creation():
     """팩토리가 Gemini 모델을 정상적으로 생성하는지 확인"""
@@ -11,11 +12,13 @@ def test_factory_creation():
         assert isinstance(llm, GeminiModel)
         assert llm.model_name == "gemini-pro"
 
+
 def test_llm_response_structure():
     """공통 응답 객체(LLMResponse)가 올바른 구조를 가지는지 확인"""
     response = LLMResponse(content="테스트 답변", usage={"total_tokens": 10}, latency=1.5, model_name="test-model")
     assert response.content == "테스트 답변"
     assert response.usage["total_tokens"] == 10
+
 
 @patch("langchain_google_genai.ChatGoogleGenerativeAI.invoke")
 def test_gemini_model_invoke(mock_invoke):
@@ -33,4 +36,3 @@ def test_gemini_model_invoke(mock_invoke):
     assert isinstance(result, LLMResponse)
     assert result.content == "가짜 답변"
     assert result.usage["total_tokens"] == 5
-

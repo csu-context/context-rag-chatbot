@@ -14,7 +14,6 @@ def test_format_citations():
     assert "manual.pdf (p.5)" in result1
     assert "guide.docx (p.10)" in result1
 
-
     # 테스트 2: 중복 제거
     docs2 = [
         Document(page_content="내용1", metadata={"src_name": "manual.pdf", "pg_num": 5}),
@@ -31,5 +30,3 @@ def test_format_citations():
     result3 = format_citations(docs3)
     assert "legacy.pdf (p.1)" in result3
     assert "no_page.pdf (-)" in result3
-
-

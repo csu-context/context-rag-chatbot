@@ -19,11 +19,10 @@ def test_prompt_structure():
         assert elem in RAG_SYSTEM_PROMPT, f"필수 요소 누락: '{elem}'"
 
 
-
 def test_chain_structure():
     """체인 구조 및 필수 라이브러리 임포트 검증"""
-    from src.core.chains import get_rag_chain
     from src.core import chains
+    from src.core.chains import get_rag_chain
 
     assert callable(get_rag_chain), "get_rag_chain은 호출 가능한 함수여야 합니다"
 
@@ -36,4 +35,3 @@ def test_chain_structure():
     imports = dir(chains)
     for imp in required_imports:
         assert imp in imports, f"필수 객체 임포트 누락: {imp}"
-

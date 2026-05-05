@@ -1,12 +1,14 @@
-import pytest
 import os
 import sys
 from pathlib import Path
+
+import pytest
 
 # 프로젝트 루트를 sys.path에 추가하여 src 모듈 임포트 보장
 project_root = str(Path(__file__).parent.parent.parent)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
+
 
 @pytest.fixture(scope="session", autouse=True)
 def setup_test_env():

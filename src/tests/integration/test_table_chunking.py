@@ -1,6 +1,6 @@
-import pytest
 from src.common.constants import MetadataFields
 from src.processing.chunking import create_parent_child_chunks
+
 
 def test_table_chunking():
     """거대한 마크다운 표 분할 및 메타데이터 테스트"""
@@ -32,7 +32,7 @@ def test_table_chunking():
 
     # 검증
     assert len(hierarchical_data) > 0
-    
+
     # 표가 포함된 자식 청크가 있는지 확인
     found_table_chunk = False
     for parent in hierarchical_data:
@@ -42,6 +42,5 @@ def test_table_chunking():
                 # 표 헤더가 포함되어 있는지 확인 (복제 로직)
                 assert "| ID | 항목명 | 상세 설명 |" in child["text"]
                 assert "|---|---|---|" in child["text"]
-    
-    assert found_table_chunk, "표가 포함된 청크를 찾을 수 없습니다."
 
+    assert found_table_chunk, "표가 포함된 청크를 찾을 수 없습니다."
