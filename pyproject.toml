@@ -33,3 +33,26 @@ line-ending = "auto"
 [tool.ruff.lint.mccabe]
 # 코드 복잡도 임계값 설정 (기본 10)
 max-complexity = 10
+
+[tool.pytest.ini_options]
+testpaths = ["src/tests"]
+python_files = "test_*.py"
+addopts = "--strict-markers"
+
+[tool.coverage.run]
+source = ["src"]
+omit = [
+    "src/tests/*",
+    "src/__init__.py",
+    "*/__init__.py"
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+fail_under = 20  # 초기 하한선 20% 설정 (현재 18% 수준에서 점진적 상향 예정)
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError"
+]
