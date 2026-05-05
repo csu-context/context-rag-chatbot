@@ -35,3 +35,44 @@ python -m pytest src/tests/unit/
 - 모든 테스트 파일은 `test_*.py` 형식을 따라야 합니다.
 - 테스트 함수는 `def test_...`로 시작해야 `pytest`가 자동으로 인식합니다.
 - **절대 테스트 코드 내에 `logging.basicConfig`를 넣지 마세요.** (이미 `conftest.py`에서 관리됩니다.)
+
+## 💡 테스트 작성 모범 사례 (Best Practices)
+
+### 1. 외부 API 및 무거운 로직은 Mock 활용
+Gemini API 호출이나 복잡한 계산은 `unittest.mock`을 사용하여 속도를 높이고 비용을 절감하세요.
+```python
+from unittest.mock import patch
+
+@patch("src.models.llm_gemini.GeminiModel.invoke")
+def test_logic_with_mock(mock_invoke):
+    # 가짜 응답 설정
+    mock_invoke.return_value = LLMResponse(content="응답 성공", ...)
+    # 테스트 로직 수행...
+```
+
+### 2. CI 환경을 배려한 스킵 로직
+로컬 모델 로딩(BGE-M3 등)이 필요한 무거운 통합 테스트는 CI 서버의 자원 한계를 고려하여 아래 데코레이터를 추가하세요.
+```python
+import os
+import pytest
+
+@pytest.mark.skipif(os.getenv("CI") == "true", reason="CI 환경에서는 너무 무거워 스킵합니다.")
+def test_heavy_model_loading():
+    # 모델 로드 로직...
+```
+
+### 3. 표준 테스트 템플릿 (Copy & Paste)
+새로운 테스트 파일을 만들 때 아래 구조를 복사해서 시작하세요.
+```python
+import pytest
+from src.utils.paths import RAW_DATA_DIR
+
+@pytest.fixture
+def sample_fixture():
+    """테스트에 필요한 공통 객체 준비"""
+    return {"key": "value"}
+
+def test_example_logic(sample_fixture):
+    """테스트 설명 작성"""
+    assert sample_fixture["key"] == "value"
+```
