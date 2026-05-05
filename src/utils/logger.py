@@ -1,3 +1,20 @@
+"""
+프로젝트 로깅 가이드 및 유틸리티
+
+이 모듈은 프로젝트 전체의 일관된 로깅 스타일을 유지하기 위해 작성되었습니다.
+모든 팀원은 아래의 로깅 원칙을 준수해야 합니다.
+
+[로깅 원칙]
+1. 개별 모듈에서 logging.basicConfig() 호출 금지:
+   - 각 파일에서 설정을 하드코딩하면 로그 포맷이 파편화됩니다.
+2. 로거 인스턴스 생성:
+   - 각 모듈 상단에서 `logger = logging.getLogger(__name__)`을 사용하여 로거를 생성합니다.
+3. 전역 설정 적용:
+   - 애플리케이션의 진입점(main.py, app.py)에서만 `setup_global_logging()`을 호출합니다.
+4. 성능 기록:
+   - 실행 시간 등 성능 지표는 `PerformanceLogger().log(...)`를 통해 별도 관리합니다.
+"""
+
 import logging
 import threading
 from datetime import datetime
