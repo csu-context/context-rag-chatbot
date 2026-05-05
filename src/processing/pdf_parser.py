@@ -2,6 +2,7 @@ import logging
 from pathlib import Path
 
 from langchain_core.documents import Document
+
 from src.common.constants import MetadataFields
 
 logger = logging.getLogger(__name__)

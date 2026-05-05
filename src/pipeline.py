@@ -12,9 +12,6 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-
-load_dotenv()
-
 from tqdm import tqdm
 
 from src.common.constants import MetadataFields
@@ -23,6 +20,8 @@ from src.processing.chunking import HierarchicalChunker, create_parent_child_chu
 from src.processing.pdf_parser import EnhancedPDFParser
 from src.utils.paths import CACHE_DIR, PROCESSED_DATA_DIR, RAW_DATA_DIR, ensure_directories
 from src.vector_db.chroma_manager import ChromaDBManager
+
+load_dotenv()
 
 # 로깅 설정
 logger = logging.getLogger(__name__)

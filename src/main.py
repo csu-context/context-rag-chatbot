@@ -3,13 +3,12 @@ import sys
 
 from dotenv import load_dotenv
 
-load_dotenv()
-
 from src.pipeline import PipelineOrchestrator
 from src.utils.logger import setup_global_logging
 from src.utils.paths import ensure_directories
 from src.vector_db.chroma_manager import ChromaDBManager
 
+load_dotenv()
 # 로깅 설정
 logger = logging.getLogger(__name__)
 
