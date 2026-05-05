@@ -17,7 +17,6 @@ from src.utils.paths import PROCESSED_DATA_DIR, RAW_DATA_DIR, ensure_directories
 from src.vector_db.chroma_manager import ChromaDBManager
 
 # 로깅 설정
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 

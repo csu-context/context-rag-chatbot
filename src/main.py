@@ -2,13 +2,11 @@ import logging
 import sys
 
 from src.pipeline import PipelineOrchestrator
+from src.utils.logger import setup_global_logging
 from src.utils.paths import ensure_directories
 from src.vector_db.chroma_manager import ChromaDBManager
 
 # 로깅 설정
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler(sys.stdout)]
-)
 logger = logging.getLogger(__name__)
 
 
@@ -16,6 +14,7 @@ def main():
     """
     RAG 챗봇 데이터 구축(Ingestion) CLI 도구.
     """
+    setup_global_logging()
     logger.info("=" * 50)
     logger.info("🚀 RAG 데이터 구축 시스템 (Orchestrator)을 시작합니다.")
     logger.info("=" * 50)
