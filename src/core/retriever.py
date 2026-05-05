@@ -5,7 +5,6 @@ from dotenv import load_dotenv
 
 from src.vector_db.bm25_manager import BM25Manager
 
-load_dotenv()
 logger = logging.getLogger(__name__)
 
 # 환경 변수에서 RRF 파라미터 및 가중치 로드
@@ -16,6 +15,7 @@ HYBRID_WEIGHT_VECTOR = float(os.getenv("HYBRID_WEIGHT_VECTOR", 0.5))
 
 class EnsembleRetriever:
     def __init__(self, chroma_manager=None, bm25_manager=None):
+        load_dotenv()
         self.chroma = chroma_manager
         self.bm25 = bm25_manager if bm25_manager else BM25Manager()
 
@@ -113,8 +113,10 @@ class EnsembleRetriever:
     # ──────────────────────────────────────────
 
     def _get_doc_id(self, doc: dict) -> str:
-        """문서 고유 ID 생성 (src_name + pg_num 조합)."""
+        """문서 고유 ID 생성 (chunk_id 우선, 없으면 src_name + pg_num 조합)."""
         metadata = doc.get("metadata", {})
+        if "chunk_id" in metadata:
+            return str(metadata["chunk_id"])
         src = metadata.get("src_name", "unknown")
         pg = metadata.get("pg_num", "0")
         return f"{src}::p{pg}"
@@ -149,12 +151,3 @@ class EnsembleRetriever:
             print(f"  - {r.get('content', '')[:50]}  (rrf: {score})")
 
         print(f"{'=' * 60}\n")
-
-
-if __name__ == "__main__":
-    retriever = EnsembleRetriever()
-
-    test_queries = ["휴학 신청 기간", "복학 신청 방법", "성적 장학금"]
-
-    for q in test_queries:
-        retriever.compare_retrievers(q, n=3)
