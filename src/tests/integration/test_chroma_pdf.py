@@ -1,3 +1,4 @@
+import os
 import pytest
 from pathlib import Path
 from langchain_community.document_loaders import PyPDFLoader
@@ -14,7 +15,9 @@ def test_pdf_path():
         pytest.skip("테스트를 위한 PDF 파일이 data/raw에 없습니다.")
     return pdf_files[0]
 
+@pytest.mark.skipif(os.getenv("CI") == "true", reason="CI 환경에서는 로컬 모델 기반 DB 업서트 테스트를 스킵합니다.")
 def test_pdf_to_chroma(test_pdf_path):
+
     """PDF 로드, 청킹, ChromaDB 저장 및 검색 E2E 테스트"""
     # 1. PDF 로드 및 청킹
     loader = PyPDFLoader(str(test_pdf_path))

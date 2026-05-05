@@ -8,6 +8,7 @@ def get_memory_usage():
     process = psutil.Process(os.getpid())
     return process.memory_info().rss / 1024 / 1024
 
+@pytest.mark.skipif(os.getenv("CI") == "true", reason="CI 환경에서는 대용량 모델 성능 테스트를 스킵합니다.")
 def test_embedding_performance():
     """BGE-M3 임베딩 모델 성능 및 정확도 테스트"""
     mem_before = get_memory_usage()
