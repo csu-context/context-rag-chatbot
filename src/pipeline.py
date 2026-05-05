@@ -1,20 +1,27 @@
+import gc
+import hashlib
 import json
 import logging
 import os
+import pickle
+import time
 import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from dotenv import load_dotenv
 from tqdm import tqdm
 
 from src.common.constants import MetadataFields
 from src.data.parser import ManualParser
 from src.processing.chunking import HierarchicalChunker, create_parent_child_chunks
 from src.processing.pdf_parser import EnhancedPDFParser
-from src.utils.paths import PROCESSED_DATA_DIR, RAW_DATA_DIR, ensure_directories
+from src.utils.paths import CACHE_DIR, PROCESSED_DATA_DIR, RAW_DATA_DIR, ensure_directories
 from src.vector_db.chroma_manager import ChromaDBManager
+
+load_dotenv()
 
 # 로깅 설정
 logger = logging.getLogger(__name__)
@@ -47,27 +54,88 @@ class EnhancedPDFParserStrategy(ParserStrategy):
 
     def parse(self, file_path: Path) -> list[dict[str, Any]]:
         if file_path.suffix.lower() == ".pdf":
+            # 📌 1. 캐시 파일 경로 설정 (파일 변경 시 source_id도 바뀌어 안전함)
+            source_id = self._generate_source_id(file_path)
+            cache_file = CACHE_DIR / f"{source_id}_parsed.pkl"
+
+            # 📌 2. 캐시가 존재하면 무거운 파싱을 생략하고 바로 로드 (시간 단축)
+            if cache_file.exists():
+                logger.info(f"💾 캐시된 파싱 결과를 불러옵니다: {file_path.name}")
+                with open(cache_file, "rb") as f:
+                    return pickle.load(f)
+
             logger.info(f"EnhancedPDFParser를 사용하여 PDF 파싱: {file_path.name}")
+            start_time = time.time()
             documents = self.pdf_parser.parse(file_path)
-            # ManualParser의 결과 형식(list[dict])에 맞춰 변환 필요
-            # EnhancedPDFParser는 list[Document]를 반환함
-            structured_data = []
+            elapsed = time.time() - start_time
+            logger.info(f"파싱 완료: {file_path.name} (소요 시간: {elapsed:.2f}초)")
+
+            # unstructured의 반환값을 페이지 단위로 그룹화하여 마크다운 텍스트로 결합 (페이지 정보 보존)
+            results = []
+            current_page = 1
+            current_content = []
+            last_title = ""
+
             for doc in documents:
-                structured_data.append(
+                pg = doc.metadata.get(MetadataFields.PG_NUM, 1)
+                cat = doc.metadata.get(MetadataFields.CATEGORY, "")
+                content = doc.page_content.strip()
+                if not content:
+                    continue
+
+                if pg != current_page and current_content:
+                    results.append(
+                        {
+                            "is_combined": True,
+                            "content": "\n\n".join(current_content),
+                            "metadata": {
+                                MetadataFields.SOURCE_ID: source_id,
+                                MetadataFields.SRC_NAME: file_path.name,
+                                MetadataFields.PG_NUM: current_page,
+                                MetadataFields.DOC_TYPE: "pdf",
+                                MetadataFields.CATEGORY: file_path.parent.name,
+                            },
+                        }
+                    )
+                    current_content = []
+                    # 다음 페이지에도 직전 타이틀(Context)을 상속시켜 계층 구조가 유지되도록 함
+                    if last_title:
+                        current_content.append(f"\n# {last_title}\n")
+
+                if cat == "Title":
+                    current_content.append(f"\n# {content}\n")
+                    last_title = content
+                elif cat == "Table":
+                    current_content.append(f"\n{content}\n")
+                else:
+                    current_content.append(content)
+
+                current_page = pg
+
+            if current_content:
+                results.append(
                     {
-                        "chapter": "추출된 섹션",  # EnhancedParser는 장/조 구분이 아직 모호할 수 있음
-                        "article": f"페이지 {doc.metadata.get('page', 1)}",
-                        "content": doc.page_content,
+                        "is_combined": True,
+                        "content": "\n\n".join(current_content),
                         "metadata": {
-                            MetadataFields.SOURCE_ID: self._generate_source_id(file_path),
+                            MetadataFields.SOURCE_ID: source_id,
                             MetadataFields.SRC_NAME: file_path.name,
-                            MetadataFields.PG_NUM: doc.metadata.get("page", 1),
+                            MetadataFields.PG_NUM: current_page,
                             MetadataFields.DOC_TYPE: "pdf",
                             MetadataFields.CATEGORY: file_path.parent.name,
                         },
                     }
                 )
-            return structured_data
+
+            # 리소스 해제 (Memory Leak 방지)
+            del documents
+            gc.collect()
+
+            # 📌 4. 다음 실행을 위해 파싱 결과 캐시 저장
+            with open(cache_file, "wb") as f:
+                pickle.dump(results, f)
+
+            return results
         else:
             # PDF가 아닌 경우 ManualParser로 Fallback
             relative_path = file_path.relative_to(RAW_DATA_DIR)
@@ -75,8 +143,6 @@ class EnhancedPDFParserStrategy(ParserStrategy):
             return parser.parse()
 
     def _generate_source_id(self, file_path: Path) -> str:
-        import hashlib
-
         stats = file_path.stat()
         unique_str = f"{file_path.name}_{stats.st_mtime}"
         return hashlib.md5(unique_str.encode()).hexdigest()[:12]
@@ -114,29 +180,50 @@ class IngestionPipeline:
 
                 # 2. 계층적 청킹
                 if file_path.suffix.lower() == ".pdf":
-                    for sec in sections:
-                        parent_id = str(uuid.uuid4())
-                        meta_for_children = sec["metadata"].copy()
-                        meta_for_children[MetadataFields.SEC_TITLE] = f"{sec['chapter']} > {sec['article']}"
+                    # EnhancedPDFParserStrategy 결과인 경우 마크다운 통째로 계층적 청킹 수행
+                    if sections and sections[0].get("is_combined"):
+                        for sec in sections:
+                            base_metadata = sec["metadata"]
+                            md_text = sec["content"]
+                            file_chunks = create_parent_child_chunks(md_text, base_metadata)
+                            all_hierarchical_data.extend(file_chunks)
+                    else:
+                        # 기존 ManualParser PDF 처리 방식 (Fallback 호환성)
+                        for sec in sections:
+                            parent_id = str(uuid.uuid4())
+                            meta_for_children = sec["metadata"].copy()
+                            sec_title = f"{sec.get('chapter', '기본 섹션')} > {sec.get('article', '기본 섹션')}"
+                            meta_for_children[MetadataFields.SEC_TITLE] = sec_title
+                            meta_for_children[MetadataFields.HEADER_PATH] = sec_title
 
-                        children = self.chunker.split_into_children(sec["content"], parent_id, meta_for_children)
+                            children = self.chunker.split_into_children(sec["content"], parent_id, meta_for_children)
 
-                        all_hierarchical_data.append(
-                            {
-                                MetadataFields.PARENT_ID: parent_id,
-                                "parent_text": sec["content"],
-                                "metadata": sec["metadata"],
-                                "children": children,
-                            }
-                        )
+                            if children:
+                                parent_metadata = {
+                                    MetadataFields.SOURCE_ID: sec["metadata"].get(MetadataFields.SOURCE_ID, "UNKNOWN"),
+                                    MetadataFields.SRC_NAME: sec["metadata"].get(MetadataFields.SRC_NAME, "UNKNOWN"),
+                                    MetadataFields.DOC_TYPE: sec["metadata"].get(MetadataFields.DOC_TYPE, "pdf"),
+                                    MetadataFields.PG_NUM: sec["metadata"].get(MetadataFields.PG_NUM, 1),
+                                    MetadataFields.SEC_TITLE: sec_title,
+                                    MetadataFields.CHUNK_ID: parent_id,
+                                    MetadataFields.PARENT_ID: None,
+                                    MetadataFields.HEADER_PATH: sec_title,
+                                    MetadataFields.IS_TABLE: False,
+                                }
+                                all_hierarchical_data.append(
+                                    {
+                                        "parent_id": parent_id,
+                                        "parent_text": sec["content"],
+                                        "metadata": parent_metadata,
+                                        "children": children,
+                                    }
+                                )
                 else:
-                    # Markdown 처리
-                    with open(file_path, encoding="utf-8") as f:
-                        md_text = f.read()
-
-                    # 꼼수: ManualParser의 결과를 사용하여 메타데이터 추출 (이미 strategy.parse에서 생성됨)
+                    # Markdown 또는 기타 포맷 처리
                     if sections:
+                        # ManualParser는 리스트 형태이므로 첫 번째 요소를 기준으로 처리 (통상 1개 파일당 1개 content)
                         base_metadata = sections[0]["metadata"]
+                        md_text = sections[0]["content"]
                         file_chunks = create_parent_child_chunks(md_text, base_metadata)
                         all_hierarchical_data.extend(file_chunks)
 
