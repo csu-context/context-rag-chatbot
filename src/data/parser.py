@@ -261,9 +261,10 @@ class ManualParser:
 
 if __name__ == "__main__":
     import json
+    from src.utils.logger import setup_global_logging
 
     # 단독 실행 시 테스트 로직
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    setup_global_logging()
 
     # data/raw 디렉토리에서 테스트할 첫 번째 파일 자동 검색
     supported_files = []
