@@ -73,8 +73,7 @@ class EnsembleRetriever:
 
         sorted_ids = sorted(scores, key=lambda x: scores[x], reverse=True)[:n]
         return [
-            {**docs[did], "_rrf_score": round(scores[did], 6), "_rank": i}
-            for i, did in enumerate(sorted_ids, start=1)
+            {**docs[did], "_rrf_score": round(scores[did], 6), "_rank": i} for i, did in enumerate(sorted_ids, start=1)
         ]
 
     def _get_doc_id(self, doc: dict) -> str:
