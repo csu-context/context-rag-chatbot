@@ -1,11 +1,7 @@
-import os
-import sys
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
-
 import pytest
 
 from src.core.retriever import EnsembleRetriever
+from src.common.constants import MetadataFields
 
 
 @pytest.fixture
@@ -38,13 +34,10 @@ def test_get_relevant_documents_empty_query(retriever):
 
 
 def test_chunk_id_deduplication(retriever):
-    """chunk_id 기반 중복 제거 확인."""
-    doc1 = {"chunk_id": "001", "content": "테스트1", "metadata": {}}
-    doc2 = {"chunk_id": "001", "content": "테스트1", "metadata": {}}
-    doc3 = {"chunk_id": "002", "content": "테스트2", "metadata": {}}
+    """chunk_id 기반 중복 제거 확인 (최상위 및 메타데이터 내부 모두 대응)."""
+    doc1 = {MetadataFields.CHUNK_ID: "001", "content": "테스트1", "metadata": {}}
+    doc2 = {"content": "테스트1", "metadata": {MetadataFields.CHUNK_ID: "001"}}
+    doc3 = {MetadataFields.CHUNK_ID: "002", "content": "테스트2", "metadata": {}}
+
     assert retriever._get_doc_id(doc1) == retriever._get_doc_id(doc2)
     assert retriever._get_doc_id(doc1) != retriever._get_doc_id(doc3)
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
