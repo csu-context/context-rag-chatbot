@@ -12,6 +12,7 @@
     "chunk_id": "현재 청크의 고유 순번",
     "sec_title": "현재 청크가 속한 가장 인접한 마크다운 섹션 제목",
     "header_path": "마크다운 헤더 전체 계층 경로 (예: 제1장 > 제1조 > 정의)",
-    "content_preview": "디버깅용 텍스트 일부 (선택사항)"
+    "content_preview": "디버깅용 텍스트 일부 (선택사항)",
+    "is_table": "표(Table) 데이터 포함 여부 (True/False)"
   }
 }

@@ -7,7 +7,6 @@ from rank_bm25 import BM25Plus
 
 from src.utils.paths import BM25_CACHE_FILE, PROCESSED_DATA_DIR, SYNONYMS_FILE
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 

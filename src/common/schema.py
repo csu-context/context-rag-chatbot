@@ -10,6 +10,7 @@ class ChunkMetadata(TypedDict, total=False):
     chunk_id: str
     parent_id: str | None
     header_path: str
+    is_table: bool
 
 
 class ChildChunk(TypedDict):

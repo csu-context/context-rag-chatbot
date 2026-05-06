@@ -18,3 +18,4 @@ class MetadataFields:
     SEC_TITLE: Final[str] = "sec_title"
     CONTENT_PREVIEW: Final[str] = "content_preview"
     HEADER_PATH: Final[str] = "header_path"
+    IS_TABLE: Final[str] = "is_table"
