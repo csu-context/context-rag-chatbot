@@ -13,7 +13,12 @@ if project_root not in sys.path:
 @pytest.fixture(scope="session", autouse=True)
 def setup_test_env():
     """테스트 실행 전 환경 변수 및 설정을 초기화합니다."""
-    # 테스트용 환경 변수 설정 (필요 시)
+    from src.utils.logger import setup_global_logging
+
+    # 전역 로깅 설정 (테스트 로그 노이즈 제거)
+    setup_global_logging()
+
+    # 테스트용 환경 변수 설정
     os.environ["TESTING"] = "true"
     yield
     # 정리 로직 (필요 시)

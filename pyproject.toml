@@ -50,7 +50,7 @@ omit = [
 [tool.coverage.report]
 show_missing = true
 skip_covered = true
-fail_under = 20  # 초기 하한선 20% 설정 (현재 18% 수준에서 점진적 상향 예정)
+fail_under = 40  # 테스트 품질 유지를 위해 40%로 상향 (현재 약 51%)
 exclude_lines = [
     "pragma: no cover",
     "if __name__ == .__main__.:",
