@@ -71,6 +71,7 @@ def setup_global_logging():
     for name in ["httpx", "google", "langchain"]:
         logging.getLogger(name).setLevel(logging.WARNING)
 
+
 def get_logger(name: str):
     """
     모듈별 로거를 반환하는 표준 함수.
