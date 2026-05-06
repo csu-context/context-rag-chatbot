@@ -70,3 +70,10 @@ def setup_global_logging():
     # 노이즈 제거
     for name in ["httpx", "google", "langchain"]:
         logging.getLogger(name).setLevel(logging.WARNING)
+
+def get_logger(name: str):
+    """
+    모듈별 로거를 반환하는 표준 함수.
+    로깅 원칙에 따라 개별 설정을 하지 않고 이름만 지정하여 반환합니다.
+    """
+    return logging.getLogger(name)
