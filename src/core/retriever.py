@@ -1,10 +1,12 @@
 import os
+
 from dotenv import load_dotenv
+
+from src.common.constants import MetadataFields
 
 # 로깅 표준 준수
 from src.utils.logger import get_logger
 from src.vector_db.bm25_manager import BM25Manager
-from src.common.constants import MetadataFields
 
 logger = get_logger(__name__)
 

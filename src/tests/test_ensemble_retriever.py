@@ -1,7 +1,7 @@
 import pytest
 
-from src.core.retriever import EnsembleRetriever
 from src.common.constants import MetadataFields
+from src.core.retriever import EnsembleRetriever
 
 
 @pytest.fixture
