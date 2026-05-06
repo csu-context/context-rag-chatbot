@@ -120,9 +120,9 @@ class TestCrossEncoderReranker:
             initial_top_k = 10
             reranker = CrossEncoderReranker.get_instance(top_k=initial_top_k, threshold=0.1)
 
-            # rerank 내부에서 time.time()이 두 번 호출됨 (start, end)
+            # rerank 내부에서 time.time()이 여러 번 호출됨 (start, end, logging 등)
             # 6.0초가 걸린 것으로 시뮬레이션 (MAX_INFER_TIME_SEC 5.0초 초과)
-            with patch("time.time", side_effect=[1.0, 7.0]):
+            with patch("time.time", side_effect=[1.0, 7.0, 7.1, 7.2, 7.3, 7.4, 7.5]):
                 result = reranker.rerank_with_timeout("질문", sample_docs)
 
                 assert result.elapsed_time_sec == 6.0
