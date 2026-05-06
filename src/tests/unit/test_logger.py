@@ -1,10 +1,8 @@
-import os
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from src.utils.logger import PerformanceLogger, setup_global_logging
-from src.utils.paths import LOGS_DIR
 
 
 def test_setup_global_logging():
@@ -38,7 +36,7 @@ def test_performance_logger_logging(tmp_path):
         logger.log("TEST_TYPE", 1.23, "Test Info")
 
         assert test_log_file.exists()
-        with open(test_log_file, "r", encoding="utf-8") as f:
+        with open(test_log_file, encoding="utf-8") as f:
             content = f.readlines()
             assert len(content) >= 2  # 헤더 + 데이터
             assert "TEST_TYPE,1.23,Test Info" in content[-1]
