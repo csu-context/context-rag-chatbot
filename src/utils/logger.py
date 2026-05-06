@@ -21,6 +21,9 @@ import json
 import logging
 import os
 import threading
+import time
+from collections.abc import Generator
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -62,6 +65,45 @@ class PerformanceLogger:
             f.write(log_entry)
 
 
+class TraceSession:
+    """트레이싱 세션을 관리하는 객체"""
+
+    def __init__(self, logger: "TracingLogger", **initial_data):
+        self.logger = logger
+        self.data = {
+            "steps": [],
+            "total_latency_ms": 0,
+            **initial_data,
+        }
+        self.start_time = None
+
+    def __enter__(self):
+        self.start_time = time.time()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.data["total_latency_ms"] = f"{(time.time() - self.start_time) * 1000:.2f}"
+        if exc_type:
+            self.data["status"] = "error"
+            self.data["error_message"] = str(exc_val)
+        else:
+            self.data["status"] = self.data.get("status", "success")
+
+        self.logger.log_trace(self.data)
+
+    @contextmanager
+    def trace_step(self, step_name: str) -> Generator[dict[str, Any]]:
+        """개별 단계의 지연 시간을 측정하고 데이터를 수집합니다."""
+        step_data = {"step": step_name}
+        start = time.time()
+        try:
+            yield step_data
+        finally:
+            latency = (time.time() - start) * 1000
+            step_data["latency_ms"] = f"{latency:.2f}"
+            self.data["steps"].append(step_data)
+
+
 class TracingLogger:
     """RAG 파이프라인의 전 과정을 구조화된 JSON으로 기록하는 로거 (싱글톤)"""
 
@@ -90,6 +132,10 @@ class TracingLogger:
         """오늘 날짜의 로그 파일 경로 반환"""
         date_str = datetime.now().strftime("%Y-%m-%d")
         return self.trace_dir / f"trace_{date_str}.jsonl"
+
+    def start_session(self, **initial_data) -> TraceSession:
+        """새로운 트레이싱 세션을 시작합니다."""
+        return TraceSession(self, **initial_data)
 
     def log_trace(self, trace_data: dict[str, Any]):
         """구조화된 추적 데이터를 JSONL 형식으로 저장합니다."""

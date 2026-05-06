@@ -278,97 +278,59 @@ class PipelineOrchestrator:
         """전체 데이터 구축 파이프라인 실행"""
         logger.info(f"Ingestion 시작 (전략: {self.parser_type})")
 
-        trace = {"type": "ingestion", "parser_type": self.parser_type, "steps": [], "total_latency_ms": 0}
-        start_total = time.time()
+        with self.tracing_logger.start_session(type="ingestion", parser_type=self.parser_type) as session:
+            # 0. 상태 진단
+            with session.trace_step("diagnostics") as step:
+                from src.utils.health_check import run_full_diagnostics
 
-        # 0. 상태 진단
-        try:
-            step_start = time.time()
-            from src.utils.health_check import run_full_diagnostics
+                is_healthy, report = run_full_diagnostics(silent=True, check_model=False)
+                step["status"] = "healthy" if is_healthy else "unhealthy"
 
-            is_healthy, report = run_full_diagnostics(silent=True, check_model=False)
-            trace["steps"].append(
-                {
-                    "step": "diagnostics",
-                    "latency_ms": f"{(time.time() - step_start) * 1000:.2f}",
-                    "status": "healthy" if is_healthy else "unhealthy",
-                }
-            )
-
-            if not is_healthy:
-                logger.error(f"시스템 진단 실패: {report}")
-                trace["status"] = "failed_diagnostics"
-                self.tracing_logger.log_trace(trace)
-                return
+                if not is_healthy:
+                    logger.error(f"시스템 진단 실패: {report}")
+                    session.data["status"] = "failed_diagnostics"
+                    return
 
             # 1. 스캔
-            step_start = time.time()
-            files = self.ingestion_pipeline.scan_files()
-            trace["steps"].append(
-                {"step": "scan", "latency_ms": f"{(time.time() - step_start) * 1000:.2f}", "file_count": len(files)}
-            )
+            with session.trace_step("scan") as step:
+                files = self.ingestion_pipeline.scan_files()
+                step["file_count"] = len(files)
 
-            if not files:
-                logger.warning("처리할 파일이 없습니다.")
-                trace["status"] = "no_files"
-                self.tracing_logger.log_trace(trace)
-                return
+                if not files:
+                    logger.warning("처리할 파일이 없습니다.")
+                    session.data["status"] = "no_files"
+                    return
 
             # 2. 파싱 및 청킹
-            step_start = time.time()
-            processed_data = self.ingestion_pipeline.process_and_chunk(files)
-            trace["steps"].append(
-                {
-                    "step": "parse_and_chunk",
-                    "latency_ms": f"{(time.time() - step_start) * 1000:.2f}",
-                    "parent_chunk_count": len(processed_data),
-                }
-            )
+            with session.trace_step("parse_and_chunk") as step:
+                processed_data = self.ingestion_pipeline.process_and_chunk(files)
+                step["parent_chunk_count"] = len(processed_data)
 
-            if not processed_data:
-                logger.warning("가공된 데이터가 없습니다.")
-                trace["status"] = "no_processed_data"
-                self.tracing_logger.log_trace(trace)
-                return
+                if not processed_data:
+                    logger.warning("가공된 데이터가 없습니다.")
+                    session.data["status"] = "no_processed_data"
+                    return
 
             # 3. 결과 저장
-            step_start = time.time()
-            save_path = self.ingestion_pipeline.save_processed_data(processed_data)
-            trace["steps"].append(
-                {"step": "save_json", "latency_ms": f"{(time.time() - step_start) * 1000:.2f}", "path": str(save_path)}
-            )
+            with session.trace_step("save_json") as step:
+                save_path = self.ingestion_pipeline.save_processed_data(processed_data)
+                step["path"] = str(save_path)
 
             # 4. DB 업서트
-            step_start = time.time()
-            self.ingestion_pipeline.upsert_to_db(processed_data)
-            trace["steps"].append({"step": "db_upsert", "latency_ms": f"{(time.time() - step_start) * 1000:.2f}"})
+            with session.trace_step("db_upsert"):
+                self.ingestion_pipeline.upsert_to_db(processed_data)
 
             # 5. BM25 인덱스 갱신
-            step_start = time.time()
-            try:
-                from src.vector_db.bm25_manager import BM25Manager
+            with session.trace_step("bm25_update") as step:
+                try:
+                    from src.vector_db.bm25_manager import BM25Manager
 
-                BM25Manager()
-                bm25_status = "success"
-            except Exception as e:
-                bm25_status = f"failed: {e}"
+                    BM25Manager()
+                    step["status"] = "success"
+                except Exception as e:
+                    step["status"] = f"failed: {e}"
 
-            trace["steps"].append(
-                {"step": "bm25_update", "latency_ms": f"{(time.time() - step_start) * 1000:.2f}", "status": bm25_status}
-            )
-
-            trace["total_latency_ms"] = f"{(time.time() - start_total) * 1000:.2f}"
-            trace["status"] = "success"
             logger.info("Ingestion 완료!")
-
-        except Exception as e:
-            logger.error(f"Ingestion 도중 예외 발생: {e}", exc_info=True)
-            trace["status"] = "error"
-            trace["error_message"] = str(e)
-            trace["total_latency_ms"] = f"{(time.time() - start_total) * 1000:.2f}"
-
-        # 트레이싱 로그 기록
-        self.tracing_logger.log_trace(trace)
 
 
 # 하위 호환성을 위한 기존 클래스 래핑
