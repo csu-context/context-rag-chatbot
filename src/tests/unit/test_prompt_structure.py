@@ -29,7 +29,7 @@ def test_chain_structure():
     required_imports = [
         "get_rag_chain",
         "ChatPromptTemplate",
-        "RunnablePassthrough",
+        "RunnableLambda",
     ]
 
     imports = dir(chains)

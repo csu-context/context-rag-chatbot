@@ -13,11 +13,17 @@
    - 애플리케이션의 진입점(main.py, app.py)에서만 `setup_global_logging()`을 호출합니다.
 4. 성능 기록:
    - 실행 시간 등 성능 지표는 `PerformanceLogger().log(...)`를 통해 별도 관리합니다.
+5. 트레이싱 기록:
+   - RAG 파이프라인 전 과정은 `TracingLogger().log_trace(...)`를 통해 구조화된 JSON으로 기록합니다.
 """
 
+import json
 import logging
+import os
 import threading
 from datetime import datetime
+from pathlib import Path
+from typing import Any
 
 from src.utils.paths import LOGS_DIR
 
@@ -54,6 +60,73 @@ class PerformanceLogger:
         # Thread-safe하게 파일 쓰기
         with self._lock, open(self.log_file, "a", encoding="utf-8") as f:
             f.write(log_entry)
+
+
+class TracingLogger:
+    """RAG 파이프라인의 전 과정을 구조화된 JSON으로 기록하는 로거 (싱글톤)"""
+
+    _instance = None
+    _lock = threading.Lock()
+
+    def __new__(cls):
+        with cls._lock:
+            if cls._instance is None:
+                cls._instance = super().__new__(cls)
+                cls._instance._setup()
+            return cls._instance
+
+    @classmethod
+    def reset_instance(cls):
+        """테스트용 싱글톤 리셋"""
+        with cls._lock:
+            cls._instance = None
+
+    def _setup(self):
+        self.trace_dir = LOGS_DIR / "trace"
+        self.trace_dir.mkdir(parents=True, exist_ok=True)
+        self.is_debug = os.getenv("DEBUG", "false").lower() == "true"
+
+    def _get_log_file(self) -> Path:
+        """오늘 날짜의 로그 파일 경로 반환"""
+        date_str = datetime.now().strftime("%Y-%m-%d")
+        return self.trace_dir / f"trace_{date_str}.jsonl"
+
+    def log_trace(self, trace_data: dict[str, Any]):
+        """구조화된 추적 데이터를 JSONL 형식으로 저장합니다."""
+        timestamp = datetime.now().isoformat()
+        log_entry = {
+            "timestamp": timestamp,
+            **trace_data,
+        }
+
+        # 민감 정보 필터링
+        filtered_entry = self._filter_sensitive_data(log_entry)
+
+        # 디버그 모드인 경우 Pretty Print
+        if self.is_debug:
+            print("\n" + "=" * 20 + " [DEBUG TRACE] " + "=" * 20)
+            print(json.dumps(filtered_entry, indent=2, ensure_ascii=False))
+            print("=" * 55 + "\n")
+
+        # 파일 쓰기
+        log_file = self._get_log_file()
+        with self._lock, open(log_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps(filtered_entry, ensure_ascii=False) + "\n")
+
+    def _filter_sensitive_data(self, data: Any) -> Any:
+        """API 키 등 민감 정보가 포함된 필드를 필터링합니다."""
+        if isinstance(data, dict):
+            # 키 이름에 'key', 'token', 'secret' 등이 포함되면 값을 마스킹
+            filtered = {}
+            for k, v in data.items():
+                if any(secret in k.lower() for secret in ["key", "token", "secret", "auth"]):
+                    filtered[k] = "********"
+                else:
+                    filtered[k] = self._filter_sensitive_data(v)
+            return filtered
+        if isinstance(data, list):
+            return [self._filter_sensitive_data(i) for i in data]
+        return data
 
 
 def setup_global_logging():

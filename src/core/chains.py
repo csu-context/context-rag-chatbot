@@ -1,14 +1,16 @@
 import logging
+import time
 from typing import Any
 
 from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import RunnableLambda, RunnablePassthrough
+from langchain_core.runnables import RunnableLambda
 
 from src.core.prompts import RAG_SYSTEM_PROMPT
 from src.core.reranker import CrossEncoderReranker
 from src.models.factory import LLMFactory
 from src.utils.citation import format_citations
+from src.utils.logger import TracingLogger
 
 logger = logging.getLogger(__name__)
 
@@ -38,39 +40,6 @@ def _perform_retrieval(retriever_or_db: Any, query: str, k: int) -> list[Documen
     ]
 
 
-def _format_docs(docs: list[Document]) -> str:
-    """프롬프트 주입을 위한 컨텍스트 포맷팅."""
-    formatted = []
-    for doc in docs:
-        source = doc.metadata.get("src_name") or "알 수 없는 파일"
-        page = doc.metadata.get("pg_num") or "-"
-        content = f"내용: {doc.page_content}\n출처: [{source}, p.{page}]"
-        formatted.append(content)
-    return "\n\n".join(formatted)
-
-
-def _combine_answer_and_citations(input_dict: dict[str, Any]) -> str:
-    """답변과 인용 정보를 결합하여 최종 응답 생성."""
-    answer_obj = input_dict["answer"]
-
-    if hasattr(answer_obj, "content"):
-        content = answer_obj.content
-        if isinstance(content, list):
-            text_parts = [part.get("text", "") if isinstance(part, dict) else str(part) for part in content]
-            answer = "".join(text_parts)
-        else:
-            answer = str(content)
-    else:
-        answer = str(answer_obj)
-
-    docs = input_dict["docs"]
-    if not docs:
-        return answer
-
-    citations = format_citations(docs)
-    return f"{answer}\n\n{citations}"
-
-
 def get_rag_chain(retriever_or_db):
     """
     RAG 파이프라인 체인을 생성합니다.
@@ -78,27 +47,102 @@ def get_rag_chain(retriever_or_db):
     """
     llm_instance = LLMFactory.create_llm()
     llm = llm_instance.get_model()
+    tracing_logger = TracingLogger()
 
-    def retrieve_and_rerank(input_dict: dict[str, Any]) -> list[Document]:
+    def run_full_pipeline(input_dict: dict[str, Any]) -> str:
         query = input_dict.get("question", "")
         k = input_dict.get("k", 5)
 
+        trace = {
+            "query": query,
+            "steps": [],
+            "total_latency_ms": 0,
+        }
+        start_total = time.time()
+
         try:
+            # 1. Retrieval
+            step_start = time.time()
             docs = _perform_retrieval(retriever_or_db, query, k)
-            if not docs:
-                return []
+            retrieval_latency = (time.time() - step_start) * 1000
 
-            reranker = CrossEncoderReranker.get_instance()
-            result = reranker.rerank_with_timeout(query, docs)
-            return result.documents
+            trace["steps"].append(
+                {
+                    "step": "retrieval",
+                    "latency_ms": f"{retrieval_latency:.2f}",
+                    "output_count": len(docs),
+                    "data": [{"content": d.page_content[:100] + "...", "metadata": d.metadata} for d in docs],
+                }
+            )
+
+            # 2. Reranking
+            step_start = time.time()
+            if docs:
+                reranker = CrossEncoderReranker.get_instance()
+                rerank_result = reranker.rerank_with_timeout(query, docs)
+                final_docs = rerank_result.documents
+                scores = rerank_result.scores
+            else:
+                final_docs = []
+                scores = []
+
+            rerank_latency = (time.time() - step_start) * 1000
+            trace["steps"].append(
+                {
+                    "step": "reranking",
+                    "latency_ms": f"{rerank_latency:.2f}",
+                    "output_count": len(final_docs),
+                    "scores": [f"{s:.4f}" for s in scores],
+                }
+            )
+
+            # 3. Generation
+            step_start = time.time()
+            context = ""
+            if final_docs:
+                formatted_docs = []
+                for doc in final_docs:
+                    source = doc.metadata.get("src_name") or "알 수 없는 파일"
+                    page = doc.metadata.get("pg_num") or "-"
+                    formatted_docs.append(f"내용: {doc.page_content}\n출처: [{source}, p.{page}]")
+                context = "\n\n".join(formatted_docs)
+
+            prompt_val = ChatPromptTemplate.from_messages(
+                [("system", RAG_SYSTEM_PROMPT), ("human", "{question}")]
+            ).invoke({"question": query, "context": context})
+
+            answer_obj = llm.invoke(prompt_val)
+            answer = answer_obj.content if hasattr(answer_obj, "content") else str(answer_obj)
+
+            gen_latency = (time.time() - step_start) * 1000
+            trace["steps"].append(
+                {
+                    "step": "generation",
+                    "latency_ms": f"{gen_latency:.2f}",
+                    "prompt_preview": str(prompt_val.to_messages()[0].content)[:200] + "...",
+                    "answer_length": len(answer),
+                }
+            )
+
+            # 4. Final Formatting (Citation)
+            if final_docs:
+                citations = format_citations(final_docs)
+                final_answer = f"{answer}\n\n{citations}"
+            else:
+                final_answer = answer
+
+            trace["total_latency_ms"] = f"{(time.time() - start_total) * 1000:.2f}"
+            trace["status"] = "success"
+
         except Exception as e:
-            logger.warning(f"검색/리랭킹 실패: {e}")
-            return []
+            logger.error(f"RAG 파이프라인 실행 실패: {e}", exc_info=True)
+            trace["status"] = "error"
+            trace["error_message"] = str(e)
+            trace["total_latency_ms"] = f"{(time.time() - start_total) * 1000:.2f}"
+            final_answer = "죄송합니다. 답변을 생성하는 중 오류가 발생했습니다."
 
-    prompt = ChatPromptTemplate.from_messages([("system", RAG_SYSTEM_PROMPT), ("human", "{question}")])
+        # 트레이싱 로그 기록
+        tracing_logger.log_trace(trace)
+        return final_answer
 
-    return (
-        RunnablePassthrough.assign(docs=RunnableLambda(retrieve_and_rerank))
-        .assign(context=lambda x: _format_docs(x["docs"]))
-        .assign(answer=prompt | llm)
-    ) | _combine_answer_and_citations
+    return RunnableLambda(run_full_pipeline)

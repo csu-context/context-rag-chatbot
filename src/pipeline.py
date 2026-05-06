@@ -18,6 +18,7 @@ from src.common.constants import MetadataFields
 from src.data.parser import ManualParser
 from src.processing.chunking import HierarchicalChunker, create_parent_child_chunks
 from src.processing.pdf_parser import EnhancedPDFParser
+from src.utils.logger import TracingLogger
 from src.utils.paths import CACHE_DIR, PROCESSED_DATA_DIR, RAW_DATA_DIR, ensure_directories
 from src.vector_db.chroma_manager import ChromaDBManager
 
@@ -266,6 +267,7 @@ class PipelineOrchestrator:
         self.parser_type = os.getenv("PARSER_TYPE", "manual").lower()
         self.strategy = self._get_parser_strategy()
         self.ingestion_pipeline = IngestionPipeline(self.strategy)
+        self.tracing_logger = TracingLogger()
 
     def _get_parser_strategy(self) -> ParserStrategy:
         if self.parser_type == "enhanced":
@@ -276,42 +278,97 @@ class PipelineOrchestrator:
         """전체 데이터 구축 파이프라인 실행"""
         logger.info(f"Ingestion 시작 (전략: {self.parser_type})")
 
+        trace = {"type": "ingestion", "parser_type": self.parser_type, "steps": [], "total_latency_ms": 0}
+        start_total = time.time()
+
         # 0. 상태 진단
-        from src.utils.health_check import run_full_diagnostics
-
-        is_healthy, report = run_full_diagnostics(silent=True, check_model=False)
-        if not is_healthy:
-            logger.error(f"시스템 진단 실패: {report}")
-            return
-
-        # 1. 스캔
-        files = self.ingestion_pipeline.scan_files()
-        if not files:
-            logger.warning("처리할 파일이 없습니다.")
-            return
-
-        # 2. 파싱 및 청킹
-        processed_data = self.ingestion_pipeline.process_and_chunk(files)
-        if not processed_data:
-            logger.warning("가공된 데이터가 없습니다.")
-            return
-
-        # 3. 결과 저장
-        self.ingestion_pipeline.save_processed_data(processed_data)
-
-        # 4. DB 업서트
-        self.ingestion_pipeline.upsert_to_db(processed_data)
-
-        # 5. BM25 인덱스 갱신 트리거 (BM25Manager는 초기화 시 파일 날짜를 체크함)
         try:
-            from src.vector_db.bm25_manager import BM25Manager
+            step_start = time.time()
+            from src.utils.health_check import run_full_diagnostics
 
-            BM25Manager()
-            logger.info("BM25 인덱스 갱신 완료")
+            is_healthy, report = run_full_diagnostics(silent=True, check_model=False)
+            trace["steps"].append(
+                {
+                    "step": "diagnostics",
+                    "latency_ms": f"{(time.time() - step_start) * 1000:.2f}",
+                    "status": "healthy" if is_healthy else "unhealthy",
+                }
+            )
+
+            if not is_healthy:
+                logger.error(f"시스템 진단 실패: {report}")
+                trace["status"] = "failed_diagnostics"
+                self.tracing_logger.log_trace(trace)
+                return
+
+            # 1. 스캔
+            step_start = time.time()
+            files = self.ingestion_pipeline.scan_files()
+            trace["steps"].append(
+                {"step": "scan", "latency_ms": f"{(time.time() - step_start) * 1000:.2f}", "file_count": len(files)}
+            )
+
+            if not files:
+                logger.warning("처리할 파일이 없습니다.")
+                trace["status"] = "no_files"
+                self.tracing_logger.log_trace(trace)
+                return
+
+            # 2. 파싱 및 청킹
+            step_start = time.time()
+            processed_data = self.ingestion_pipeline.process_and_chunk(files)
+            trace["steps"].append(
+                {
+                    "step": "parse_and_chunk",
+                    "latency_ms": f"{(time.time() - step_start) * 1000:.2f}",
+                    "parent_chunk_count": len(processed_data),
+                }
+            )
+
+            if not processed_data:
+                logger.warning("가공된 데이터가 없습니다.")
+                trace["status"] = "no_processed_data"
+                self.tracing_logger.log_trace(trace)
+                return
+
+            # 3. 결과 저장
+            step_start = time.time()
+            save_path = self.ingestion_pipeline.save_processed_data(processed_data)
+            trace["steps"].append(
+                {"step": "save_json", "latency_ms": f"{(time.time() - step_start) * 1000:.2f}", "path": str(save_path)}
+            )
+
+            # 4. DB 업서트
+            step_start = time.time()
+            self.ingestion_pipeline.upsert_to_db(processed_data)
+            trace["steps"].append({"step": "db_upsert", "latency_ms": f"{(time.time() - step_start) * 1000:.2f}"})
+
+            # 5. BM25 인덱스 갱신
+            step_start = time.time()
+            try:
+                from src.vector_db.bm25_manager import BM25Manager
+
+                BM25Manager()
+                bm25_status = "success"
+            except Exception as e:
+                bm25_status = f"failed: {e}"
+
+            trace["steps"].append(
+                {"step": "bm25_update", "latency_ms": f"{(time.time() - step_start) * 1000:.2f}", "status": bm25_status}
+            )
+
+            trace["total_latency_ms"] = f"{(time.time() - start_total) * 1000:.2f}"
+            trace["status"] = "success"
+            logger.info("Ingestion 완료!")
+
         except Exception as e:
-            logger.error(f"BM25 인덱스 갱신 실패: {e}")
+            logger.error(f"Ingestion 도중 예외 발생: {e}", exc_info=True)
+            trace["status"] = "error"
+            trace["error_message"] = str(e)
+            trace["total_latency_ms"] = f"{(time.time() - start_total) * 1000:.2f}"
 
-        logger.info("Ingestion 완료!")
+        # 트레이싱 로그 기록
+        self.tracing_logger.log_trace(trace)
 
 
 # 하위 호환성을 위한 기존 클래스 래핑
