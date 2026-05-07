@@ -89,21 +89,41 @@ def get_rag_chain(retriever_or_db):
             # 2. Reranking
             with session.trace_step("reranking") as step:
                 if docs:
+                    # 리랭킹 전 ID 순서 기록 (순위 변화 추적용)
+                    pre_rerank_ids = [d.metadata.get(MetadataFields.CHUNK_ID) or "unknown" for d in docs]
+
                     reranker = CrossEncoderReranker.get_instance()
                     rerank_result = reranker.rerank_with_timeout(query, docs)
                     final_docs = rerank_result.documents
                     scores = rerank_result.scores
-                else:
-                    final_docs, scores = [], []
 
-                step.update({"output_count": len(final_docs), "scores": [f"{s:.4f}" for s in scores]})
+                    # 리랭킹 후 ID 순서 기록
+                    post_rerank_ids = [d.metadata.get(MetadataFields.CHUNK_ID) or "unknown" for d in final_docs]
+                else:
+                    final_docs, scores, pre_rerank_ids, post_rerank_ids = [], [], [], []
+
+                step.update(
+                    {
+                        "output_count": len(final_docs),
+                        "scores": [f"{s:.4f}" for s in scores],
+                        "rank_change": {"before": pre_rerank_ids, "after": post_rerank_ids},
+                    }
+                )
 
             # 3. Generation
             with session.trace_step("generation") as step:
                 context = _format_docs(final_docs)
-                prompt_val = ChatPromptTemplate.from_messages(
+                prompt_template = ChatPromptTemplate.from_messages(
                     [("system", RAG_SYSTEM_PROMPT), ("human", "{question}")]
-                ).invoke({"question": query, "context": context})
+                )
+                prompt_val = prompt_template.invoke({"question": query, "context": context})
+
+                # LLM 정보 및 파라미터 추출
+                llm_params = {}
+                if hasattr(llm, "model_name"):
+                    llm_params["model"] = llm.model_name
+                if hasattr(llm, "temperature"):
+                    llm_params["temperature"] = llm.temperature
 
                 answer_obj = llm.invoke(prompt_val)
                 answer = _extract_answer(answer_obj)
@@ -112,6 +132,7 @@ def get_rag_chain(retriever_or_db):
                     {
                         "prompt_preview": str(prompt_val.to_messages()[0].content)[:200] + "...",
                         "answer_length": len(answer),
+                        "llm_params": llm_params,
                     }
                 )
 

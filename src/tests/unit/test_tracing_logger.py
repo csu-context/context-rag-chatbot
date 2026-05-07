@@ -1,4 +1,5 @@
 import json
+import os
 import time
 from unittest.mock import patch
 
@@ -64,3 +65,28 @@ def test_trace_session_error_handling(tmp_path):
             assert log_entry["status"] == "error"
             assert log_entry["error_message"] == "test error"
             assert log_entry["steps"][0]["step"] == "failing_step"
+
+
+def test_log_cleanup_logic(tmp_path):
+    """오래된 로그 파일 삭제 로직 검증"""
+    trace_dir = tmp_path / "trace"
+    trace_dir.mkdir(parents=True)
+
+    # 가상의 로그 파일 생성 (오늘, 10일 전)
+    today_log = trace_dir / "trace_2026-05-07.jsonl"
+    old_log = trace_dir / "trace_2026-04-20.jsonl"
+
+    today_log.touch()
+    old_log.touch()
+
+    # mtime 수정 (10일 전으로)
+    ten_days_ago = time.time() - (10 * 24 * 3600)
+    os.utime(old_log, (ten_days_ago, ten_days_ago))
+
+    TracingLogger.reset_instance()
+    with patch("src.utils.logger.LOGS_DIR", tmp_path):
+        # 초기화 시 cleanup 호출됨
+        TracingLogger()
+
+    assert today_log.exists()
+    assert not old_log.exists()

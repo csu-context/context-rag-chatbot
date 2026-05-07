@@ -127,6 +127,19 @@ class TracingLogger:
         self.trace_dir = LOGS_DIR / "trace"
         self.trace_dir.mkdir(parents=True, exist_ok=True)
         self.is_debug = os.getenv("DEBUG", "false").lower() == "true"
+        self._cleanup_old_logs()
+
+    def _cleanup_old_logs(self, keep_days: int = 7):
+        """설정된 기간보다 오래된 로그 파일을 삭제하여 디스크 공간을 관리합니다."""
+        try:
+            current_time = time.time()
+            for log_file in self.trace_dir.glob("trace_*.jsonl"):
+                file_age_days = (current_time - log_file.stat().st_mtime) / (24 * 3600)
+                if file_age_days > keep_days:
+                    log_file.unlink()
+        except Exception as e:
+            # 로깅 초기화 중 에러가 발생해도 프로세스가 중단되지 않도록 예외 처리
+            print(f"오래된 로그 삭제 중 오류 발생: {e}")
 
     def _get_log_file(self) -> Path:
         """오늘 날짜의 로그 파일 경로 반환"""
