@@ -82,7 +82,7 @@ class TraceSession:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        self.data["total_latency_ms"] = f"{(time.time() - self.start_time) * 1000:.2f}"
+        self.data["total_latency_ms"] = round((time.time() - self.start_time) * 1000, 2)
         if exc_type:
             self.data["status"] = "error"
             self.data["error_message"] = str(exc_val)
@@ -100,7 +100,7 @@ class TraceSession:
             yield step_data
         finally:
             latency = (time.time() - start) * 1000
-            step_data["latency_ms"] = f"{latency:.2f}"
+            step_data["latency_ms"] = round(latency, 2)
             self.data["steps"].append(step_data)
 
 

@@ -39,12 +39,12 @@ def test_trace_session_and_step(tmp_path):
 
             assert log_entry["steps"][0]["step"] == "step1"
             assert log_entry["steps"][0]["info"] == "data1"
-            assert float(log_entry["steps"][0]["latency_ms"]) >= 100
+            assert log_entry["steps"][0]["latency_ms"] >= 100
 
             assert log_entry["steps"][1]["step"] == "step2"
             assert log_entry["steps"][1]["info"] == "data2"
             assert log_entry["steps"][1]["count"] == 10
-            assert float(log_entry["steps"][1]["latency_ms"]) >= 50
+            assert log_entry["steps"][1]["latency_ms"] >= 50
 
 
 def test_trace_session_error_handling(tmp_path):
