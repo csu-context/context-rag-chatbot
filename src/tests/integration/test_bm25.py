@@ -60,3 +60,34 @@ def test_synonyms_from_file(bm25_manager):
 def test_no_result(bm25_manager):
     results = bm25_manager.get_top_n("전혀없는단어", n=1)
     assert len(results) == 0
+
+
+def test_hierarchical_loading(tmp_path):
+    """계층형 데이터(children, parent_text)가 평탄화되어 모두 로드되는지 확인"""
+    data_dir = tmp_path / "hierarchical_processed"
+    data_dir.mkdir()
+
+    # 실제 데이터와 유사한 계층 구조
+    data = [
+        {
+            "parent_id": "p1",
+            "parent_text": "보안 규정 서문입니다.",
+            "metadata": {"source_id": "doc1", "src_name": "security.pdf"},
+            "children": [
+                {
+                    "chunk_id": "c1",
+                    "text": "제1조 목적: 정보 자산 보호.",
+                    "metadata": {"parent_id": "p1"},
+                }
+            ],
+        }
+    ]
+
+    with open(data_dir / "hierarchical.json", "w", encoding="utf-8") as f:
+        json.dump(data, f)
+
+    manager = BM25Manager(data_dir=data_dir)
+    contents = [doc["content"] for doc in manager.corpus_data]
+
+    assert "제1조 목적: 정보 자산 보호." in contents
+    assert "보안 규정 서문입니다." in contents

@@ -19,3 +19,15 @@ class MetadataFields:
     CONTENT_PREVIEW: Final[str] = "content_preview"
     HEADER_PATH: Final[str] = "header_path"
     IS_TABLE: Final[str] = "is_table"
+
+
+class DataFields:
+    """
+    가공된 JSON 데이터의 최상위 필드명 상수
+    """
+
+    TEXT: Final[str] = "text"
+    CONTENT: Final[str] = "content"  # 기존 호환성 유지용
+    CHILDREN: Final[str] = "children"
+    PARENT_TEXT: Final[str] = "parent_text"
+    METADATA: Final[str] = "metadata"

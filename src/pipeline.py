@@ -168,7 +168,11 @@ class IngestionPipeline:
             supported_exts = [".pdf", ".md", ".markdown"]
         files = []
         for ext in supported_exts:
-            files.extend(list(self.raw_dir.glob(f"**/*{ext}")))
+            # 모든 하위 디렉토리를 포함하여 검색
+            all_files = list(self.raw_dir.glob(f"**/*{ext}"))
+            # Mac 숨김 파일(._ 로 시작) 및 시스템 파일 필터링
+            filtered_files = [f for f in all_files if not f.name.startswith("._") and f.name != ".DS_Store"]
+            files.extend(filtered_files)
         return files
 
     def process_and_chunk(self, files: list[Path]) -> list[dict[str, Any]]:
