@@ -18,6 +18,7 @@ from src.common.constants import MetadataFields
 from src.data.parser import ManualParser
 from src.processing.chunking import HierarchicalChunker, create_parent_child_chunks
 from src.processing.pdf_parser import EnhancedPDFParser
+from src.utils.logger import TracingLogger
 from src.utils.paths import CACHE_DIR, PROCESSED_DATA_DIR, RAW_DATA_DIR, ensure_directories
 from src.vector_db.chroma_manager import ChromaDBManager
 
@@ -270,6 +271,7 @@ class PipelineOrchestrator:
         self.parser_type = os.getenv("PARSER_TYPE", "manual").lower()
         self.strategy = self._get_parser_strategy()
         self.ingestion_pipeline = IngestionPipeline(self.strategy)
+        self.tracing_logger = TracingLogger()
 
     def _get_parser_strategy(self) -> ParserStrategy:
         if self.parser_type == "enhanced":
@@ -280,42 +282,59 @@ class PipelineOrchestrator:
         """전체 데이터 구축 파이프라인 실행"""
         logger.info(f"Ingestion 시작 (전략: {self.parser_type})")
 
-        # 0. 상태 진단
-        from src.utils.health_check import run_full_diagnostics
+        with self.tracing_logger.start_session(type="ingestion", parser_type=self.parser_type) as session:
+            # 0. 상태 진단
+            with session.trace_step("diagnostics") as step:
+                from src.utils.health_check import run_full_diagnostics
 
-        is_healthy, report = run_full_diagnostics(silent=True, check_model=False)
-        if not is_healthy:
-            logger.error(f"시스템 진단 실패: {report}")
-            return
+                is_healthy, report = run_full_diagnostics(silent=True, check_model=False)
+                step["status"] = "healthy" if is_healthy else "unhealthy"
 
-        # 1. 스캔
-        files = self.ingestion_pipeline.scan_files()
-        if not files:
-            logger.warning("처리할 파일이 없습니다.")
-            return
+                if not is_healthy:
+                    logger.error(f"시스템 진단 실패: {report}")
+                    session.data["status"] = "failed_diagnostics"
+                    return
 
-        # 2. 파싱 및 청킹
-        processed_data = self.ingestion_pipeline.process_and_chunk(files)
-        if not processed_data:
-            logger.warning("가공된 데이터가 없습니다.")
-            return
+            # 1. 스캔
+            with session.trace_step("scan") as step:
+                files = self.ingestion_pipeline.scan_files()
+                step["file_count"] = len(files)
 
-        # 3. 결과 저장
-        self.ingestion_pipeline.save_processed_data(processed_data)
+                if not files:
+                    logger.warning("처리할 파일이 없습니다.")
+                    session.data["status"] = "no_files"
+                    return
 
-        # 4. DB 업서트
-        self.ingestion_pipeline.upsert_to_db(processed_data)
+            # 2. 파싱 및 청킹
+            with session.trace_step("parse_and_chunk") as step:
+                processed_data = self.ingestion_pipeline.process_and_chunk(files)
+                step["parent_chunk_count"] = len(processed_data)
 
-        # 5. BM25 인덱스 갱신 트리거 (BM25Manager는 초기화 시 파일 날짜를 체크함)
-        try:
-            from src.vector_db.bm25_manager import BM25Manager
+                if not processed_data:
+                    logger.warning("가공된 데이터가 없습니다.")
+                    session.data["status"] = "no_processed_data"
+                    return
 
-            BM25Manager()
-            logger.info("BM25 인덱스 갱신 완료")
-        except Exception as e:
-            logger.error(f"BM25 인덱스 갱신 실패: {e}")
+            # 3. 결과 저장
+            with session.trace_step("save_json") as step:
+                save_path = self.ingestion_pipeline.save_processed_data(processed_data)
+                step["path"] = str(save_path)
 
-        logger.info("Ingestion 완료!")
+            # 4. DB 업서트
+            with session.trace_step("db_upsert"):
+                self.ingestion_pipeline.upsert_to_db(processed_data)
+
+            # 5. BM25 인덱스 갱신
+            with session.trace_step("bm25_update") as step:
+                try:
+                    from src.vector_db.bm25_manager import BM25Manager
+
+                    BM25Manager()
+                    step["status"] = "success"
+                except Exception as e:
+                    step["status"] = f"failed: {e}"
+
+            logger.info("Ingestion 완료!")
 
 
 # 하위 호환성을 위한 기존 클래스 래핑
