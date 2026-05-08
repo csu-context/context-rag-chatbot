@@ -24,9 +24,11 @@ psutil
 tqdm
 
 # 데이터 파싱 (PDF 및 워드) - EnhancedPDFParser 유지
+# 주의: 서버 환경(Docker)에는 tesseract-ocr 시스템 패키지가 설치되어 있어야 합니다.
 pymupdf
 docx2txt
 unstructured[pdf]
+pytesseract
 pandas
 tabulate
 
