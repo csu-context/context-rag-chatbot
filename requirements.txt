@@ -11,6 +11,7 @@ llama-index>=0.14.18
 # LLM 및 임베딩 (Gemini & BGE-M3-ko 및 GPU 가속)
 # Gemini 3.1 및 Gemma 4 모델을 지원하는 최신 SDK 포함
 langchain-google-genai>=4.2.1
+langchain-anthropic>=0.1.1
 google-genai>=1.71.0
 google-generativeai>=0.8.0
 langchain-huggingface>=1.2.1
