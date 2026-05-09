@@ -10,6 +10,7 @@ from src.models.llm_claude import ClaudeModel
 load_dotenv()
 
 
+@pytest.mark.skipif(not os.getenv("ANTHROPIC_API_KEY"), reason="ANTHROPIC_API_KEY가 설정되지 않았습니다.")
 def test_claude_factory_creation():
     """LLMFactory를 통한 Claude 모델 생성 테스트"""
     llm = LLMFactory.create_llm(model_type="claude", model_name="claude-sonnet-4-6")

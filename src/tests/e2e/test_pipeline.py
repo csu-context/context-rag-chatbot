@@ -1,4 +1,5 @@
 import os
+
 import pytest
 from dotenv import load_dotenv
 
@@ -9,6 +10,7 @@ from src.vector_db.chroma_manager import ChromaDBManager
 
 # 테스트 실행 전 환경 변수 로드
 load_dotenv()
+
 
 @pytest.mark.skipif(os.getenv("GOOGLE_API_KEY", "") in ["", "None"], reason="GOOGLE_API_KEY가 설정되지 않았습니다.")
 def test_full_rag_pipeline():

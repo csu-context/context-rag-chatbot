@@ -68,7 +68,6 @@ def get_rag_chain(retriever_or_db):
     retriever_or_db: ChromaDBManager 인스턴스 또는 get_relevant_documents를 지원하는 리트리버
     """
     llm_instance = LLMFactory.create_llm()
-    llm = llm_instance.get_model()
     tracing_logger = TracingLogger()
 
     def run_full_pipeline(input_dict: dict[str, Any]) -> str:
@@ -126,9 +125,9 @@ def get_rag_chain(retriever_or_db):
                     {
                         "prompt_preview": str(prompt_val.to_messages()[0].content)[:200] + "...",
                         "answer_length": len(answer),
-                        "model_name": response_obj.model_name,
-                        "usage": response_obj.usage,
-                        "latency_ms": response_obj.latency * 1000,
+                        "model_name": str(response_obj.model_name),
+                        "usage": dict(response_obj.usage) if response_obj.usage else {},
+                        "latency_ms": float(response_obj.latency) * 1000 if response_obj.latency else 0.0,
                     }
                 )
 
