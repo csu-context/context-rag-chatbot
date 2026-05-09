@@ -33,6 +33,7 @@ class EnhancedPDFParser:
             strategy=self.strategy,
             infer_table_structure=True,  # 표 구조 추론 활성화
             extract_images_in_pdf=False,  # 1차 목표에 따라 이미지 OCR은 비활성화
+            languages=["kor", "eng"],  # 한국어 및 영어 인식 설정
         )
 
         docs = []

@@ -18,19 +18,25 @@ ENV PATH="/opt/venv/bin:$PATH"
 # pip 업그레이드
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
-# 의존성 파일 복사 및 설치 (CUDA 13.0 인덱스 유지)
-COPY requirements.txt .
+# 의존성 파일 복사 및 설치 (CPU 인덱스 및 운영 전용 설정 사용)
+COPY requirements-prod.txt .
 RUN pip install --no-cache-dir \
-    --extra-index-url https://download.pytorch.org/whl/cu130 \
-    -r requirements.txt
+    --extra-index-url https://download.pytorch.org/whl/cpu \
+    -r requirements-prod.txt
 
 
 # --- Stage 2: Final Runtime ---
 FROM python:3.13-slim
 
-# 런타임에 필요한 최소한의 시스템 패키지만 설치
+# 런타임에 필요한 시스템 패키지 설치
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 \
+    libmagic1 \
+    poppler-utils \
+    tesseract-ocr \
+    libtesseract-dev \
+    libgl1 \
+    libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 # 작업 디렉토리 설정
