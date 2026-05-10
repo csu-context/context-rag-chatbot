@@ -86,9 +86,14 @@ class BaseReranker(abc.ABC):
                 elapsed_time_sec=0.0,
             )
 
-        # 실제 추론 시간이 목표 초과 시 로그
+        # 실제 추론 시간이 목표 초과 시 동적 조절 (스레드 안전)
         if result.elapsed_time_sec > self.MAX_INFER_TIME_SEC * self.SAFETY_RATIO:
-            logger.warning(f"Reranking took {result.elapsed_time_sec:.2f}s. Approaching timeout.")
+            reduced_k = max(1, self.top_k // 2)
+            with self._lock:
+                self.top_k = reduced_k
+            logger.warning(
+                f"Reranking took {result.elapsed_time_sec:.2f}s. Reduced top_k to {reduced_k} for subsequent calls."
+            )
 
         return result
 

@@ -105,7 +105,7 @@ class TestCrossEncoderReranker:
             mock_load.return_value = mock_model
 
             reranker = CrossEncoderReranker.get_instance()
-            result = reranker.rerank("질문", sample_docs)
+            result = reranker.rerank_with_timeout("질문", sample_docs)
 
             assert len(result.documents) == len(sample_docs)
             assert result.scores == [0.5] * len(sample_docs)
