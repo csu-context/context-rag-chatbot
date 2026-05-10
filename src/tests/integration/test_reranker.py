@@ -118,7 +118,7 @@ class TestCrossEncoderReranker:
             initial_top_k = 10
             reranker = CrossEncoderReranker.get_instance(top_k=initial_top_k, threshold=0.1)
 
-            # rerank_with_timeout 내부에서 time.time()을 2번 호출, 
+            # rerank_with_timeout 내부에서 time.time()을 2번 호출,
             # 그 사이의 rerank() 내부에서 time.time()을 2번 호출하므로 총 4번의 호출이 일어남.
             # 1. rerank_with_timeout 시작
             # 2. rerank 시작
