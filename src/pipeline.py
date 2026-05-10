@@ -28,6 +28,7 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
+
 class ParserStrategy(ABC):
     """문서 파싱 전략을 위한 추상 베이스 클래스"""
 
@@ -351,8 +352,7 @@ class PipelineOrchestrator:
                 files_to_process = [RAW_DATA_DIR / p for p in files_to_process_relative]
 
                 source_ids_to_delete = [
-                    h for p, h in old_manifest.items()
-                    if p not in new_manifest or old_manifest[p] != new_manifest[p]
+                    h for p, h in old_manifest.items() if p not in new_manifest or old_manifest[p] != new_manifest[p]
                 ]
 
                 step["total_files"] = len(all_files)
