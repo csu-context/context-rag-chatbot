@@ -1,7 +1,5 @@
-import os
 from unittest.mock import MagicMock, patch
 
-import pytest
 from dotenv import load_dotenv
 
 from src.common.constants import MetadataFields

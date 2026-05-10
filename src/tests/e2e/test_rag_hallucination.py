@@ -1,7 +1,5 @@
-import os
 from unittest.mock import MagicMock, patch
 
-import pytest
 from langchain_core.documents import Document
 
 from src.core.chains import get_rag_chain
