@@ -42,7 +42,10 @@ def test_evaluator_initialization(mock_db_manager, mock_llm_factory):
 
 def test_evaluator_prepare_dataset(mock_db_manager, mock_llm_factory, tmp_path):
     # Setup golden dataset
-    golden_data = [{"question": "What is A?", "ground_truth": "A is alpha"}, {"question": "What is B?", "ground_truth": "B is beta"}]
+    golden_data = [
+        {"question": "What is A?", "ground_truth": "A is alpha"},
+        {"question": "What is B?", "ground_truth": "B is beta"},
+    ]
     golden_path = tmp_path / "golden.json"
     with open(golden_path, "w", encoding="utf-8") as f:
         json.dump(golden_data, f)

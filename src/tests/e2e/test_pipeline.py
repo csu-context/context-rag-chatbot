@@ -12,7 +12,10 @@ from src.vector_db.chroma_manager import ChromaDBManager
 load_dotenv()
 
 
-@pytest.mark.skipif(os.getenv("GOOGLE_API_KEY", "") in ["", "None"], reason="GOOGLE_API_KEY가 설정되지 않았습니다.")
+@pytest.mark.skipif(
+    os.getenv("GOOGLE_API_KEY", "") in ["", "None"] and os.getenv("ANTHROPIC_API_KEY", "") in ["", "None"],
+    reason="API 키가 설정되지 않았습니다.",
+)
 def test_full_rag_pipeline():
     """데이터 전처리부터 RAG 답변 생성까지의 전체 파이프라인 테스트"""
     # 1. 테스트 데이터 준비
