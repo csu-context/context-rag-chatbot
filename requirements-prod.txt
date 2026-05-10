@@ -9,6 +9,7 @@ langchain-text-splitters
 
 # LLM 및 임베딩 (Gemini & BGE-M3-ko)
 langchain-google-genai>=4.2.1
+langchain-anthropic>=0.1.1
 google-genai>=1.71.0
 google-generativeai>=0.8.0
 langchain-huggingface>=1.2.1
