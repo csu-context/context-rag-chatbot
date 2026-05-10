@@ -27,7 +27,7 @@ class LLMFactory:
 
         if type_ == "gemini":
             # Gemini 모델 이름 기본값 처리
-            name_ = name_ or "gemini-1.5-flash"
+            name_ = name_ or "gemini-1.5-flash-latest"
             return GeminiModel(model_name=name_, **kwargs)
 
         elif type_ == "claude":
@@ -42,4 +42,4 @@ class LLMFactory:
 
         else:
             logger.warning(f"지원하지 않는 모델 타입 '{type_}'입니다. Gemini 모델로 Fallback 합니다.")
-            return GeminiModel(model_name="gemini-1.5-flash", **kwargs)
+            return GeminiModel(model_name="gemini-1.5-flash-latest", **kwargs)

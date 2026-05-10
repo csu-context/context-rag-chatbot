@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 class GeminiModel(BaseLLM):
     """Google Gemini 모델 구현체"""
 
-    def __init__(self, model_name: str = "gemini-1.5-flash", temperature: float = 0.1):
+    def __init__(self, model_name: str = "gemini-1.5-flash-latest", temperature: float = 0.1):
         self.api_key = os.getenv("GOOGLE_API_KEY")
         if not self.api_key:
             logger.warning("GOOGLE_API_KEY가 설정되지 않았습니다.")

@@ -66,7 +66,7 @@ def test_evaluator_prepare_dataset(mock_db_manager, mock_llm_factory, tmp_path):
     assert "A info" in dataset[0]["contexts"]
 
 
-def test_calculate_cost():
+def test_calculate_cost(mock_db_manager, mock_llm_factory):
     evaluator = RagasEvaluator()
     # Mock pricing for test-model
     evaluator.PRICING["test-model"] = {"input": 10.0, "output": 20.0}
@@ -74,3 +74,4 @@ def test_calculate_cost():
     usage = {"model": "test-model", "input": 1000000, "output": 1000000}
     cost = evaluator._calculate_cost(usage)
     assert cost == 10.0 + 20.0  # 1M tokens each
+
