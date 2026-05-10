@@ -16,48 +16,59 @@ def main():
 
     mock_docs = [
         Document(
-            page_content="드롭아웃(Dropout)은 학습 중 신경망의 일부 뉴런을 무작위로 비활성화하여 과적합을 방지합니다.",
+            page_content=(
+                "드롭아웃(Dropout)은 학습 중 신경망의 일부 뉴런을 무작위로 비활성화하여 과적합을 방지합니다."
+            ),
             metadata={"id": "doc1"},
         ),
         Document(
-            page_content="정형 데이터 분석에는 주로 랜덤 포레스트나 XGBoost 같은 앙상블 기법이 활용됩니다.",
+            page_content=("정형 데이터 분석에는 주로 랜덤 포레스트나 XGBoost 같은 앙상블 기법이 활용됩니다."),
             metadata={"id": "doc2"},
         ),
         Document(
-            page_content="데이터 증강(Data Augmentation)은 훈련 데이터의 다양성을 "
-            "높여 모델이 일반화될 수 있도록 도와줍니다.",
+            page_content=(
+                "데이터 증강(Data Augmentation)은 훈련 데이터의 다양성을 높여 모델이 일반화될 수 있도록 도와줍니다."
+            ),
             metadata={"id": "doc3"},
         ),
         Document(
-            page_content="파이썬은 데이터 과학 및 인공지능 분야에서 가장 널리 사용되는 프로그래밍 언어입니다.",
+            page_content=("파이썬은 데이터 과학 및 인공지능 분야에서 가장 널리 사용되는 프로그래밍 언어입니다."),
             metadata={"id": "doc4"},
         ),
         Document(
-            page_content="L1/L2 정규화(Regularization)는 손실 함수에 패널티 항을 "
-            "추가하여 가중치가 너무 커지는 것을 막아 과적합을 줄입니다.",
+            page_content=(
+                "L1/L2 정규화(Regularization)는 손실 함수에 패널티 항을 "
+                "추가하여 가중치가 너무 커지는 것을 막아 과적합을 줄입니다."
+            ),
             metadata={"id": "doc5"},
         ),
         Document(
-            page_content="합성곱 신경망(CNN)은 주로 이미지 인식 및 분류 작업에 탁월한 성능을 발휘합니다.",
+            page_content=("합성곱 신경망(CNN)은 주로 이미지 인식 및 분류 작업에 탁월한 성능을 발휘합니다."),
             metadata={"id": "doc6"},
         ),
         Document(
-            page_content="조기 종료(Early Stopping)는 검증 데이터의 손실이 더 이상 "
-            "감소하지 않을 때 학습을 중단시키는 기법입니다.",
+            page_content=(
+                "조기 종료(Early Stopping)는 검증 데이터의 손실이 더 이상 "
+                "감소하지 않을 때 학습을 중단시키는 기법입니다."
+            ),
             metadata={"id": "doc7"},
         ),
         Document(
-            page_content="자연어 처리(NLP)에서는 트랜스포머(Transformer) 아키텍처가 혁신적인 발전을 이끌어냈습니다.",
+            page_content=("자연어 처리(NLP)에서는 트랜스포머(Transformer) 아키텍처가 혁신적인 발전을 이끌어냈습니다."),
             metadata={"id": "doc8"},
         ),
         Document(
-            page_content="교차 검증(Cross-Validation)은 제한된 데이터를 여러 "
-            "폴드로 나누어 모델의 성능을 객관적으로 평가하는 방법입니다.",
+            page_content=(
+                "교차 검증(Cross-Validation)은 제한된 데이터를 여러 "
+                "폴드로 나누어 모델의 성능을 객관적으로 평가하는 방법입니다."
+            ),
             metadata={"id": "doc9"},
         ),
         Document(
-            page_content="배치 정규화(Batch Normalization)는 학습 과정을 안정화하고 "
-            "속도를 높이는 데 기여하지만 과적합 방지 효과도 일부 있습니다.",
+            page_content=(
+                "배치 정규화(Batch Normalization)는 학습 과정을 안정화하고 "
+                "속도를 높이는 데 기여하지만 과적합 방지 효과도 일부 있습니다."
+            ),
             metadata={"id": "doc10"},
         ),
     ]
@@ -91,7 +102,8 @@ def main():
             for i, (doc, score) in enumerate(zip(result.documents, result.scores, strict=True)):
                 # 원본 순위 찾기
                 orig_rank = next(
-                    (idx + 1 for idx, d in enumerate(mock_docs) if d.metadata["id"] == doc.metadata["id"]), "-"
+                    (idx + 1 for idx, d in enumerate(mock_docs) if d.metadata["id"] == doc.metadata["id"]),
+                    "-",
                 )
                 table_data.append([i + 1, f"Rank {orig_rank}", f"{score:.4f}", doc.page_content[:40] + "..."])
 
