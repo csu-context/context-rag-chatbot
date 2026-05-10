@@ -230,3 +230,7 @@ chroma/
 
 # 맥OS 시스템 파일
 .DS_Store
+._*
+
+# Deployment Keys
+.deploy_keys/

@@ -7,7 +7,6 @@ from src.common.constants import MetadataFields
 from src.utils.paths import PROCESSED_DATA_DIR
 
 # 로깅 설정
-logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
 
 

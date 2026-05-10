@@ -1,13 +1,14 @@
 import json
 import logging
 import pickle
+from typing import Any
 
 from kiwipiepy import Kiwi
 from rank_bm25 import BM25Plus
 
+from src.common.constants import DataFields
 from src.utils.paths import BM25_CACHE_FILE, PROCESSED_DATA_DIR, SYNONYMS_FILE
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -115,6 +116,42 @@ class BM25Manager:
         last_mtime = max((f.stat().st_mtime for f in json_files), default=0)
         return last_mtime > self.cache_path.stat().st_mtime
 
+    def _flatten_data(self, data: Any) -> list[dict]:
+        """
+        계층형 구조(children 리스트 포함)의 데이터를 평탄화하여 리스트로 반환함.
+        'text', 'content', 'parent_text' 필드를 데이터의 본문으로 간주함.
+
+        Args:
+            data (Any): JSON에서 로드된 원본 데이터 (dict 또는 list).
+
+        Returns:
+            list[dict]: 평탄화된 문서 조각 리스트.
+        """
+        flattened = []
+
+        if isinstance(data, list):
+            for item in data:
+                flattened.extend(self._flatten_data(item))
+            return flattened
+
+        if isinstance(data, dict):
+            # 본문 필드 추출 (text 우선, 없으면 content, 그 다음 parent_text)
+            text_content = data.get(DataFields.TEXT) or data.get(DataFields.CONTENT) or data.get(DataFields.PARENT_TEXT)
+
+            # 본문이 있는 경우 현재 노드 추가
+            if text_content:
+                # content 필드로 통일하여 저장 (기존 코드 호환성)
+                node = {**data, DataFields.CONTENT: text_content}
+                flattened.append(node)
+
+            # 자식 노드가 있는 경우 재귀적으로 탐색
+            children = data.get(DataFields.CHILDREN)
+            if children and isinstance(children, list):
+                for child in children:
+                    flattened.extend(self._flatten_data(child))
+
+        return flattened
+
     def load_index(self):
         """
         가공된 데이터를 로드하여 BM25 인덱스를 빌드함.
@@ -140,17 +177,34 @@ class BM25Manager:
 
             # 신규 빌드
             logger.info(f"신규 통합 인덱스 빌드 시작 ({len(json_files)} files)")
-            self.corpus_data = []
+            all_raw_data = []
             for json_file in json_files:
                 with open(json_file, encoding="utf-8") as f:
-                    data = json.load(f)
-                    if isinstance(data, list):
-                        self.corpus_data.extend(data)
-                    else:
-                        self.corpus_data.append(data)
+                    try:
+                        data = json.load(f)
+                        all_raw_data.append(data)
+                    except json.JSONDecodeError as e:
+                        logger.error(f"JSON 파싱 오류 ({json_file.name}): {e}")
+
+            # 데이터 평탄화 및 정제
+            self.corpus_data = self._flatten_data(all_raw_data)
+
+            if not self.corpus_data:
+                logger.warning("유효한 텍스트 데이터가 없어 인덱스를 생성할 수 없습니다.")
+                return
 
             # 모든 문서를 토큰화하여 BM25 인덱스 생성
-            tokenized_corpus = [self._tokenizer(doc.get("content", "")) for doc in self.corpus_data]
+            tokenized_corpus = [self._tokenizer(doc.get(DataFields.CONTENT, "")) for doc in self.corpus_data]
+
+            # 유효한 토큰이 있는 문서만 인덱싱 (BM25Plus 에러 방지)
+            valid_indices = [i for i, tokens in enumerate(tokenized_corpus) if tokens]
+            if not valid_indices:
+                logger.warning("토큰화된 유효 데이터가 없습니다.")
+                return
+
+            self.corpus_data = [self.corpus_data[i] for i in valid_indices]
+            tokenized_corpus = [tokenized_corpus[i] for i in valid_indices]
+
             self.bm25 = BM25Plus(tokenized_corpus)
 
             # 빌드된 인덱스 캐싱
@@ -161,6 +215,9 @@ class BM25Manager:
 
         except Exception as e:
             logger.error(f"인덱스 로드 중 오류 발생: {e}")
+            import traceback
+
+            logger.error(traceback.format_exc())
             self.bm25 = None
             self.corpus_data = []
 
