@@ -2,6 +2,7 @@ import json
 from unittest.mock import MagicMock, patch
 
 from langchain_core.documents import Document
+from langchain_core.messages import AIMessage
 
 from src.core.chains import get_rag_chain
 from src.utils.logger import TracingLogger
@@ -36,14 +37,16 @@ def test_rerank_rank_change_logging(tmp_path):
                 # Mock LLM
                 with patch("src.models.factory.LLMFactory.create_llm") as mock_factory:
                     mock_llm_inst = MagicMock()
-                    # chains.py는 이제 llm_instance.invoke()를 직접 호출함
-                    mock_response = MagicMock()
-                    mock_response.content = "answer"
-                    mock_response.model_name = "test-model"
-                    mock_response.usage = {"total_tokens": 100}
-                    mock_response.latency = 0.5
+                    # chains.py는 이제 llm_instance.get_model().invoke()를 호출하므로 get_model 모의 추가
+                    mock_model = MagicMock()
+                    mock_model.model_name = "test-model"
+                    mock_model.temperature = 0.5  # JSON 직렬화 가능하도록 구체적인 타입(float) 할당
 
-                    mock_llm_inst.invoke.return_value = mock_response
+                    # invoke 결과는 보통 content 속성이 있는 객체(예: AIMessage)를 반환
+                    mock_response = AIMessage(content="answer")
+
+                    mock_model.invoke.return_value = mock_response
+                    mock_llm_inst.get_model.return_value = mock_model
                     mock_factory.return_value = mock_llm_inst
 
                     chain = get_rag_chain(mock_db)
@@ -60,6 +63,8 @@ def test_rerank_rank_change_logging(tmp_path):
 
             # Generation step 검증
             gen_step = next(s for s in log_data["steps"] if s["step"] == "generation")
-            assert gen_step["model_name"] == "test-model"
-            assert "usage" in gen_step
+            # llm_params 추출 확인
+            assert "llm_params" in gen_step
+            assert gen_step["llm_params"].get("model") == "test-model"
+            assert gen_step["llm_params"].get("temperature") == 0.5
             assert "latency_ms" in gen_step

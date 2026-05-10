@@ -1,54 +1,51 @@
-"""다양한 문서 리랭커(Reranker) 구현 모듈.
-
-Two-stage Search의 2단계로, Bi-Encoder 검색 결과 상위 N개를
-Cross-Encoder 또는 외부 API(Cohere, Jina)로 재정렬하여 관련성 스코어를 재계산합니다.
-
-Failover 메커니즘: API 장애 또는 할당량 초과 시, 1차 검색 결과를 원본 순서대로 반환합니다.
-"""
-
-import abc
 import logging
 import os
 import threading
 import time
-from dataclasses import dataclass, field
-from typing import Optional
+from abc import ABC, abstractmethod
+from typing import Any, Optional
 
 import requests
 import torch
 from langchain_core.documents import Document
 
+from src.utils.paths import CROSS_ENCODER_CACHE_DIR
+
+# sentence_transformers는 선택적 의존성이므로, 필요할 때만 import 시도
 try:
-    from sentence_transformers import CrossEncoder
+    from sentence_transformers.cross_encoder import CrossEncoder
 except ImportError:
     CrossEncoder = None
-
-from src.utils.paths import CROSS_ENCODER_CACHE_DIR
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
 class RerankResult:
-    """리랭킹 결과."""
+    """리랭킹 결과를 담는 데이터 클래스"""
 
-    documents: list[Document]
-    scores: list[float]
-    filtered_count: int = 0
-    elapsed_time_sec: float = field(default=0.0)
+    def __init__(
+        self,
+        documents: list[Document],
+        scores: list[float],
+        filtered_count: int = 0,
+        elapsed_time_sec: float = 0.0,
+    ):
+        self.documents = documents
+        self.scores = scores
+        self.filtered_count = filtered_count
+        self.elapsed_time_sec = elapsed_time_sec
 
 
-class BaseReranker(abc.ABC):
-    """리랭커 공통 인터페이스 (추상 클래스)."""
+class BaseReranker(ABC):
+    """리랭커 기본 클래스"""
+
+    MAX_INFER_TIME_SEC = 10  # API 타임아웃
 
     def __init__(self, top_k: int = 5, threshold: float = 0.3):
         self.top_k = top_k
         self.threshold = threshold
-        self.MAX_INFER_TIME_SEC = 5.0
-        self.SAFETY_RATIO = 0.8
-        self._lock = threading.Lock()
 
-    @abc.abstractmethod
+    @abstractmethod
     def rerank(
         self,
         query: str,
@@ -56,41 +53,26 @@ class BaseReranker(abc.ABC):
         top_k: int | None = None,
         threshold: float | None = None,
     ) -> RerankResult:
-        """관련성 스코어로 재정렬 및 필터링."""
+        """문서 목록을 재정렬하고 관련성이 높은 순으로 반환합니다."""
         pass
 
-    def rerank_with_timeout(
-        self,
-        query: str,
-        documents: list[Document],
-        max_k: int | None = None,
-    ) -> RerankResult:
-        """지연 시간을 고려하여 동적으로 조절하며 리랭킹을 수행합니다.
-        API 또는 로컬 모델 추론 실패 시 Failover 역할을 겸합니다.
+    def rerank_with_timeout(self, query: str, documents: list[Document], max_k: int, **kwargs: Any) -> RerankResult:
         """
-        effective_max_k = max_k or self.top_k * 2
-
-        if len(documents) > effective_max_k:
-            documents = documents[:effective_max_k]
-
+        타임아웃 및 예외 처리를 포함한 리랭킹을 수행합니다.
+        실패 시 원본 문서 목록의 일부를 그대로 반환합니다.
+        """
         try:
-            result = self.rerank(query, documents)
-        except Exception as e:
-            logger.error(f"Reranking failed in timeout mode: {e}")
-            # Failover: 장애 시 1차 검색 결과 상위 K개 그대로 반환 (점수는 0.5로 고정)
-            fallback_k = min(len(documents), self.top_k)
+            # API 기반 리랭커는 max_k를 직접 사용하지 않지만, 로컬 모델은 사용할 수 있음
+            kwargs.setdefault("top_k", self.top_k)
+            return self.rerank(query, documents, **kwargs)
+        except (requests.exceptions.RequestException, ValueError, TimeoutError) as e:
+            logger.warning(f"Reranking failed: {e}. Returning original documents.")
+            # 실패 시 원본 문서에서 top_k만큼 잘라서 반환
             return RerankResult(
-                documents=documents[:fallback_k],
-                scores=[0.5] * fallback_k,
-                filtered_count=len(documents) - fallback_k,
-                elapsed_time_sec=0.0,
+                documents=documents[: self.top_k],
+                scores=[0.0] * min(len(documents), self.top_k),
+                filtered_count=max(0, len(documents) - self.top_k),
             )
-
-        # 실제 추론 시간이 목표 초과 시 로그
-        if result.elapsed_time_sec > self.MAX_INFER_TIME_SEC * self.SAFETY_RATIO:
-            logger.warning(f"Reranking took {result.elapsed_time_sec:.2f}s. Approaching timeout.")
-
-        return result
 
 
 class CrossEncoderReranker(BaseReranker):
@@ -138,6 +120,12 @@ class CrossEncoderReranker(BaseReranker):
                 if cls._instance is None:
                     cls._instance = cls(model_name, top_k, threshold, device)
         return cls._instance
+
+    @classmethod
+    def reset_instance(cls):
+        """테스트용 싱글톤 리셋"""
+        with cls._singleton_lock:
+            cls._instance = None
 
     def _load_model(self) -> CrossEncoder:
         if self._model is not None:
@@ -194,7 +182,7 @@ class CrossEncoderReranker(BaseReranker):
 class CohereReranker(BaseReranker):
     """Cohere API 기반 리랭커."""
 
-    def __init__(self, api_key: str | None = None, top_k: int = 5, threshold: float = 0.5):
+    def __init__(self, api_key: str | None = None, top_k: int = 5, threshold: float = 0.3):
         super().__init__(top_k, threshold)
         self.api_key = api_key or os.getenv("COHERE_API_KEY")
         self.model_name = "rerank-multilingual-v3.0"
@@ -223,11 +211,11 @@ class CohereReranker(BaseReranker):
             "query": query,
             "documents": [doc.page_content for doc in documents],
             "top_n": effective_top_k,
+            "return_documents": False,
         }
 
-        # 예외 발생 시 rerank_with_timeout에서 잡아서 Failover 처리됨
         response = requests.post(
-            "https://api.cohere.com/v1/rerank", headers=headers, json=payload, timeout=self.MAX_INFER_TIME_SEC
+            "https://api.cohere.ai/v1/rerank", headers=headers, json=payload, timeout=self.MAX_INFER_TIME_SEC
         )
         response.raise_for_status()
 
