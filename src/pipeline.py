@@ -1,5 +1,4 @@
 import gc
-import hashlib
 import json
 import logging
 import os
@@ -18,6 +17,7 @@ from src.common.constants import MetadataFields
 from src.data.parser import ManualParser
 from src.processing.chunking import HierarchicalChunker, create_parent_child_chunks
 from src.processing.pdf_parser import EnhancedPDFParser
+from src.utils.file_utils import generate_file_hash
 from src.utils.logger import TracingLogger
 from src.utils.paths import CACHE_DIR, PROCESSED_DATA_DIR, RAW_DATA_DIR, ensure_directories
 from src.vector_db.chroma_manager import ChromaDBManager
@@ -26,13 +26,6 @@ load_dotenv()
 
 # 로깅 설정
 logger = logging.getLogger(__name__)
-
-
-def generate_file_hash(file_path: Path) -> str:
-    """파일 해시(source_id) 생성 유틸리티. (파일명 + 수정시간 기반 공통 로직)"""
-    stats = file_path.stat()
-    unique_str = f"{file_path.name}_{stats.st_mtime}"
-    return hashlib.md5(unique_str.encode()).hexdigest()[:12]
 
 
 class ParserStrategy(ABC):
@@ -49,7 +42,7 @@ class ManualParserStrategy(ParserStrategy):
     def parse(self, file_path: Path) -> list[dict[str, Any]]:
         # ManualParser는 RAW_DATA_DIR 기준 상대 경로를 받음
         relative_path = file_path.relative_to(RAW_DATA_DIR)
-        parser = ManualParser(str(relative_path))
+        parser = ManualParser(str(relative_path), parser_type="manual")
         return parser.parse()
 
 
@@ -62,8 +55,8 @@ class EnhancedPDFParserStrategy(ParserStrategy):
 
     def parse(self, file_path: Path) -> list[dict[str, Any]]:
         if file_path.suffix.lower() == ".pdf":
-            # 📌 1. 캐시 파일 경로 설정 (공통 해시 유틸리티 사용)
-            source_id = generate_file_hash(file_path)
+            # 📌 1. 캐시 파일 경로 설정 (공통 해시 유틸리티 + 파서 타입 명시)
+            source_id = generate_file_hash(file_path, parser_type="enhanced")
             cache_file = CACHE_DIR / f"{source_id}_parsed.pkl"
 
             # 📌 2. 캐시가 존재하면 무거운 파싱을 생략하고 바로 로드 (시간 단축)
@@ -145,9 +138,9 @@ class EnhancedPDFParserStrategy(ParserStrategy):
 
             return results
         else:
-            # PDF가 아닌 경우 ManualParser로 Fallback
+            # PDF가 아닌 경우 ManualParser로 Fallback (enhanced 파이프라인에서 돌아감을 명시)
             relative_path = file_path.relative_to(RAW_DATA_DIR)
-            parser = self.manual_parser(str(relative_path))
+            parser = self.manual_parser(str(relative_path), parser_type="enhanced")
             return parser.parse()
 
 
@@ -318,7 +311,7 @@ class PipelineOrchestrator:
         self, all_files: list[Path], old_manifest: dict[str, str]
     ) -> tuple[list[Path], list[str], dict[str, str]]:
         """현재 파일 상태와 이전 상태를 비교하여 변경 사항(Delta)을 계산합니다."""
-        new_manifest = {str(f.relative_to(RAW_DATA_DIR)): generate_file_hash(f) for f in all_files}
+        new_manifest = {str(f.relative_to(RAW_DATA_DIR)): generate_file_hash(f, self.parser_type) for f in all_files}
 
         files_to_process_relative = [p for p, h in new_manifest.items() if old_manifest.get(p) != h]
         files_to_process = [RAW_DATA_DIR / p for p in files_to_process_relative]

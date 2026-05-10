@@ -1,5 +1,5 @@
-import hashlib
 import logging
+import os
 import re
 from collections import Counter
 from typing import Any
@@ -7,6 +7,7 @@ from typing import Any
 import fitz
 
 from src.common.constants import MetadataFields
+from src.utils.file_utils import generate_file_hash
 from src.utils.paths import RAW_DATA_DIR
 
 # 로그 설정
@@ -14,10 +15,11 @@ logger = logging.getLogger(__name__)
 
 
 class ManualParser:
-    def __init__(self, file_name: str):
+    def __init__(self, file_name: str, parser_type: str | None = None):
         """
         사내 매뉴얼 파서 초기화 (PDF, MD 지원)
         :param file_name: 파일명 (예: 'sample.pdf' 또는 'manual.md')
+        :param parser_type: 현재 설정된 파서 전략 타입 (해시 생성용)
         """
         self.file_path = RAW_DATA_DIR / file_name
         if not self.file_path.exists():
@@ -32,14 +34,9 @@ class ManualParser:
         # 확장자 추출 (마침표 제외)
         self.extension = self.file_path.suffix.lower().replace(".", "")
 
-        # 고유 source_id 생성
-        self.source_id = self._generate_source_id()
-
-    def _generate_source_id(self) -> str:
-        """파일명과 수정 시간을 조합하여 고유 ID(Hash) 생성"""
-        stats = self.file_path.stat()
-        unique_str = f"{self.file_path.name}_{stats.st_mtime}"
-        return hashlib.md5(unique_str.encode()).hexdigest()[:12]
+        # 파서 타입 설정 및 고유 source_id 생성 (공통 유틸 활용)
+        self.parser_type = parser_type or os.getenv("PARSER_TYPE", "manual").lower()
+        self.source_id = generate_file_hash(self.file_path, self.parser_type)
 
     def parse(self) -> list[dict[str, Any]]:
         """확장자에 따른 파싱 수행"""
