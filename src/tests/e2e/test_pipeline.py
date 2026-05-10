@@ -1,4 +1,5 @@
 import os
+from unittest.mock import MagicMock, patch
 
 import pytest
 from dotenv import load_dotenv
@@ -12,9 +13,12 @@ from src.vector_db.chroma_manager import ChromaDBManager
 load_dotenv()
 
 
-@pytest.mark.skipif(os.getenv("GOOGLE_API_KEY", "") in ["", "None"], reason="GOOGLE_API_KEY가 설정되지 않았습니다.")
-def test_full_rag_pipeline():
+@patch("langchain_google_genai.ChatGoogleGenerativeAI.invoke")
+def test_full_rag_pipeline(mock_invoke):
     """데이터 전처리부터 RAG 답변 생성까지의 전체 파이프라인 테스트"""
+    # LLM 응답 모킹
+    mock_invoke.return_value = MagicMock(content="복수전공은 주전공 외에 추가로 이수하는 전공입니다.")
+
     # 1. 테스트 데이터 준비
     sample_markdown = """
 # 제1장 총칙

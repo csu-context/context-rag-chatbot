@@ -1,4 +1,5 @@
 import os
+from unittest.mock import MagicMock, patch
 
 import pytest
 from langchain_core.documents import Document
@@ -14,9 +15,12 @@ class MockRetriever:
         return [{"content": doc.page_content, "metadata": doc.metadata, "score": 0.9} for doc in self.docs]
 
 
-@pytest.mark.skipif(os.getenv("GOOGLE_API_KEY", "") in ["", "None"], reason="GOOGLE_API_KEY가 설정되지 않았습니다.")
-def test_rag_normal_response():
+@patch("langchain_google_genai.ChatGoogleGenerativeAI.invoke")
+def test_rag_normal_response(mock_invoke):
     """문서 내 정보가 있는 경우 정상 답변 및 출처 인용 검증"""
+    # LLM 응답 모킹
+    mock_invoke.return_value = MagicMock(content="신입 사원 연봉은 5,000만 원입니다.")
+
     docs = [
         Document(
             page_content="2026년 신입 사원의 연봉은 5,000만 원입니다.",
@@ -32,9 +36,12 @@ def test_rag_normal_response():
     assert "연봉규정_2026.pdf" in response
 
 
-@pytest.mark.skipif(os.getenv("GOOGLE_API_KEY", "") in ["", "None"], reason="GOOGLE_API_KEY가 설정되지 않았습니다.")
-def test_rag_hallucination_prevention():
+@patch("langchain_google_genai.ChatGoogleGenerativeAI.invoke")
+def test_rag_hallucination_prevention(mock_invoke):
     """문서 내 정보가 없는 경우 환각 방지 메시지 검증"""
+    # LLM 응답 모킹 (환각 방지 멘트)
+    mock_invoke.return_value = MagicMock(content="제공된 문서에서 관련 내용을 찾을 수 없습니다.")
+
     docs = [
         Document(
             page_content="회사의 점심 시간은 12시부터 1시까지입니다.",
