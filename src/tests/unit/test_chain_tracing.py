@@ -36,16 +36,18 @@ def test_rerank_rank_change_logging(tmp_path):
                 # Mock LLM
                 with patch("src.models.factory.LLMFactory.create_llm") as mock_factory:
                     mock_llm_inst = MagicMock()
-                    mock_llm = MagicMock()
-                    mock_llm.model_name = "test-model"
-                    mock_llm.temperature = 0.5
-                    mock_llm.invoke.return_value = MagicMock(content="answer")
-                    mock_llm_inst.get_model.return_value = mock_llm
+                    # chains.py는 이제 llm_instance.invoke()를 직접 호출함
+                    mock_response = MagicMock()
+                    mock_response.content = "answer"
+                    mock_response.model_name = "test-model"
+                    mock_response.usage = {"total_tokens": 100}
+                    mock_response.latency = 0.5
+
+                    mock_llm_inst.invoke.return_value = mock_response
                     mock_factory.return_value = mock_llm_inst
 
                     chain = get_rag_chain(mock_db)
                     chain.invoke({"question": "test", "k": 2})
-
         # 로그 확인
         log_files = list((tmp_path / "trace").glob("*.jsonl"))
         with open(log_files[0], encoding="utf-8") as f:
@@ -56,7 +58,8 @@ def test_rerank_rank_change_logging(tmp_path):
             assert rerank_step["rank_change"]["before"] == ["id1", "id2"]
             assert rerank_step["rank_change"]["after"] == ["id2", "id1"]
 
-            # Generation step 검증 (LLM Params)
+            # Generation step 검증
             gen_step = next(s for s in log_data["steps"] if s["step"] == "generation")
-            assert gen_step["llm_params"]["model"] == "test-model"
-            assert gen_step["llm_params"]["temperature"] == 0.5
+            assert gen_step["model_name"] == "test-model"
+            assert "usage" in gen_step
+            assert "latency_ms" in gen_step
