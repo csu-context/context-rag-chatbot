@@ -7,9 +7,9 @@ from typing import Any
 
 from dotenv import load_dotenv
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_google_genai import ChatGoogleGenerativeAI
 from tqdm import tqdm
 
+from src.models.factory import LLMFactory
 from src.utils.paths import BASE_DIR
 
 # 로깅 설정
@@ -41,10 +41,12 @@ GENERATION_PROMPT = """
 
 
 class GoldenDatasetGenerator:
-    def __init__(self, model_name: str = "gemini-flash-latest"):
-        api_key = os.getenv("GOOGLE_API_KEY")
-        self.llm = ChatGoogleGenerativeAI(model=model_name, google_api_key=api_key, temperature=0.2)
+    def __init__(self, model_type: str = "claude", model_name: str = "claude-sonnet-4-6"):
+        # LLMFactory를 사용하여 모델 생성
+        self.llm_instance = LLMFactory.create_llm(model_type=model_type, model_name=model_name, temperature=0.2)
         self.prompt = ChatPromptTemplate.from_template(GENERATION_PROMPT)
+        # LLMFactory 인스턴스에서 LangChain 모델 객체 추출
+        self.llm = self.llm_instance.get_model()
         self.chain = self.prompt | self.llm
 
     def load_processed_data(self, file_path: Path) -> list[dict[str, Any]]:
@@ -54,14 +56,16 @@ class GoldenDatasetGenerator:
     def generate_pair(self, context: str) -> dict[str, str] | None:
         try:
             response = self.chain.invoke({"context": context})
-            # content가 리스트인 경우 (Gemini 멀티모달 응답 등) 처리
-            if isinstance(response.content, list):
+            content = response.content
+
+            # content가 리스트인 경우 처리
+            if isinstance(content, list):
                 text_parts = [
-                    part.get("text", "") if isinstance(part, dict) else str(part) for part in response.content
+                    part.get("text", "") if isinstance(part, dict) else str(part) for part in content
                 ]
                 content = "".join(text_parts)
             else:
-                content = str(response.content)
+                content = str(content)
 
             # JSON 파싱 시도
             if "```json" in content:
@@ -74,43 +78,85 @@ class GoldenDatasetGenerator:
             logger.error(f"데이터 생성 중 오류 발생: {e}")
             return None
 
-    def run(self, input_file: Path, output_file: Path, num_samples: int = 50):
+    def run(self, input_file: Path, output_file: Path, num_samples: int = 20):
         data = self.load_processed_data(input_file)
 
-        # Child chunks만 평평하게 추출
+        # ... (기존 필터링 로직)
         all_chunks = []
         for parent in data:
             for child in parent.get("children", []):
                 all_chunks.append(child["text"])
 
-        # 중복 제거 및 너무 짧은 텍스트 제외
-        all_chunks = list(set([c for c in all_chunks if len(c) > 100]))
+        all_chunks = list(set([c for c in all_chunks if len(c) > 150]))
+        filtered_chunks = [c for c in all_chunks if len([char for char in c if '가' <= char <= '힣']) / len(c) > 0.3]
+        all_chunks = filtered_chunks
 
         if len(all_chunks) < num_samples:
-            logger.warning(f"사용 가능한 청크({len(all_chunks)})가 요청된 샘플 수({num_samples})보다 적습니다.")
             num_samples = len(all_chunks)
 
         samples = random.sample(all_chunks, num_samples)
 
         golden_dataset = []
+        total_input_tokens = 0
+        total_output_tokens = 0
+        
         logger.info(f"{num_samples}개의 평가 데이터 생성을 시작합니다.")
 
         for context in tqdm(samples):
-            pair = self.generate_pair(context)
-            if pair:
-                golden_dataset.append(pair)
+            try:
+                # LLMFactory 인스턴스의 invoke를 직접 호출하여 토큰 정보를 가져오기 위해 로직 약간 수정
+                prompt_template = ChatPromptTemplate.from_template(GENERATION_PROMPT)
+                prompt_val = prompt_template.invoke({"context": context})
+                
+                response_obj = self.llm_instance.invoke(prompt_val)
+                pair = self.generate_pair_from_response(response_obj)
+                
+                if pair:
+                    golden_dataset.append(pair)
+                    if response_obj.usage:
+                        total_input_tokens += response_obj.usage.get("input_tokens", 0)
+                        total_output_tokens += response_obj.usage.get("output_tokens", 0)
+            except Exception as e:
+                logger.error(f"데이터 생성 중 오류 발생: {e}")
+
+        # 비용 계산 (Sonnet 기준: Input $3/1M, Output $15/1M)
+        estimated_cost = (total_input_tokens * 3 / 1000000) + (total_output_tokens * 15 / 1000000)
 
         output_file.parent.mkdir(parents=True, exist_ok=True)
         with open(output_file, "w", encoding="utf-8") as f:
             json.dump(golden_dataset, f, ensure_ascii=False, indent=4)
 
-        logger.info(f"성공적으로 {len(golden_dataset)}개의 데이터를 {output_file}에 저장했습니다.")
+        logger.info(f"성공적으로 {len(golden_dataset)}개의 데이터를 저장했습니다.")
+        print("\n" + "=" * 40)
+        print(f"   데이터 생성 비용 요약 (Estimated Cost)")
+        print("-" * 40)
+        print(f"- 사용 모델: {self.llm_instance.model_name}")
+        print(f"- 총 입력 토큰: {total_input_tokens:,}")
+        print(f"- 총 출력 토큰: {total_output_tokens:,}")
+        print(f"- 예상 합계 비용: ${estimated_cost:.4f}")
+        print("=" * 40)
+
+    def generate_pair_from_response(self, response_obj) -> dict[str, str] | None:
+        """LLMResponse 객체에서 정답 쌍을 파싱합니다."""
+        try:
+            content = response_obj.content
+            if isinstance(content, list):
+                content = "".join([part.get("text", "") if isinstance(part, dict) else str(part) for part in content])
+            
+            if "```json" in content:
+                content = content.split("```json")[1].split("```")[0].strip()
+            elif "```" in content:
+                content = content.split("```")[1].split("```")[0].strip()
+            
+            return json.loads(content)
+        except Exception:
+            return None
 
 
 if __name__ == "__main__":
     # 가장 최근의 전처리 파일 찾기
     processed_dir = BASE_DIR / "data" / "processed"
-    json_files = sorted(processed_dir.glob("preprocessed_v1_*.json"), key=os.path.getmtime, reverse=True)
+    json_files = sorted(processed_dir.glob("preprocessed_*.json"), key=os.path.getmtime, reverse=True)
 
     if not json_files:
         print("전처리된 JSON 파일을 찾을 수 없습니다.")
@@ -119,5 +165,5 @@ if __name__ == "__main__":
         output_path = BASE_DIR / "data" / "eval" / "golden_dataset.json"
 
         generator = GoldenDatasetGenerator()
-        # 실제 목표인 50개 생성
-        generator.run(latest_file, output_path, num_samples=50)
+        # 비용 효율성을 고려하여 20개 생성
+        generator.run(latest_file, output_path, num_samples=20)
