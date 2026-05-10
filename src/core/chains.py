@@ -7,7 +7,7 @@ from langchain_core.runnables import RunnableLambda
 
 from src.common.constants import MetadataFields
 from src.core.prompts import RAG_SYSTEM_PROMPT
-from src.core.reranker import CrossEncoderReranker
+from src.core.reranker import RerankerFactory
 from src.models.factory import LLMFactory
 from src.utils.citation import format_citations
 from src.utils.logger import TracingLogger
@@ -51,17 +51,6 @@ def _format_docs(docs: list[Document]) -> str:
     return "\n\n".join(formatted)
 
 
-def _extract_answer(answer_obj: Any) -> str:
-    """LLM 응답 객체에서 텍스트 답변을 안전하게 추출합니다."""
-    if hasattr(answer_obj, "content"):
-        content = answer_obj.content
-        if isinstance(content, list):
-            text_parts = [part.get("text", "") if isinstance(part, dict) else str(part) for part in content]
-            return "".join(text_parts)
-        return str(content)
-    return str(answer_obj)
-
-
 def get_rag_chain(retriever_or_db):
     """
     RAG 파이프라인 체인을 생성합니다.
@@ -73,12 +62,14 @@ def get_rag_chain(retriever_or_db):
 
     def run_full_pipeline(input_dict: dict[str, Any]) -> str:
         query = input_dict.get("question", "")
-        k = input_dict.get("k", 5)
+        # 1차 Retrieval에서 20개 추출, Reranking에서 최종 5개 추출 (요구사항 반영)
+        retrieval_k = input_dict.get("k", 20)
+        final_k = input_dict.get("final_k", 5)
 
         with tracing_logger.start_session(query=query) as session:
             # 1. Retrieval
             with session.trace_step("retrieval") as step:
-                docs = _perform_retrieval(retriever_or_db, query, k)
+                docs = _perform_retrieval(retriever_or_db, query, retrieval_k)
                 step.update(
                     {
                         "output_count": len(docs),
@@ -92,8 +83,8 @@ def get_rag_chain(retriever_or_db):
                     # 리랭킹 전 ID 순서 기록 (순위 변화 추적용)
                     pre_rerank_ids = [d.metadata.get(MetadataFields.CHUNK_ID) or "unknown" for d in docs]
 
-                    reranker = CrossEncoderReranker.get_instance()
-                    rerank_result = reranker.rerank_with_timeout(query, docs)
+                    reranker = RerankerFactory.create(top_k=final_k)
+                    rerank_result = reranker.rerank_with_timeout(query, docs, max_k=retrieval_k)
                     final_docs = rerank_result.documents
                     scores = rerank_result.scores
 
