@@ -118,10 +118,18 @@ class TestCrossEncoderReranker:
             initial_top_k = 10
             reranker = CrossEncoderReranker.get_instance(top_k=initial_top_k, threshold=0.1)
 
-            with patch("time.time", side_effect=[1.0, 7.0, 7.1, 7.2, 7.3, 7.4, 7.5]):
+            # rerank_with_timeout 내부에서 time.time()을 2번 호출,
+            # 그 사이의 rerank() 내부에서 time.time()을 2번 호출하므로 총 4번의 호출이 일어남.
+            # 1. rerank_with_timeout 시작
+            # 2. rerank 시작
+            # 3. rerank 예측 후
+            # 4. rerank_with_timeout 끝
+            # elapsed_time_sec은 rerank() 내부의 (3번 호출값) - (2번 호출값)으로 계산됨.
+            with patch("time.time", side_effect=[1.0, 1.0, 7.0, 7.0]):
                 result = reranker.rerank_with_timeout("질문", sample_docs)
 
-                assert result.elapsed_time_sec == 6.0
+                # elapsed_time_sec = 7.0 - 1.0 = 6.0
+                assert result.elapsed_time_sec == pytest.approx(6.0)
 
     def test_model_defaults(self):
         """모델명에 따라 임계치가 올바르게 자동 설정되는지 확인"""

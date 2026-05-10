@@ -3,6 +3,7 @@ import os
 import threading
 import time
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Any, Optional
 
 import requests
@@ -20,30 +21,26 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+@dataclass
 class RerankResult:
     """리랭킹 결과를 담는 데이터 클래스"""
 
-    def __init__(
-        self,
-        documents: list[Document],
-        scores: list[float],
-        filtered_count: int = 0,
-        elapsed_time_sec: float = 0.0,
-    ):
-        self.documents = documents
-        self.scores = scores
-        self.filtered_count = filtered_count
-        self.elapsed_time_sec = elapsed_time_sec
+    documents: list[Document]
+    scores: list[float]
+    filtered_count: int = 0
+    elapsed_time_sec: float = 0.0
 
 
 class BaseReranker(ABC):
     """리랭커 기본 클래스"""
 
     MAX_INFER_TIME_SEC = 5  # API 타임아웃
+    PERFORMANCE_THRESHOLD_SEC = 3.0  # 지연 기준 시간 (이 시간 초과 시 top_k 동적 조정)
 
     def __init__(self, top_k: int = 5, threshold: float = 0.3):
         self.top_k = top_k
         self.threshold = threshold
+        self._last_latency = 0.0
 
     @abstractmethod
     def rerank(
@@ -56,21 +53,41 @@ class BaseReranker(ABC):
         """문서 목록을 재정렬하고 관련성이 높은 순으로 반환합니다."""
         pass
 
+    def _adjust_top_k(self, top_k: int) -> int:
+        """이전 추론 지연 시간에 따라 top_k를 동적으로 조정합니다."""
+        if self._last_latency > self.PERFORMANCE_THRESHOLD_SEC:
+            adjusted = max(1, top_k // 2)
+            model_ident = getattr(self, "name", self.__class__.__name__)
+            logger.warning(
+                f"[{model_ident}] High latency detected ({self._last_latency:.2f}s). "
+                f"Adjusting top_k from {top_k} to {adjusted}."
+            )
+            return adjusted
+        return top_k
+
     def rerank_with_timeout(self, query: str, documents: list[Document], **kwargs: Any) -> RerankResult:
         """
-        타임아웃 및 예외 처리를 포함한 리랭킹을 수행합니다.
+        타임아웃, 예외 처리 및 성능 모니터링을 포함한 리랭킹을 수행합니다.
         실패 시 원본 문서 목록의 일부를 그대로 반환합니다.
         """
+        target_top_k = kwargs.get("top_k") or self.top_k
+        adjusted_top_k = self._adjust_top_k(target_top_k)
+        kwargs["top_k"] = adjusted_top_k
+
+        start_time = time.time()
         try:
-            kwargs.setdefault("top_k", self.top_k)
-            return self.rerank(query, documents, **kwargs)
-        except (requests.exceptions.RequestException, ValueError, TimeoutError) as e:
-            logger.warning(f"Reranking failed: {e}. Returning original documents.")
+            result = self.rerank(query, documents, **kwargs)
+            self._last_latency = time.time() - start_time
+            return result
+        except Exception as e:
+            self._last_latency = time.time() - start_time
+            model_ident = getattr(self, "name", self.__class__.__name__)
+            logger.warning(f"Reranking failed in {model_ident}: {e}. Returning original documents.")
             # 실패 시 원본 문서에서 top_k만큼 잘라서 반환
             return RerankResult(
-                documents=documents[: self.top_k],
-                scores=[0.0] * min(len(documents), self.top_k),
-                filtered_count=max(0, len(documents) - self.top_k),
+                documents=documents[:adjusted_top_k],
+                scores=[0.0] * min(len(documents), adjusted_top_k),
+                filtered_count=max(0, len(documents) - adjusted_top_k),
             )
 
 
@@ -93,6 +110,7 @@ class CrossEncoderReranker(BaseReranker):
         super().__init__(top_k, threshold or 0.3)
         self.model_name = model_name
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.name = "Local CrossEncoder"
 
         if threshold is None:
             self._set_model_defaults()
@@ -178,124 +196,113 @@ class CrossEncoderReranker(BaseReranker):
         )
 
 
-class CohereReranker(BaseReranker):
+class APIBaseReranker(BaseReranker):
+    """API 기반 리랭커 공통 로직 추상화 클래스"""
+
+    def __init__(self, api_key: str | None, model_name: str, api_url: str, top_k: int, threshold: float, name: str):
+        super().__init__(top_k, threshold)
+        self.api_key = api_key
+        self.model_name = model_name
+        self.api_url = api_url
+        self.name = name
+
+    def _build_payload(self, query: str, documents: list[Document], top_k: int) -> dict:
+        return {
+            "model": self.model_name,
+            "query": query,
+            "documents": [doc.page_content for doc in documents],
+            "top_n": top_k,
+        }
+
+    @staticmethod
+    def _parse_results(result: dict) -> list[dict]:
+        return result.get("results", [])
+
+    @staticmethod
+    def _extract_score(result_item: dict) -> float:
+        """API 결과 항목에서 관련도 점수를 추출합니다. (하위 클래스에서 오버라이딩 가능)"""
+        return float(result_item.get("relevance_score", 0.0))
+
+    @staticmethod
+    def _extract_index(result_item: dict) -> int:
+        """API 결과 항목에서 원본 문서 인덱스를 추출합니다. (하위 클래스에서 오버라이딩 가능)"""
+        return int(result_item.get("index", -1))
+
+    def rerank(
+        self,
+        query: str,
+        documents: list[Document],
+        top_k: int | None = None,
+        threshold: float | None = None,
+    ) -> RerankResult:
+        effective_top_k = top_k or self.top_k
+        effective_threshold = threshold if threshold is not None else self.threshold
+
+        if not documents:
+            return RerankResult(documents=[], scores=[])
+
+        if not self.api_key:
+            logger.warning(f"{self.name}_API_KEY is not set. Failing over.")
+            raise ValueError(f"API Key missing for {self.name}")
+
+        start_time = time.time()
+        headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+        payload = self._build_payload(query, documents, effective_top_k)
+
+        response = requests.post(self.api_url, headers=headers, json=payload, timeout=self.MAX_INFER_TIME_SEC)
+        response.raise_for_status()
+
+        result = response.json()
+        elapsed_time = time.time() - start_time
+
+        results = self._parse_results(result)
+        final_docs, final_scores = [], []
+
+        for res in results:
+            idx = self._extract_index(res)
+            score = self._extract_score(res)
+            if idx != -1 and score >= effective_threshold:
+                final_docs.append(documents[idx])
+                final_scores.append(score)
+
+        return RerankResult(
+            documents=final_docs[:effective_top_k],
+            scores=final_scores[:effective_top_k],
+            filtered_count=len(documents) - len(final_docs[:effective_top_k]),
+            elapsed_time_sec=elapsed_time,
+        )
+
+
+class CohereReranker(APIBaseReranker):
     """Cohere API 기반 리랭커."""
 
     def __init__(self, api_key: str | None = None, top_k: int = 5, threshold: float = 0.3):
-        super().__init__(top_k, threshold)
-        self.api_key = api_key or os.getenv("COHERE_API_KEY")
-        self.model_name = "rerank-multilingual-v3.0"
-
-    def rerank(
-        self,
-        query: str,
-        documents: list[Document],
-        top_k: int | None = None,
-        threshold: float | None = None,
-    ) -> RerankResult:
-        effective_top_k = top_k or self.top_k
-        effective_threshold = threshold if threshold is not None else self.threshold
-
-        if not documents:
-            return RerankResult(documents=[], scores=[])
-
-        if not self.api_key:
-            logger.warning("COHERE_API_KEY is not set. Failing over.")
-            raise ValueError("API Key missing")
-
-        start_time = time.time()
-        headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
-        payload = {
-            "model": self.model_name,
-            "query": query,
-            "documents": [doc.page_content for doc in documents],
-            "top_n": effective_top_k,
-            "return_documents": False,
-        }
-
-        response = requests.post(
-            "https://api.cohere.ai/v1/rerank", headers=headers, json=payload, timeout=self.MAX_INFER_TIME_SEC
-        )
-        response.raise_for_status()
-
-        result = response.json()
-        elapsed_time = time.time() - start_time
-
-        results = result.get("results", [])
-        final_docs, final_scores = [], []
-
-        for res in results:
-            idx = res["index"]
-            score = res["relevance_score"]
-            if score >= effective_threshold:
-                final_docs.append(documents[idx])
-                final_scores.append(score)
-
-        return RerankResult(
-            documents=final_docs[:effective_top_k],
-            scores=final_scores[:effective_top_k],
-            filtered_count=len(documents) - len(final_docs[:effective_top_k]),
-            elapsed_time_sec=elapsed_time,
+        super().__init__(
+            api_key=api_key or os.getenv("COHERE_API_KEY"),
+            model_name="rerank-multilingual-v3.0",
+            api_url="https://api.cohere.ai/v1/rerank",
+            top_k=top_k,
+            threshold=threshold,
+            name="Cohere",
         )
 
+    def _build_payload(self, query: str, documents: list[Document], top_k: int) -> dict:
+        payload = super()._build_payload(query, documents, top_k)
+        payload["return_documents"] = False
+        return payload
 
-class JinaReranker(BaseReranker):
+
+class JinaReranker(APIBaseReranker):
     """Jina API 기반 리랭커."""
 
     def __init__(self, api_key: str | None = None, top_k: int = 5, threshold: float = 0.3):
-        super().__init__(top_k, threshold)
-        self.api_key = api_key or os.getenv("JINA_API_KEY")
-        self.model_name = "jina-reranker-v2-base-multilingual"
-
-    def rerank(
-        self,
-        query: str,
-        documents: list[Document],
-        top_k: int | None = None,
-        threshold: float | None = None,
-    ) -> RerankResult:
-        effective_top_k = top_k or self.top_k
-        effective_threshold = threshold if threshold is not None else self.threshold
-
-        if not documents:
-            return RerankResult(documents=[], scores=[])
-
-        if not self.api_key:
-            logger.warning("JINA_API_KEY is not set. Failing over.")
-            raise ValueError("API Key missing")
-
-        start_time = time.time()
-        headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
-        payload = {
-            "model": self.model_name,
-            "query": query,
-            "documents": [doc.page_content for doc in documents],
-            "top_n": effective_top_k,
-        }
-
-        response = requests.post(
-            "https://api.jina.ai/v1/rerank", headers=headers, json=payload, timeout=self.MAX_INFER_TIME_SEC
-        )
-        response.raise_for_status()
-
-        result = response.json()
-        elapsed_time = time.time() - start_time
-
-        results = result.get("results", [])
-        final_docs, final_scores = [], []
-
-        for res in results:
-            idx = res["index"]
-            score = res["relevance_score"]
-            if score >= effective_threshold:
-                final_docs.append(documents[idx])
-                final_scores.append(score)
-
-        return RerankResult(
-            documents=final_docs[:effective_top_k],
-            scores=final_scores[:effective_top_k],
-            filtered_count=len(documents) - len(final_docs[:effective_top_k]),
-            elapsed_time_sec=elapsed_time,
+        super().__init__(
+            api_key=api_key or os.getenv("JINA_API_KEY"),
+            model_name="jina-reranker-v2-base-multilingual",
+            api_url="https://api.jina.ai/v1/rerank",
+            top_k=top_k,
+            threshold=threshold,
+            name="Jina",
         )
 
 
