@@ -7,7 +7,7 @@ from langchain_core.runnables import RunnableLambda
 
 from src.common.constants import MetadataFields
 from src.core.prompts import RAG_SYSTEM_PROMPT
-from src.core.reranker import CrossEncoderReranker
+from src.core.reranker import RerankerFactory
 from src.models.factory import LLMFactory
 from src.utils.citation import format_citations
 from src.utils.logger import TracingLogger
@@ -52,13 +52,9 @@ def _format_docs(docs: list[Document]) -> str:
 
 
 def _extract_answer(answer_obj: Any) -> str:
-    """LLM 응답 객체에서 텍스트 답변을 안전하게 추출합니다."""
+    """LLM의 응답 객체에서 텍스트를 추출합니다."""
     if hasattr(answer_obj, "content"):
-        content = answer_obj.content
-        if isinstance(content, list):
-            text_parts = [part.get("text", "") if isinstance(part, dict) else str(part) for part in content]
-            return "".join(text_parts)
-        return str(content)
+        return str(answer_obj.content)
     return str(answer_obj)
 
 
@@ -68,16 +64,19 @@ def get_rag_chain(retriever_or_db):
     retriever_or_db: ChromaDBManager 인스턴스 또는 get_relevant_documents를 지원하는 리트리버
     """
     llm_instance = LLMFactory.create_llm()
+    llm = llm_instance.get_model()
     tracing_logger = TracingLogger()
 
     def run_full_pipeline(input_dict: dict[str, Any]) -> str:
         query = input_dict.get("question", "")
-        k = input_dict.get("k", 5)
+        # 1차 Retrieval에서 20개 추출, Reranking에서 최종 5개 추출 (요구사항 반영)
+        retrieval_k = input_dict.get("k", 20)
+        final_k = input_dict.get("final_k", 5)
 
         with tracing_logger.start_session(query=query) as session:
             # 1. Retrieval
             with session.trace_step("retrieval") as step:
-                docs = _perform_retrieval(retriever_or_db, query, k)
+                docs = _perform_retrieval(retriever_or_db, query, retrieval_k)
                 step.update(
                     {
                         "output_count": len(docs),
@@ -91,8 +90,8 @@ def get_rag_chain(retriever_or_db):
                     # 리랭킹 전 ID 순서 기록 (순위 변화 추적용)
                     pre_rerank_ids = [d.metadata.get(MetadataFields.CHUNK_ID) or "unknown" for d in docs]
 
-                    reranker = CrossEncoderReranker.get_instance()
-                    rerank_result = reranker.rerank_with_timeout(query, docs)
+                    reranker = RerankerFactory.create()
+                    rerank_result = reranker.rerank_with_timeout(query, docs, top_k=final_k)
                     final_docs = rerank_result.documents
                     scores = rerank_result.scores
 
@@ -117,17 +116,21 @@ def get_rag_chain(retriever_or_db):
                 )
                 prompt_val = prompt_template.invoke({"question": query, "context": context})
 
-                # 래퍼 클래스의 invoke를 사용하여 LLMResponse 획득 (토큰 정보 포함)
-                response_obj = llm_instance.invoke(prompt_val)
-                answer = response_obj.content
+                # LLM 정보 및 파라미터 추출
+                llm_params = {}
+                if hasattr(llm, "model_name"):
+                    llm_params["model"] = llm.model_name
+                if hasattr(llm, "temperature"):
+                    llm_params["temperature"] = llm.temperature
+
+                answer_obj = llm.invoke(prompt_val)
+                answer = _extract_answer(answer_obj)
 
                 step.update(
                     {
                         "prompt_preview": str(prompt_val.to_messages()[0].content)[:200] + "...",
                         "answer_length": len(answer),
-                        "model_name": str(response_obj.model_name),
-                        "usage": dict(response_obj.usage) if response_obj.usage else {},
-                        "latency_ms": float(response_obj.latency) * 1000 if response_obj.latency else 0.0,
+                        "llm_params": llm_params,
                     }
                 )
 

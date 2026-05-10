@@ -3,6 +3,7 @@ import os
 import time
 from typing import Any
 
+from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 from src.models.base import BaseLLM, LLMResponse
@@ -11,26 +12,34 @@ logger = logging.getLogger(__name__)
 
 
 class GeminiModel(BaseLLM):
-    """Google Gemini 모델 구현체"""
+    """Google Gemini 모델 래퍼 클래스"""
 
-    def __init__(self, model_name: str = "gemini-1.5-flash", temperature: float = 0.1):
-        self.api_key = os.getenv("GOOGLE_API_KEY")
-        if not self.api_key:
-            logger.warning("GOOGLE_API_KEY가 설정되지 않았습니다.")
-
+    def __init__(self, model_name: str = "gemini-2.0-flash", temperature: float = 0.1):
         self.model_name = model_name
-        self.model = ChatGoogleGenerativeAI(model=model_name, temperature=temperature, google_api_key=self.api_key)
+        self.temperature = temperature
+        self.api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        if not self.api_key:
+            raise ValueError("GEMINI_API_KEY 또는 GOOGLE_API_KEY 환경 변수가 설정되지 않았습니다.")
+
+        self._model = ChatGoogleGenerativeAI(
+            model=self.model_name,
+            google_api_key=self.api_key,
+            temperature=self.temperature,
+            convert_system_message_to_human=True,  # 시스템 프롬프트 호환성 설정
+        )
+        logger.info(f"Gemini 모델 초기화 완료: {self.model_name}")
 
     def invoke(self, prompt: Any, **kwargs: Any) -> LLMResponse:
+        """단일 질문에 대한 응답을 생성합니다."""
         start_time = time.time()
 
         try:
-            response = self.model.invoke(prompt, **kwargs)
+            response = self._model.invoke(prompt, **kwargs)
             latency = time.time() - start_time
 
             # 토큰 사용량 정보 추출 (LangChain 특성상 모델별로 다를 수 있음)
             usage = {}
-            if hasattr(response, "usage_metadata"):
+            if hasattr(response, "usage_metadata") and response.usage_metadata:
                 usage = {
                     "input_tokens": response.usage_metadata.get("input_token_count", 0),
                     "output_tokens": response.usage_metadata.get("output_token_count", 0),
@@ -38,7 +47,7 @@ class GeminiModel(BaseLLM):
                 }
 
             return LLMResponse(
-                content=response.content,
+                content=str(response.content) if hasattr(response, "content") else str(response),
                 usage=usage,
                 latency=latency,
                 model_name=self.model_name,
@@ -49,5 +58,16 @@ class GeminiModel(BaseLLM):
             logger.error(f"Gemini 호출 중 오류 발생: {e}")
             raise e
 
-    def get_model(self) -> ChatGoogleGenerativeAI:
-        return self.model
+    def get_model(self) -> BaseChatModel:
+        """LangChain의 ChatGoogleGenerativeAI 인스턴스를 반환합니다."""
+        return self._model
+
+    def update_parameters(self, **kwargs) -> None:
+        """모델 파라미터를 동적으로 업데이트합니다."""
+        if "temperature" in kwargs:
+            self.temperature = kwargs["temperature"]
+            self._model.temperature = self.temperature
+        if "model_name" in kwargs:
+            self.model_name = kwargs["model_name"]
+            self._model.model = self.model_name
+        logger.info(f"Gemini 모델 파라미터 업데이트: {kwargs}")

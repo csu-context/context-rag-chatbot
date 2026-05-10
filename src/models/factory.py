@@ -20,14 +20,14 @@ class LLMFactory:
             model_type: 'gemini', 'claude', 'ollama' 등 (기본값: 환경 변수 MODEL_TYPE)
             model_name: 구체적인 모델 명 (기본값: 환경 변수 MODEL_NAME)
         """
-        type_ = model_type or os.getenv("MODEL_TYPE", "gemini").lower()
+        type_ = model_type or os.getenv("MODEL_TYPE", "claude").lower()
         name_ = model_name or os.getenv("MODEL_NAME")
 
         logger.info(f"LLM 인스턴스 생성 시도 (Type: {type_}, Name: {name_})")
 
         if type_ == "gemini":
             # Gemini 모델 이름 기본값 처리
-            name_ = name_ or "gemini-1.5-flash"
+            name_ = name_ or "gemini-2.0-flash"
             return GeminiModel(model_name=name_, **kwargs)
 
         elif type_ == "claude":
@@ -41,5 +41,5 @@ class LLMFactory:
             raise NotImplementedError("Ollama 추상화는 아직 구현되지 않았습니다.")
 
         else:
-            logger.warning(f"지원하지 않는 모델 타입 '{type_}'입니다. Gemini 모델로 Fallback 합니다.")
-            return GeminiModel(model_name="gemini-1.5-flash", **kwargs)
+            logger.warning(f"지원하지 않는 모델 타입 '{type_}'입니다. Claude 모델로 Fallback 합니다.")
+            return ClaudeModel(model_name="claude-sonnet-4-6", **kwargs)
