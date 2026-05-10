@@ -32,13 +32,14 @@ class ClaudeModel(BaseLLM):
             response = self.model.invoke(prompt, **kwargs)
             latency = time.time() - start_time
 
-            # 토큰 사용량 정보 추출
+            # 토큰 사용량 정보 추출 (키 값 변동 대응)
             usage = {}
             if hasattr(response, "usage_metadata"):
+                meta = response.usage_metadata
                 usage = {
-                    "input_tokens": response.usage_metadata.get("input_token_count", 0),
-                    "output_tokens": response.usage_metadata.get("output_token_count", 0),
-                    "total_tokens": response.usage_metadata.get("total_token_count", 0),
+                    "input_tokens": meta.get("input_token_count") or meta.get("input_tokens") or 0,
+                    "output_tokens": meta.get("output_token_count") or meta.get("output_tokens") or 0,
+                    "total_tokens": meta.get("total_token_count") or meta.get("total_tokens") or 0,
                 }
 
             return LLMResponse(
