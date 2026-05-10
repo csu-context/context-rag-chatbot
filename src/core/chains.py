@@ -57,7 +57,6 @@ def get_rag_chain(retriever_or_db):
     retriever_or_db: ChromaDBManager 인스턴스 또는 get_relevant_documents를 지원하는 리트리버
     """
     llm_instance = LLMFactory.create_llm()
-    llm = llm_instance.get_model()
     tracing_logger = TracingLogger()
 
     def run_full_pipeline(input_dict: dict[str, Any]) -> str:
@@ -109,21 +108,17 @@ def get_rag_chain(retriever_or_db):
                 )
                 prompt_val = prompt_template.invoke({"question": query, "context": context})
 
-                # LLM 정보 및 파라미터 추출
-                llm_params = {}
-                if hasattr(llm, "model_name"):
-                    llm_params["model"] = llm.model_name
-                if hasattr(llm, "temperature"):
-                    llm_params["temperature"] = llm.temperature
-
-                answer_obj = llm.invoke(prompt_val)
-                answer = answer_obj.content if hasattr(answer_obj, "content") else str(answer_obj)
+                # 래퍼 클래스의 invoke를 사용하여 LLMResponse 획득 (토큰 정보 포함)
+                response_obj = llm_instance.invoke(prompt_val)
+                answer = response_obj.content
 
                 step.update(
                     {
                         "prompt_preview": str(prompt_val.to_messages()[0].content)[:200] + "...",
                         "answer_length": len(answer),
-                        "llm_params": llm_params,
+                        "model_name": str(response_obj.model_name),
+                        "usage": dict(response_obj.usage) if response_obj.usage else {},
+                        "latency_ms": float(response_obj.latency) * 1000 if response_obj.latency else 0.0,
                     }
                 )
 
