@@ -290,7 +290,7 @@ class PipelineOrchestrator:
             logger.warning("Manifest 파일이 없어 전체 재색인을 수행합니다.")
             return {}
         try:
-            with open(self.manifest_path, "r", encoding="utf-8") as f:
+            with open(self.manifest_path, encoding="utf-8") as f:
                 return json.load(f)
         except (json.JSONDecodeError, FileNotFoundError):
             logger.warning("Manifest 파일이 손상되었거나 찾을 수 없어 전체 재색인을 수행합니다.")
@@ -326,7 +326,7 @@ class PipelineOrchestrator:
         with self.tracing_logger.start_session(type="ingestion", parser_type=self.parser_type) as session:
             # 0. 상태 진단
             with session.trace_step("diagnostics") as step:
-                from src.utils.health_check import run_full_diagnostics  # noqa: E402
+                from src.utils.health_check import run_full_diagnostics
 
                 is_healthy, report = run_full_diagnostics(silent=True, check_model=False)
                 step["status"] = "healthy" if is_healthy else "unhealthy"
@@ -360,7 +360,8 @@ class PipelineOrchestrator:
                 step["files_to_delete_in_db"] = len(source_ids_to_delete)
 
                 logger.info(
-                    f"파일 스캔 완료. 전체: {len(all_files)}, 신규/변경: {len(files_to_process)}, 삭제: {len(source_ids_to_delete)}"
+                    f"파일 스캔 완료. 전체: {len(all_files)}, "
+                    f"신규/변경: {len(files_to_process)}, 삭제: {len(source_ids_to_delete)}"
                 )
 
                 if not files_to_process and not source_ids_to_delete:
@@ -391,7 +392,7 @@ class PipelineOrchestrator:
             if files_to_process or source_ids_to_delete:
                 with session.trace_step("bm25_update") as step:
                     try:
-                        from src.vector_db.bm25_manager import BM25Manager  # noqa: E402
+                        from src.vector_db.bm25_manager import BM25Manager
 
                         BM25Manager()  # Rebuilds the index from DB
                         step["status"] = "success"
