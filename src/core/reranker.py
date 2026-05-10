@@ -39,7 +39,7 @@ class RerankResult:
 class BaseReranker(ABC):
     """리랭커 기본 클래스"""
 
-    MAX_INFER_TIME_SEC = 10  # API 타임아웃
+    MAX_INFER_TIME_SEC = 5  # API 타임아웃
 
     def __init__(self, top_k: int = 5, threshold: float = 0.3):
         self.top_k = top_k
@@ -56,13 +56,12 @@ class BaseReranker(ABC):
         """문서 목록을 재정렬하고 관련성이 높은 순으로 반환합니다."""
         pass
 
-    def rerank_with_timeout(self, query: str, documents: list[Document], max_k: int, **kwargs: Any) -> RerankResult:
+    def rerank_with_timeout(self, query: str, documents: list[Document], **kwargs: Any) -> RerankResult:
         """
         타임아웃 및 예외 처리를 포함한 리랭킹을 수행합니다.
         실패 시 원본 문서 목록의 일부를 그대로 반환합니다.
         """
         try:
-            # API 기반 리랭커는 max_k를 직접 사용하지 않지만, 로컬 모델은 사용할 수 있음
             kwargs.setdefault("top_k", self.top_k)
             return self.rerank(query, documents, **kwargs)
         except (requests.exceptions.RequestException, ValueError, TimeoutError) as e:
@@ -315,4 +314,4 @@ class RerankerFactory:
             return JinaReranker(top_k=top_k)
         else:
             logger.info("Using CrossEncoderReranker (Local)")
-            return CrossEncoderReranker.get_instance(top_k=top_k)
+            return CrossEncoderReranker.get_instance()

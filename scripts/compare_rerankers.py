@@ -1,8 +1,4 @@
 import os
-import sys
-
-# 프로젝트 루트를 PYTHONPATH에 추가 (실행을 위해)
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from langchain_core.documents import Document
 from tabulate import tabulate
@@ -85,16 +81,16 @@ def main():
 
         # API 키가 없으면 스킵 처리
         if r_type == "cohere" and not os.getenv("COHERE_API_KEY"):
-            print("⚠️ COHERE_API_KEY가 설정되지 않아 건너뜁니다.")
+            print("COHERE_API_KEY가 설정되지 않아 건너뜁니다.")
             continue
         if r_type == "jina" and not os.getenv("JINA_API_KEY"):
-            print("⚠️ JINA_API_KEY가 설정되지 않아 건너뜁니다.")
+            print("JINA_API_KEY가 설정되지 않아 건너뜁니다.")
             continue
 
         try:
             # 1차에서 10개를 받고, 2차에서 최종 5개를 추출
-            reranker = RerankerFactory.create(top_k=5)
-            result = reranker.rerank_with_timeout(query, mock_docs, max_k=10)
+            reranker = RerankerFactory.create()
+            result = reranker.rerank_with_timeout(query, mock_docs, top_k=5)
 
             table_data = []
             for i, (doc, score) in enumerate(zip(result.documents, result.scores, strict=False)):

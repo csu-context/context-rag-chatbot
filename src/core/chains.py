@@ -90,8 +90,8 @@ def get_rag_chain(retriever_or_db):
                     # 리랭킹 전 ID 순서 기록 (순위 변화 추적용)
                     pre_rerank_ids = [d.metadata.get(MetadataFields.CHUNK_ID) or "unknown" for d in docs]
 
-                    reranker = RerankerFactory.create(top_k=final_k)
-                    rerank_result = reranker.rerank_with_timeout(query, docs, max_k=retrieval_k)
+                    reranker = RerankerFactory.create()
+                    rerank_result = reranker.rerank_with_timeout(query, docs, top_k=final_k)
                     final_docs = rerank_result.documents
                     scores = rerank_result.scores
 
