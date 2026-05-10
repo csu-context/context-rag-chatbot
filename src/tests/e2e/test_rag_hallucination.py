@@ -1,5 +1,6 @@
-from unittest.mock import MagicMock, patch
+import os
 
+import pytest
 from langchain_core.documents import Document
 
 from src.core.chains import get_rag_chain
@@ -20,13 +21,6 @@ class MockRetriever:
 )
 def test_rag_normal_response():
     """문서 내 정보가 있는 경우 정상 답변 및 출처 인용 검증"""
-    # LLM 응답 모킹
-    mock_llm = MagicMock()
-    mock_llm.model_name = "claude-sonnet-4-6"
-    mock_llm.temperature = 0.1
-    mock_llm.invoke.return_value = MagicMock(content="신입 사원 연봉은 5,000만 원입니다.")
-    mock_claude_class.return_value = mock_llm
-
     docs = [
         Document(
             page_content="2026년 신입 사원의 연봉은 5,000만 원입니다.",
@@ -49,13 +43,6 @@ def test_rag_normal_response():
 )
 def test_rag_hallucination_prevention():
     """문서 내 정보가 없는 경우 환각 방지 메시지 검증"""
-    # LLM 응답 모킹 (환각 방지 멘트)
-    mock_llm = MagicMock()
-    mock_llm.model_name = "claude-sonnet-4-6"
-    mock_llm.temperature = 0.1
-    mock_llm.invoke.return_value = MagicMock(content="제공된 문서에서 관련 내용을 찾을 수 없습니다.")
-    mock_claude_class.return_value = mock_llm
-
     docs = [
         Document(
             page_content="회사의 점심 시간은 12시부터 1시까지입니다.",

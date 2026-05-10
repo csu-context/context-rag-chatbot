@@ -1,5 +1,6 @@
-from unittest.mock import MagicMock, patch
+import os
 
+import pytest
 from dotenv import load_dotenv
 
 from src.common.constants import MetadataFields
@@ -18,13 +19,6 @@ load_dotenv()
 )
 def test_full_rag_pipeline():
     """데이터 전처리부터 RAG 답변 생성까지의 전체 파이프라인 테스트"""
-    # LLM 응답 모킹
-    mock_llm = MagicMock()
-    mock_llm.model_name = "claude-sonnet-4-6"
-    mock_llm.temperature = 0.1
-    mock_llm.invoke.return_value = MagicMock(content="복수전공은 주전공 외에 추가로 이수하는 전공입니다.")
-    mock_claude_class.return_value = mock_llm
-
     # 1. 테스트 데이터 준비
     sample_markdown = """
 # 제1장 총칙
