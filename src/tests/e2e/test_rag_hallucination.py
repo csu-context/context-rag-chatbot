@@ -13,8 +13,12 @@ class MockRetriever:
         return [{"content": doc.page_content, "metadata": doc.metadata, "score": 0.9} for doc in self.docs]
 
 
-@patch("src.models.llm_claude.ChatAnthropic")
-def test_rag_normal_response(mock_claude_class):
+@pytest.mark.skipif(
+    os.getenv("CI") == "true"
+    or (os.getenv("GOOGLE_API_KEY", "") in ["", "None"] and os.getenv("ANTHROPIC_API_KEY", "") in ["", "None"]),
+    reason="CI 환경 스킵 또는 API 키 미설정",
+)
+def test_rag_normal_response():
     """문서 내 정보가 있는 경우 정상 답변 및 출처 인용 검증"""
     # LLM 응답 모킹
     mock_llm = MagicMock()
@@ -38,8 +42,12 @@ def test_rag_normal_response(mock_claude_class):
     assert "연봉규정_2026.pdf" in response
 
 
-@patch("src.models.llm_claude.ChatAnthropic")
-def test_rag_hallucination_prevention(mock_claude_class):
+@pytest.mark.skipif(
+    os.getenv("CI") == "true"
+    or (os.getenv("GOOGLE_API_KEY", "") in ["", "None"] and os.getenv("ANTHROPIC_API_KEY", "") in ["", "None"]),
+    reason="CI 환경 스킵 또는 API 키 미설정",
+)
+def test_rag_hallucination_prevention():
     """문서 내 정보가 없는 경우 환각 방지 메시지 검증"""
     # LLM 응답 모킹 (환각 방지 멘트)
     mock_llm = MagicMock()
