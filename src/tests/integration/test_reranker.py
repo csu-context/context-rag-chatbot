@@ -102,7 +102,7 @@ class TestCrossEncoderReranker:
             mock_load.return_value = mock_model
 
             reranker = CrossEncoderReranker.get_instance()
-            result = reranker.rerank_with_timeout("질문", sample_docs, max_k=10)
+            result = reranker.rerank_with_timeout("질문", sample_docs)
 
             expected_len = min(len(sample_docs), reranker.top_k)
             assert len(result.documents) == expected_len
@@ -119,7 +119,7 @@ class TestCrossEncoderReranker:
             reranker = CrossEncoderReranker.get_instance(top_k=initial_top_k, threshold=0.1)
 
             with patch("time.time", side_effect=[1.0, 7.0, 7.1, 7.2, 7.3, 7.4, 7.5]):
-                result = reranker.rerank_with_timeout("질문", sample_docs, max_k=10)
+                result = reranker.rerank_with_timeout("질문", sample_docs)
 
                 assert result.elapsed_time_sec == 6.0
 
