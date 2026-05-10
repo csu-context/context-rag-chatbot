@@ -1,3 +1,4 @@
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -6,14 +7,15 @@ from datasets import Dataset
 from src.eval.evaluator import RagasEvaluator
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def mock_db_manager():
     with patch("src.eval.evaluator.ChromaDBManager") as mock:
         yield mock.return_value
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def mock_llm_factory():
+    # Patch where LLMFactory is USED
     with patch("src.eval.evaluator.LLMFactory") as mock:
         # Create a mock for the LLM instance
         mock_inst = MagicMock()
@@ -40,13 +42,8 @@ def test_evaluator_initialization(mock_db_manager, mock_llm_factory):
 
 def test_evaluator_prepare_dataset(mock_db_manager, mock_llm_factory, tmp_path):
     # Setup golden dataset
-    golden_data = [
-        {"question": "What is A?", "ground_truth": "A is alpha"},
-        {"question": "What is B?", "ground_truth": "B is beta"},
-    ]
+    golden_data = [{"question": "What is A?", "ground_truth": "A is alpha"}, {"question": "What is B?", "ground_truth": "B is beta"}]
     golden_path = tmp_path / "golden.json"
-    import json
-
     with open(golden_path, "w", encoding="utf-8") as f:
         json.dump(golden_data, f)
 
@@ -67,6 +64,7 @@ def test_evaluator_prepare_dataset(mock_db_manager, mock_llm_factory, tmp_path):
 
 
 def test_calculate_cost(mock_db_manager, mock_llm_factory):
+    # Ensure we are using the mocked factory
     evaluator = RagasEvaluator()
     # Mock pricing for test-model
     evaluator.PRICING["test-model"] = {"input": 10.0, "output": 20.0}
@@ -74,4 +72,3 @@ def test_calculate_cost(mock_db_manager, mock_llm_factory):
     usage = {"model": "test-model", "input": 1000000, "output": 1000000}
     cost = evaluator._calculate_cost(usage)
     assert cost == 10.0 + 20.0  # 1M tokens each
-
