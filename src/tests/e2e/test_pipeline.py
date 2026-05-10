@@ -13,7 +13,8 @@ load_dotenv()
 
 
 @pytest.mark.skipif(
-    os.getenv("CI") == "true" or (os.getenv("GOOGLE_API_KEY", "") in ["", "None"] and os.getenv("ANTHROPIC_API_KEY", "") in ["", "None"]),
+    os.getenv("CI") == "true"
+    or (os.getenv("GOOGLE_API_KEY", "") in ["", "None"] and os.getenv("ANTHROPIC_API_KEY", "") in ["", "None"]),
     reason="CI 환경에서는 기 설정된 모델 접근 권한 문제로 스킵하거나 API 키가 없습니다.",
 )
 def test_full_rag_pipeline():

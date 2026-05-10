@@ -15,7 +15,8 @@ class MockRetriever:
 
 
 @pytest.mark.skipif(
-    os.getenv("CI") == "true" or (os.getenv("GOOGLE_API_KEY", "") in ["", "None"] and os.getenv("ANTHROPIC_API_KEY", "") in ["", "None"]),
+    os.getenv("CI") == "true"
+    or (os.getenv("GOOGLE_API_KEY", "") in ["", "None"] and os.getenv("ANTHROPIC_API_KEY", "") in ["", "None"]),
     reason="CI 환경 스킵 또는 API 키 미설정",
 )
 def test_rag_normal_response():
@@ -36,7 +37,8 @@ def test_rag_normal_response():
 
 
 @pytest.mark.skipif(
-    os.getenv("CI") == "true" or (os.getenv("GOOGLE_API_KEY", "") in ["", "None"] and os.getenv("ANTHROPIC_API_KEY", "") in ["", "None"]),
+    os.getenv("CI") == "true"
+    or (os.getenv("GOOGLE_API_KEY", "") in ["", "None"] and os.getenv("ANTHROPIC_API_KEY", "") in ["", "None"]),
     reason="CI 환경 스킵 또는 API 키 미설정",
 )
 def test_rag_hallucination_prevention():
