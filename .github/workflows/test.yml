@@ -27,7 +27,7 @@ jobs:
     - name: Install dependencies
       run: |
         uv pip install --system --index-strategy unsafe-best-match -r requirements.txt
-        uv pip install --system pytest pytest-mock pytest-cov google-generativeai
+        uv pip install --system pytest pytest-mock pytest-cov
 
     - name: Run Tests with Coverage
       env:
