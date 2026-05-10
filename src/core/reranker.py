@@ -35,7 +35,7 @@ class BaseReranker(ABC):
     """리랭커 기본 클래스"""
 
     MAX_INFER_TIME_SEC = 5  # API 타임아웃
-    PERFORMANCE_THRESHOLD_SEC = 3.0 # 지연 기준 시간 (이 시간 초과 시 top_k 동적 조정)
+    PERFORMANCE_THRESHOLD_SEC = 3.0  # 지연 기준 시간 (이 시간 초과 시 top_k 동적 조정)
 
     def __init__(self, top_k: int = 5, threshold: float = 0.3):
         self.top_k = top_k
@@ -57,8 +57,9 @@ class BaseReranker(ABC):
         """이전 추론 지연 시간에 따라 top_k를 동적으로 조정합니다."""
         if self._last_latency > self.PERFORMANCE_THRESHOLD_SEC:
             adjusted = max(1, top_k // 2)
+            model_ident = getattr(self, "name", self.__class__.__name__)
             logger.warning(
-                f"[{getattr(self, 'name', self.__class__.__name__)}] High latency detected ({self._last_latency:.2f}s). "
+                f"[{model_ident}] High latency detected ({self._last_latency:.2f}s). "
                 f"Adjusting top_k from {top_k} to {adjusted}."
             )
             return adjusted
@@ -84,7 +85,7 @@ class BaseReranker(ABC):
             logger.warning(f"Reranking failed in {model_ident}: {e}. Returning original documents.")
             # 실패 시 원본 문서에서 top_k만큼 잘라서 반환
             return RerankResult(
-                documents=documents[: adjusted_top_k],
+                documents=documents[:adjusted_top_k],
                 scores=[0.0] * min(len(documents), adjusted_top_k),
                 filtered_count=max(0, len(documents) - adjusted_top_k),
             )
@@ -213,14 +214,17 @@ class APIBaseReranker(BaseReranker):
             "top_n": top_k,
         }
 
-    def _parse_results(self, result: dict) -> list[dict]:
+    @staticmethod
+    def _parse_results(result: dict) -> list[dict]:
         return result.get("results", [])
 
-    def _extract_score(self, result_item: dict) -> float:
+    @staticmethod
+    def _extract_score(result_item: dict) -> float:
         """API 결과 항목에서 관련도 점수를 추출합니다. (하위 클래스에서 오버라이딩 가능)"""
         return float(result_item.get("relevance_score", 0.0))
 
-    def _extract_index(self, result_item: dict) -> int:
+    @staticmethod
+    def _extract_index(result_item: dict) -> int:
         """API 결과 항목에서 원본 문서 인덱스를 추출합니다. (하위 클래스에서 오버라이딩 가능)"""
         return int(result_item.get("index", -1))
 
