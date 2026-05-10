@@ -60,9 +60,7 @@ class GoldenDatasetGenerator:
 
             # content가 리스트인 경우 처리
             if isinstance(content, list):
-                text_parts = [
-                    part.get("text", "") if isinstance(part, dict) else str(part) for part in content
-                ]
+                text_parts = [part.get("text", "") if isinstance(part, dict) else str(part) for part in content]
                 content = "".join(text_parts)
             else:
                 content = str(content)
@@ -88,7 +86,7 @@ class GoldenDatasetGenerator:
                 all_chunks.append(child["text"])
 
         all_chunks = list(set([c for c in all_chunks if len(c) > 150]))
-        filtered_chunks = [c for c in all_chunks if len([char for char in c if '가' <= char <= '힣']) / len(c) > 0.3]
+        filtered_chunks = [c for c in all_chunks if len([char for char in c if "가" <= char <= "힣"]) / len(c) > 0.3]
         all_chunks = filtered_chunks
 
         if len(all_chunks) < num_samples:
@@ -99,7 +97,7 @@ class GoldenDatasetGenerator:
         golden_dataset = []
         total_input_tokens = 0
         total_output_tokens = 0
-        
+
         logger.info(f"{num_samples}개의 평가 데이터 생성을 시작합니다.")
 
         for context in tqdm(samples):
@@ -107,10 +105,10 @@ class GoldenDatasetGenerator:
                 # LLMFactory 인스턴스의 invoke를 직접 호출하여 토큰 정보를 가져오기 위해 로직 약간 수정
                 prompt_template = ChatPromptTemplate.from_template(GENERATION_PROMPT)
                 prompt_val = prompt_template.invoke({"context": context})
-                
+
                 response_obj = self.llm_instance.invoke(prompt_val)
                 pair = self.generate_pair_from_response(response_obj)
-                
+
                 if pair:
                     golden_dataset.append(pair)
                     if response_obj.usage:
@@ -128,7 +126,7 @@ class GoldenDatasetGenerator:
 
         logger.info(f"성공적으로 {len(golden_dataset)}개의 데이터를 저장했습니다.")
         print("\n" + "=" * 40)
-        print(f"   데이터 생성 비용 요약 (Estimated Cost)")
+        print("   데이터 생성 비용 요약 (Estimated Cost)")
         print("-" * 40)
         print(f"- 사용 모델: {self.llm_instance.model_name}")
         print(f"- 총 입력 토큰: {total_input_tokens:,}")
@@ -142,12 +140,12 @@ class GoldenDatasetGenerator:
             content = response_obj.content
             if isinstance(content, list):
                 content = "".join([part.get("text", "") if isinstance(part, dict) else str(part) for part in content])
-            
+
             if "```json" in content:
                 content = content.split("```json")[1].split("```")[0].strip()
             elif "```" in content:
                 content = content.split("```")[1].split("```")[0].strip()
-            
+
             return json.loads(content)
         except Exception:
             return None
