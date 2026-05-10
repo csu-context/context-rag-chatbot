@@ -139,6 +139,13 @@ class CrossEncoderReranker(BaseReranker):
                     cls._instance = cls(model_name, top_k, threshold, device)
         return cls._instance
 
+    @classmethod
+    def reset_instance(cls) -> None:
+        """테스트용 싱글톤 리셋."""
+        with cls._singleton_lock:
+            cls._instance = None
+            cls._model = None
+
     def _load_model(self) -> CrossEncoder:
         if self._model is not None:
             return self._model
