@@ -117,7 +117,7 @@ def get_rag_chain(retriever_or_db):
                     llm_params["temperature"] = llm.temperature
 
                 answer_obj = llm.invoke(prompt_val)
-                answer = _extract_answer(answer_obj)
+                answer = answer_obj.content if hasattr(answer_obj, "content") else str(answer_obj)
 
                 step.update(
                     {

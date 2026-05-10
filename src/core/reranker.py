@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class RerankResult:
     """리랭킹 결과."""
+
     documents: list[Document]
     scores: list[float]
     filtered_count: int = 0
@@ -87,9 +88,7 @@ class BaseReranker(abc.ABC):
 
         # 실제 추론 시간이 목표 초과 시 로그
         if result.elapsed_time_sec > self.MAX_INFER_TIME_SEC * self.SAFETY_RATIO:
-            logger.warning(
-                f"Reranking took {result.elapsed_time_sec:.2f}s. Approaching timeout."
-            )
+            logger.warning(f"Reranking took {result.elapsed_time_sec:.2f}s. Approaching timeout.")
 
         return result
 
@@ -223,15 +222,12 @@ class CohereReranker(BaseReranker):
             "model": self.model_name,
             "query": query,
             "documents": [doc.page_content for doc in documents],
-            "top_n": effective_top_k
+            "top_n": effective_top_k,
         }
 
         # 예외 발생 시 rerank_with_timeout에서 잡아서 Failover 처리됨
         response = requests.post(
-            "https://api.cohere.com/v1/rerank",
-            headers=headers,
-            json=payload,
-            timeout=self.MAX_INFER_TIME_SEC
+            "https://api.cohere.com/v1/rerank", headers=headers, json=payload, timeout=self.MAX_INFER_TIME_SEC
         )
         response.raise_for_status()
 
@@ -287,14 +283,11 @@ class JinaReranker(BaseReranker):
             "model": self.model_name,
             "query": query,
             "documents": [doc.page_content for doc in documents],
-            "top_n": effective_top_k
+            "top_n": effective_top_k,
         }
 
         response = requests.post(
-            "https://api.jina.ai/v1/rerank",
-            headers=headers,
-            json=payload,
-            timeout=self.MAX_INFER_TIME_SEC
+            "https://api.jina.ai/v1/rerank", headers=headers, json=payload, timeout=self.MAX_INFER_TIME_SEC
         )
         response.raise_for_status()
 
