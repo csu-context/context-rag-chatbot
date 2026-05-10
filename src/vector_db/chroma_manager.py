@@ -176,6 +176,24 @@ class ChromaDBManager:
         except Exception:
             return 0
 
+    def delete_documents(self, where: dict[str, Any]):
+        """조건(where)에 맞는 도큐먼트들을 컬렉션에서 삭제합니다."""
+        if not where:
+            logger.warning("삭제 조건이 없어 DB 삭제를 건너뜁니다.")
+            return
+        try:
+            count_before = self.collection.count()
+            self.collection.delete(where=where)
+            count_after = self.collection.count()
+            deleted_count = count_before - count_after
+            if deleted_count > 0:
+                logger.info(f"ChromaDB에서 {deleted_count}개 도큐먼트 삭제 완료 (조건: {where})")
+            else:
+                logger.info(f"삭제할 도큐먼트가 없습니다 (조건: {where})")
+        except Exception as e:
+            logger.error(f"ChromaDB 도큐먼트 삭제 실패: {e}", exc_info=True)
+            raise
+
 
 if __name__ == "__main__":
     # ==========================================

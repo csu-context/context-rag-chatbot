@@ -26,7 +26,7 @@ load_dotenv()
 
 # 로깅 설정
 logger = logging.getLogger(__name__)
-
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 class ParserStrategy(ABC):
     """문서 파싱 전략을 위한 추상 베이스 클래스"""
@@ -249,6 +249,16 @@ class IngestionPipeline:
         logger.info(f"전처리 결과 저장 완료: {save_path}")
         return save_path
 
+    def cleanup_db(self, source_ids_to_delete: list[str], collection_name: str = "rag_collection"):
+        """DB에서 삭제된 파일의 source_id에 해당하는 벡터들을 삭제합니다."""
+        if not source_ids_to_delete:
+            return
+        db_manager = ChromaDBManager(collection_name=collection_name)
+        logger.info(f"DB 정합성 검증: {len(source_ids_to_delete)}개 소스 ID에 대한 이전 데이터 삭제 시작...")
+        # ChromaDB는 $in 연산자를 통해 여러 ID를 한 번에 삭제할 수 있습니다.
+        db_manager.delete_documents(where={"source_id": {"$in": source_ids_to_delete}})
+        logger.info("DB 정합성 검증 완료.")
+
     def upsert_to_db(self, data: list[dict[str, Any]], collection_name: str = "rag_collection"):
         db_manager = ChromaDBManager(collection_name=collection_name)
         ids, docs, metas = [], [], []
@@ -272,6 +282,37 @@ class PipelineOrchestrator:
         self.strategy = self._get_parser_strategy()
         self.ingestion_pipeline = IngestionPipeline(self.strategy)
         self.tracing_logger = TracingLogger()
+        self.manifest_path = PROCESSED_DATA_DIR / "manifest.json"
+
+    def _load_manifest(self) -> dict[str, str]:
+        """manifest.json 파일을 로드합니다. 파일이 없거나 손상된 경우, 전체 재색인을 위해 빈 dict를 반환합니다."""
+        if not self.manifest_path.exists():
+            logger.warning("Manifest 파일이 없어 전체 재색인을 수행합니다.")
+            return {}
+        try:
+            with open(self.manifest_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, FileNotFoundError):
+            logger.warning("Manifest 파일이 손상되었거나 찾을 수 없어 전체 재색인을 수행합니다.")
+            # 손상된 파일은 다음 실행을 위해 삭제
+            if self.manifest_path.exists():
+                self.manifest_path.unlink()
+            return {}
+
+    def _save_manifest(self, manifest: dict[str, str]):
+        """처리 완료 후 새로운 manifest 상태를 저장합니다."""
+        try:
+            with open(self.manifest_path, "w", encoding="utf-8") as f:
+                json.dump(manifest, f, ensure_ascii=False, indent=2)
+            logger.info(f"Manifest 업데이트 완료: {self.manifest_path}")
+        except Exception as e:
+            logger.error(f"Manifest 저장 실패: {e}")
+
+    def _calculate_file_hash(self, file_path: Path) -> str:
+        """source_id 생성 규칙과 동일한 해시를 계산합니다. (파일명 + 수정시간)"""
+        stats = file_path.stat()
+        unique_str = f"{file_path.name}_{stats.st_mtime}"
+        return hashlib.md5(unique_str.encode()).hexdigest()[:12]
 
     def _get_parser_strategy(self) -> ParserStrategy:
         if self.parser_type == "enhanced":
@@ -285,7 +326,7 @@ class PipelineOrchestrator:
         with self.tracing_logger.start_session(type="ingestion", parser_type=self.parser_type) as session:
             # 0. 상태 진단
             with session.trace_step("diagnostics") as step:
-                from src.utils.health_check import run_full_diagnostics
+                from src.utils.health_check import run_full_diagnostics  # noqa: E402
 
                 is_healthy, report = run_full_diagnostics(silent=True, check_model=False)
                 step["status"] = "healthy" if is_healthy else "unhealthy"
@@ -295,44 +336,71 @@ class PipelineOrchestrator:
                     session.data["status"] = "failed_diagnostics"
                     return
 
-            # 1. 스캔
-            with session.trace_step("scan") as step:
-                files = self.ingestion_pipeline.scan_files()
-                step["file_count"] = len(files)
-
-                if not files:
-                    logger.warning("처리할 파일이 없습니다.")
+            # 1. 스캔 및 증분 업데이트 대상 식별
+            with session.trace_step("scan_and_check_updates") as step:
+                all_files = self.ingestion_pipeline.scan_files()
+                old_manifest = self._load_manifest()
+                if not all_files and not old_manifest:
+                    logger.warning("처리할 파일이 없고 이전 기록도 없습니다.")
                     session.data["status"] = "no_files"
                     return
 
-            # 2. 파싱 및 청킹
-            with session.trace_step("parse_and_chunk") as step:
-                processed_data = self.ingestion_pipeline.process_and_chunk(files)
-                step["parent_chunk_count"] = len(processed_data)
+                new_manifest = {str(f.relative_to(RAW_DATA_DIR)): self._calculate_file_hash(f) for f in all_files}
 
-                if not processed_data:
-                    logger.warning("가공된 데이터가 없습니다.")
-                    session.data["status"] = "no_processed_data"
+                files_to_process_relative = [p for p, h in new_manifest.items() if old_manifest.get(p) != h]
+                files_to_process = [RAW_DATA_DIR / p for p in files_to_process_relative]
+
+                source_ids_to_delete = [
+                    h for p, h in old_manifest.items()
+                    if p not in new_manifest or old_manifest[p] != new_manifest[p]
+                ]
+
+                step["total_files"] = len(all_files)
+                step["files_to_process"] = len(files_to_process)
+                step["files_to_delete_in_db"] = len(source_ids_to_delete)
+
+                logger.info(
+                    f"파일 스캔 완료. 전체: {len(all_files)}, 신규/변경: {len(files_to_process)}, 삭제: {len(source_ids_to_delete)}"
+                )
+
+                if not files_to_process and not source_ids_to_delete:
+                    logger.info("변경 사항이 없어 데이터 구축을 건너뜁니다.")
+                    session.data["status"] = "no_changes"
                     return
 
-            # 3. 결과 저장
-            with session.trace_step("save_json") as step:
-                save_path = self.ingestion_pipeline.save_processed_data(processed_data)
-                step["path"] = str(save_path)
+            # 2. DB Cleanup (삭제된 파일 처리)
+            if source_ids_to_delete:
+                with session.trace_step("db_cleanup"):
+                    self.ingestion_pipeline.cleanup_db(source_ids_to_delete)
 
-            # 4. DB 업서트
-            with session.trace_step("db_upsert"):
-                self.ingestion_pipeline.upsert_to_db(processed_data)
+            # 3. 파싱, 청킹, 저장, 업서트 (신규/변경된 파일만 처리)
+            if files_to_process:
+                with session.trace_step("parse_and_chunk") as step:
+                    processed_data = self.ingestion_pipeline.process_and_chunk(files_to_process)
+                    step["parent_chunk_count"] = len(processed_data)
 
-            # 5. BM25 인덱스 갱신
-            with session.trace_step("bm25_update") as step:
-                try:
-                    from src.vector_db.bm25_manager import BM25Manager
+                if processed_data:
+                    with session.trace_step("save_json") as step:
+                        save_path = self.ingestion_pipeline.save_processed_data(processed_data)
+                        step["path"] = str(save_path)
 
-                    BM25Manager()
-                    step["status"] = "success"
-                except Exception as e:
-                    step["status"] = f"failed: {e}"
+                    with session.trace_step("db_upsert"):
+                        self.ingestion_pipeline.upsert_to_db(processed_data)
+
+            # 4. BM25 인덱스 갱신 (데이터 변경이 있었을 경우에만)
+            if files_to_process or source_ids_to_delete:
+                with session.trace_step("bm25_update") as step:
+                    try:
+                        from src.vector_db.bm25_manager import BM25Manager  # noqa: E402
+
+                        BM25Manager()  # Rebuilds the index from DB
+                        step["status"] = "success"
+                    except Exception as e:
+                        step["status"] = f"failed: {e}"
+
+            # 5. Manifest 업데이트
+            with session.trace_step("update_manifest"):
+                self._save_manifest(new_manifest)
 
             logger.info("Ingestion 완료!")
 
