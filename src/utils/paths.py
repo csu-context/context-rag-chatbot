@@ -16,10 +16,12 @@ if str(BASE_DIR) not in sys.path:
 DATA_DIR = (BASE_DIR / "data").resolve()
 RAW_DATA_DIR = (DATA_DIR / "raw").resolve()
 PROCESSED_DATA_DIR = (DATA_DIR / "processed").resolve()
+EVAL_DATA_DIR = (DATA_DIR / "eval").resolve()
 
 VECTOR_DB_DIR = (BASE_DIR / "vector_db").resolve()
 MODELS_DIR = (BASE_DIR / "models").resolve()
 LOGS_DIR = (BASE_DIR / "logs").resolve()
+EVAL_LOGS_DIR = (LOGS_DIR / "eval").resolve()
 
 # 4. 설정 및 사전 파일 경로
 SYNONYMS_FILE = (BASE_DIR / "src" / "common" / "synonyms.json").resolve()

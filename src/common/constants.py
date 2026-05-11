@@ -31,3 +31,21 @@ class DataFields:
     CHILDREN: Final[str] = "children"
     PARENT_TEXT: Final[str] = "parent_text"
     METADATA: Final[str] = "metadata"
+
+
+class LLMDefaults:
+    """LLM 관련 기본 설정 및 모델 명 상수"""
+
+    CLAUDE_DEFAULT: Final[str] = "claude-sonnet-4-6"
+    GEMINI_DEFAULT: Final[str] = "gemini-2.0-flash"
+    TEMPERATURE: Final[float] = 0.1
+
+
+class LLMPricing:
+    """모델별 1M 토큰 당 단가 (USD) - 비용 계산용"""
+
+    PRICING: Final[dict[str, dict[str, float]]] = {
+        "claude-sonnet-4-6": {"input": 3.0, "output": 15.0},
+        "claude-haiku-4-5": {"input": 1.0, "output": 5.0},
+        "gemini-2.0-flash": {"input": 0.1, "output": 0.4},
+    }

@@ -1,6 +1,7 @@
 import logging
 import os
 
+from src.common.constants import LLMDefaults
 from src.models.base import BaseLLM
 from src.models.llm_claude import ClaudeModel
 from src.models.llm_gemini import GeminiModel
@@ -22,18 +23,19 @@ class LLMFactory:
         """
         type_ = model_type or os.getenv("MODEL_TYPE", "claude").lower()
         name_ = model_name or os.getenv("MODEL_NAME")
+        temp_ = kwargs.get("temperature", LLMDefaults.TEMPERATURE)
 
         logger.info(f"LLM 인스턴스 생성 시도 (Type: {type_}, Name: {name_})")
 
         if type_ == "gemini":
-            # Gemini 모델 이름 기본값 처리
-            name_ = name_ or "gemini-2.0-flash"
-            return GeminiModel(model_name=name_, **kwargs)
+            name_ = name_ or LLMDefaults.GEMINI_DEFAULT
+            api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+            return GeminiModel(model_name=name_, api_key=api_key, temperature=temp_)
 
         elif type_ == "claude":
-            # Claude 모델 이름 기본값 처리 (최신 Sonnet 4.6)
-            name_ = name_ or "claude-sonnet-4-6"
-            return ClaudeModel(model_name=name_, **kwargs)
+            name_ = name_ or LLMDefaults.CLAUDE_DEFAULT
+            api_key = os.getenv("ANTHROPIC_API_KEY")
+            return ClaudeModel(model_name=name_, api_key=api_key, temperature=temp_)
 
         elif type_ == "ollama":
             # 향후 sLLM 지원을 위한 Placeholder
@@ -41,5 +43,8 @@ class LLMFactory:
             raise NotImplementedError("Ollama 추상화는 아직 구현되지 않았습니다.")
 
         else:
-            logger.warning(f"지원하지 않는 모델 타입 '{type_}'입니다. Claude 모델로 Fallback 합니다.")
-            return ClaudeModel(model_name="claude-sonnet-4-6", **kwargs)
+            logger.warning(
+                f"지원하지 않는 모델 타입 '{type_}'입니다. 기본 설정({LLMDefaults.CLAUDE_DEFAULT})으로 Fallback 합니다."
+            )
+            api_key = os.getenv("ANTHROPIC_API_KEY")
+            return ClaudeModel(model_name=LLMDefaults.CLAUDE_DEFAULT, api_key=api_key, temperature=temp_)

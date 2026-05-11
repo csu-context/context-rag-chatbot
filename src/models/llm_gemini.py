@@ -1,5 +1,4 @@
 import logging
-import os
 import time
 from typing import Any
 
@@ -14,12 +13,12 @@ logger = logging.getLogger(__name__)
 class GeminiModel(BaseLLM):
     """Google Gemini 모델 래퍼 클래스"""
 
-    def __init__(self, model_name: str = "gemini-2.0-flash", temperature: float = 0.1):
+    def __init__(self, model_name: str, api_key: str | None = None, temperature: float = 0.1):
         super().__init__(model_name=model_name)
         self.temperature = temperature
-        self.api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        self.api_key = api_key
         if not self.api_key:
-            raise ValueError("GEMINI_API_KEY 또는 GOOGLE_API_KEY 환경 변수가 설정되지 않았습니다.")
+            raise ValueError(f"Gemini 모델({model_name})을 위한 API 키가 제공되지 않았습니다.")
 
         self._model = ChatGoogleGenerativeAI(
             model=self.model_name,

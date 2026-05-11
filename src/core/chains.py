@@ -131,7 +131,7 @@ def get_rag_chain(retriever_or_db):
     llm = llm_instance.get_model()
     tracing_logger = TracingLogger()
 
-    def run_full_pipeline(input_dict: dict[str, Any]) -> str:
+    def run_full_pipeline(input_dict: dict[str, Any]) -> dict[str, Any]:
         query = input_dict.get("question", "")
         # 1차 Retrieval에서 20개 추출, Reranking에서 최종 5개 추출 (요구사항 반영)
         retrieval_k = input_dict.get("k", 20)
@@ -148,9 +148,11 @@ def get_rag_chain(retriever_or_db):
             answer = _do_generation(query, final_docs, llm, session)
 
             # 4. Final Formatting (Citation)
+            full_answer = answer
             if final_docs:
                 citations = format_citations(final_docs)
-                return f"{answer}\n\n{citations}"
-            return answer
+                full_answer = f"{answer}\n\n{citations}"
+
+            return {"answer": full_answer, "source_documents": final_docs}
 
     return RunnableLambda(run_full_pipeline)

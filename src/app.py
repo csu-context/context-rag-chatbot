@@ -115,7 +115,8 @@ if prompt := st.chat_input("규정에 대해 궁금한 점을 물어보세요.")
         try:
             # 1. RAG 체인 호출
             # chains.py 내부에서 검색 및 리랭킹이 수행됨
-            response = rag_chain.invoke({"question": prompt, "k": k_value})
+            response_dict = rag_chain.invoke({"question": prompt, "k": k_value})
+            response = response_dict["answer"]
 
             end_time = time.time()  # 전체 종료 시간
             elapsed_time = end_time - start_time

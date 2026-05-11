@@ -1,5 +1,4 @@
 import logging
-import os
 import time
 from typing import Any
 
@@ -13,9 +12,12 @@ logger = logging.getLogger(__name__)
 class ClaudeModel(BaseLLM):
     """Anthropic Claude 모델 구현체"""
 
-    def __init__(self, model_name: str = "claude-sonnet-4-6", temperature: float = 0.1):
+    def __init__(self, model_name: str, api_key: str | None = None, temperature: float = 0.1):
         super().__init__(model_name=model_name)
-        self.api_key = os.getenv("ANTHROPIC_API_KEY")
+        self.api_key = api_key
+        if not self.api_key:
+            raise ValueError(f"Claude 모델({model_name})을 위한 API 키가 제공되지 않았습니다.")
+
         self.model = ChatAnthropic(
             model=model_name,
             temperature=temperature,

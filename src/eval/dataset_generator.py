@@ -10,7 +10,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from tqdm import tqdm
 
 from src.models.factory import LLMFactory
-from src.utils.paths import BASE_DIR
+from src.utils.paths import EVAL_DATA_DIR, PROCESSED_DATA_DIR
 
 # 로깅 설정
 logging.basicConfig(level=logging.INFO)
@@ -97,6 +97,7 @@ class GoldenDatasetGenerator:
         golden_dataset = []
         total_input_tokens = 0
         total_output_tokens = 0
+        total_cost = 0.0
 
         logger.info(f"{num_samples}개의 평가 데이터 생성을 시작합니다.")
 
@@ -111,14 +112,12 @@ class GoldenDatasetGenerator:
 
                 if pair:
                     golden_dataset.append(pair)
+                    total_cost += response_obj.cost
                     if response_obj.usage:
                         total_input_tokens += response_obj.usage.get("input_tokens", 0)
                         total_output_tokens += response_obj.usage.get("output_tokens", 0)
             except Exception as e:
                 logger.error(f"데이터 생성 중 오류 발생: {e}")
-
-        # 비용 계산 (Sonnet 기준: Input $3/1M, Output $15/1M)
-        estimated_cost = (total_input_tokens * 3 / 1000000) + (total_output_tokens * 15 / 1000000)
 
         output_file.parent.mkdir(parents=True, exist_ok=True)
         with open(output_file, "w", encoding="utf-8") as f:
@@ -131,7 +130,7 @@ class GoldenDatasetGenerator:
         print(f"- 사용 모델: {self.llm_instance.model_name}")
         print(f"- 총 입력 토큰: {total_input_tokens:,}")
         print(f"- 총 출력 토큰: {total_output_tokens:,}")
-        print(f"- 예상 합계 비용: ${estimated_cost:.4f}")
+        print(f"- 예상 합계 비용: ${total_cost:.4f}")
         print("=" * 40)
 
     def generate_pair_from_response(self, response_obj) -> dict[str, str] | None:
@@ -153,7 +152,7 @@ class GoldenDatasetGenerator:
 
 if __name__ == "__main__":
     # 가장 최근의 전처리 파일 찾기
-    processed_dir = BASE_DIR / "data" / "processed"
+    processed_dir = PROCESSED_DATA_DIR
     json_files = sorted(processed_dir.glob("preprocessed_*.json"), key=os.path.getmtime, reverse=True)
 
     if not json_files:
@@ -161,7 +160,7 @@ if __name__ == "__main__":
     else:
         latest_file = json_files[0]
         # 최신 파싱 결과를 반영한 신규 합성 데이터셋
-        output_path = BASE_DIR / "data" / "eval" / "synthetic_dataset_50.json"
+        output_path = EVAL_DATA_DIR / "synthetic_dataset_50.json"
 
         generator = GoldenDatasetGenerator()
         # 50개 샘플 생성
