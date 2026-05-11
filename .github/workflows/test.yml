@@ -39,3 +39,26 @@ jobs:
         # --cov-report=term-missing: 누락된 라인을 터미널에 표시
         python -m pytest --cov=src --cov-report=term-missing --durations=5
 
+    - name: MLOps Quality Gate Check
+      if: github.event_name == 'pull_request'
+      env:
+        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+        GATE_THRESHOLD_PCT: 5.0
+      run: |
+        # 1. 최신 평가 실행 (임시 요약 파일 생성)
+        python src/eval/evaluator.py
+        
+        # 2. 가장 최근 생성된 평가 요약 파일 찾기
+        LATEST_EVAL=$(ls -t logs/eval/eval_summary_*.json | head -n 1)
+        
+        # 3. 베이스라인(develop 브랜치 기준 등)과 비교 실행
+        # 여기서는 예시로 고정된 베이스라인 파일 경로를 사용하거나, 
+        # 이전 빌드에서 저장된 artifact를 사용할 수 있음.
+        # 우선 메커니즘 구축을 위해 스크립트 실행 구조만 정의.
+        if [ -f "data/eval/baseline_summary.json" ]; then
+          python scripts/compare_eval.py data/eval/baseline_summary.json $LATEST_EVAL
+        else
+          echo "⚠️ 베이스라인 파일이 없어 검증을 건너뜁니다."
+        fi
+
