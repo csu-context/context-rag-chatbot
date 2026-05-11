@@ -81,9 +81,8 @@ def compare_metrics(baseline_path: Path, current_path: Path):
         print("\n🚨 품질 게이트 실패! 기준 미달 항목이 존재합니다.")
         sys.exit(1)  # CI/CD 파이프라인 중단을 위해 비정상 종료 코드 반환
 
-    print("="*50 + "\n")
+    print("=" * 50 + "\n")
     return all_passed
-
 
 
 if __name__ == "__main__":
