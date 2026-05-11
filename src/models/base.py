@@ -17,6 +17,9 @@ class LLMResponse(BaseModel):
 class BaseLLM(ABC):
     """모든 LLM 모델 구현체가 상속받아야 하는 추상 베이스 클래스"""
 
+    def __init__(self, model_name: str):
+        self.model_name = model_name
+
     @abstractmethod
     def invoke(self, prompt: Any, **kwargs: Any) -> LLMResponse:
         """단일 질문에 대한 응답을 생성합니다."""

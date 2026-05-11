@@ -15,7 +15,7 @@ class GeminiModel(BaseLLM):
     """Google Gemini 모델 래퍼 클래스"""
 
     def __init__(self, model_name: str = "gemini-2.0-flash", temperature: float = 0.1):
-        self.model_name = model_name
+        super().__init__(model_name=model_name)
         self.temperature = temperature
         self.api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
         if not self.api_key:

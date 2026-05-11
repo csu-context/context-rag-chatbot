@@ -41,9 +41,9 @@ GENERATION_PROMPT = """
 
 
 class GoldenDatasetGenerator:
-    def __init__(self, model_type: str = "claude", model_name: str = "claude-sonnet-4-6"):
-        # LLMFactory를 사용하여 모델 생성
-        self.llm_instance = LLMFactory.create_llm(model_type=model_type, model_name=model_name, temperature=0.2)
+    def __init__(self, model_type: str = "claude", model_name: str = "claude-haiku-4-5"):
+        # 비용 효율을 위해 Haiku 모델 사용 (기존: claude-sonnet-4-6)
+        self.llm_instance = LLMFactory.create_llm(model_type=model_type, model_name=model_name, temperature=0.3)
         self.prompt = ChatPromptTemplate.from_template(GENERATION_PROMPT)
         # LLMFactory 인스턴스에서 LangChain 모델 객체 추출
         self.llm = self.llm_instance.get_model()
@@ -160,8 +160,9 @@ if __name__ == "__main__":
         print("전처리된 JSON 파일을 찾을 수 없습니다.")
     else:
         latest_file = json_files[0]
-        output_path = BASE_DIR / "data" / "eval" / "golden_dataset.json"
+        # 최신 파싱 결과를 반영한 신규 합성 데이터셋
+        output_path = BASE_DIR / "data" / "eval" / "synthetic_dataset_50.json"
 
         generator = GoldenDatasetGenerator()
-        # 비용 효율성을 고려하여 20개 생성
-        generator.run(latest_file, output_path, num_samples=20)
+        # 50개 샘플 생성
+        generator.run(latest_file, output_path, num_samples=50)

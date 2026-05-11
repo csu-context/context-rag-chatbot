@@ -14,11 +14,8 @@ class ClaudeModel(BaseLLM):
     """Anthropic Claude 모델 구현체"""
 
     def __init__(self, model_name: str = "claude-sonnet-4-6", temperature: float = 0.1):
+        super().__init__(model_name=model_name)
         self.api_key = os.getenv("ANTHROPIC_API_KEY")
-        if not self.api_key:
-            logger.warning("ANTHROPIC_API_KEY가 설정되지 않았습니다.")
-
-        self.model_name = model_name
         self.model = ChatAnthropic(
             model=model_name,
             temperature=temperature,
