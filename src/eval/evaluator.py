@@ -190,7 +190,12 @@ async def main():
         with open(summary_path, "w", encoding="utf-8") as f:
             json.dump(summary_data, f, ensure_ascii=False, indent=4)
 
+        # 상세 결과(개별 샘플 점수 및 사유) CSV 저장 추가
+        details_path = eval_dir / f"eval_details_{timestamp}.csv"
+        df.to_csv(details_path, index=False, encoding="utf-8-sig")
+
         logger.info(f"✅ 완료! 요약: {summary_path}")
+        logger.info(f"📝 상세 내역 저장: {details_path}")
         logger.info(f"📊 속도: {summary_data['avg_latency_sec']:.2f}s")
         for m, s in avg_scores.items():
             logger.info(f"   - {m}: {s:.4f}")
