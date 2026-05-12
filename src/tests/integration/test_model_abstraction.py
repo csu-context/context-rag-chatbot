@@ -31,7 +31,7 @@ def test_gemini_model_invoke(mock_invoke):
         mock_res.response_metadata = {"finish_reason": "stop"}
         mock_invoke.return_value = mock_res
 
-        model = GeminiModel(model_name="test")
+        model = GeminiModel(model_name="test", api_key="dummy-key")
         result = model.invoke("안녕")
 
         assert isinstance(result, LLMResponse)

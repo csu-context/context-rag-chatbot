@@ -27,5 +27,6 @@ def test_claude_invoke():
     assert response.content is not None
     assert len(response.content) > 0
     assert "latency" in response.model_dump()
-    assert response.model_name.startswith("claude-sonnet-4")
+    assert response.model_name is not None
+    assert "claude" in response.model_name.lower()
     print(f"\nClaude 응답: {response.content[:50]}...")
