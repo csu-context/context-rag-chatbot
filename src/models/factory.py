@@ -5,6 +5,7 @@ from src.common.constants import LLMDefaults
 from src.models.base import BaseLLM
 from src.models.llm_claude import ClaudeModel
 from src.models.llm_gemini import GeminiModel
+from src.models.llm_ollama import OllamaModel
 
 logger = logging.getLogger(__name__)
 
@@ -38,9 +39,9 @@ class LLMFactory:
             return ClaudeModel(model_name=name_, api_key=api_key, temperature=temp_)
 
         elif type_ == "ollama":
-            # 향후 sLLM 지원을 위한 Placeholder
-            # return OllamaModel(model_name=name_ or "llama3", **kwargs)
-            raise NotImplementedError("Ollama 추상화는 아직 구현되지 않았습니다.")
+            name_ = name_ or "llama3"
+            base_url = os.getenv("OLLAMA_BASE_URL")
+            return OllamaModel(model_name=name_, base_url=base_url, temperature=temp_)
 
         else:
             logger.warning(
