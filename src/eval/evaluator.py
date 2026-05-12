@@ -120,11 +120,13 @@ async def main():
     # 2. 평가 판사 및 임베딩 설정
     eval_model_name = os.getenv("EVAL_JUDGE_MODEL", DEFAULT_EVAL_MODEL)
 
-    # ChatAnthropic의 타입 체크를 완전히 우회하기 위해 Any로 캐스팅
-    eval_llm = cast(Any, ChatAnthropic)(
-        model=eval_model_name, anthropic_api_key=os.getenv("ANTHROPIC_API_KEY"), temperature=0, timeout=None, stop=None
-    )  # type: ignore
-    ragas_llm = LangchainLLMWrapper(eval_llm)
+    # 평가 판사 모델 설정 (표준 방식으로 인스턴스화)
+    chat_model = ChatAnthropic(
+        model=eval_model_name,
+        anthropic_api_key=os.getenv("ANTHROPIC_API_KEY"),
+        temperature=0,
+    )
+    ragas_llm = LangchainLLMWrapper(chat_model)
 
     # 임베딩 모델 설정
     embed_model_name = os.getenv("EVAL_EMBED_MODEL", "BAAI/bge-m3")
@@ -133,17 +135,17 @@ async def main():
 
     # 지표 리스트 (클래스 인스턴스화)
     metrics = [
-        Faithfulness(),  # type: ignore
-        AnswerRelevancy(),  # type: ignore
-        ContextPrecision(),  # type: ignore
-        ContextRecall(),  # type: ignore
+        Faithfulness(),
+        AnswerRelevancy(),
+        ContextPrecision(),
+        ContextRecall(),
     ]
 
     logger.info(f"📊 RAGAS 지표 계산 시작 (평가 모델: {eval_model_name})")
 
     try:
         # 3. 평가 실행
-        results = evaluate(  # type: ignore
+        results = evaluate(
             dataset=dataset,
             metrics=metrics,
             llm=ragas_llm,
