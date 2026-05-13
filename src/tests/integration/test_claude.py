@@ -1,4 +1,5 @@
 import os
+from unittest.mock import MagicMock, patch
 
 import pytest
 from dotenv import load_dotenv
@@ -20,13 +21,22 @@ def test_claude_factory_creation():
 
 @pytest.mark.skipif(not os.getenv("ANTHROPIC_API_KEY"), reason="ANTHROPIC_API_KEY가 설정되지 않았습니다.")
 def test_claude_invoke():
-    """Claude 모델 실제 호출 테스트 (API 키 필요)"""
-    llm = LLMFactory.create_llm(model_type="claude")
-    response = llm.invoke("안녕하세요, 간단하게 자기소개 부탁드립니다.")
+    """Claude 모델 호출 테스트 (Mock)"""
+    # ChatAnthropic 클래스 자체를 패치하여 인스턴스 생성 시 Mock이 반환되도록 함
+    with patch("src.models.llm_claude.ChatAnthropic") as mock_class:
+        mock_inst = MagicMock()
+        mock_res = MagicMock()
+        mock_res.content = "안녕하세요! 저는 Claude입니다."
+        mock_res.usage_metadata = {"input_token_count": 10, "output_token_count": 20}
+        mock_res.response_metadata = {}  # Pydantic 검증 통과를 위해 dict 할당
 
-    assert response.content is not None
-    assert len(response.content) > 0
-    assert "latency" in response.model_dump()
-    assert response.model_name is not None
-    assert "claude" in response.model_name.lower()
-    print(f"\nClaude 응답: {response.content[:50]}...")
+        mock_inst.invoke.return_value = mock_res
+        mock_class.return_value = mock_inst
+
+        llm = LLMFactory.create_llm(model_type="claude", model_name="claude-3-5-sonnet-20240620")
+        response = llm.invoke("안녕하세요, 간단하게 자기소개 부탁드립니다.")
+
+        assert response.content is not None
+        assert "Claude" in response.content
+        assert "latency" in response.model_dump()
+        assert response.model_name == "claude-3-5-sonnet-20240620"

@@ -1,5 +1,4 @@
 import logging
-import os
 
 from src.common.config import settings
 from src.common.constants import MetadataFields

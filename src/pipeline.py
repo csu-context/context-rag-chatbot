@@ -1,12 +1,10 @@
 import gc
 import json
 import logging
-import os
 import pickle
 import time
 import uuid
 from abc import ABC, abstractmethod
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -344,9 +342,10 @@ class PipelineOrchestrator:
         if self.parser_type == "enhanced":
             try:
                 import unstructured  # noqa: F401
+
                 return EnhancedPDFParserStrategy()
             except ImportError:
-                logger.error("❌ 'enhanced' 파서에 필요한 'unstructured' 라이브러리가 없습니다. 'manual'로 강제 전환합니다.")
+                logger.error("'enhanced' 파서용 'unstructured' 라이브러리가 없습니다. 'manual'로 강제 전환합니다.")
                 return ManualParserStrategy()
 
         return ManualParserStrategy()
@@ -463,4 +462,3 @@ class PreprocessingPipeline:
 if __name__ == "__main__":
     orchestrator = PipelineOrchestrator()
     orchestrator.run_ingestion()
-
