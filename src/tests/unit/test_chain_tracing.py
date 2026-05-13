@@ -37,20 +37,22 @@ def test_rerank_rank_change_logging(tmp_path):
                 # Mock LLM
                 with patch("src.models.factory.LLMFactory.create_llm") as mock_factory:
                     mock_llm_inst = MagicMock()
-                    # chains.py는 이제 llm_instance.get_model().invoke()를 호출하므로 get_model 모의 추가
                     mock_model = MagicMock()
                     mock_model.model_name = "test-model"
-                    mock_model.temperature = 0.5  # JSON 직렬화 가능하도록 구체적인 타입(float) 할당
+                    mock_model.temperature = 0.5
 
-                    # invoke 결과는 보통 content 속성이 있는 객체(예: AIMessage)를 반환
+                    # invoke -> stream으로 변경됨에 따라 모의 응답 리스트 반환
                     mock_response = AIMessage(content="answer")
+                    mock_model.stream.return_value = [mock_response]
 
-                    mock_model.invoke.return_value = mock_response
                     mock_llm_inst.get_model.return_value = mock_model
                     mock_factory.return_value = mock_llm_inst
 
                     chain = get_rag_chain(mock_db)
-                    chain.invoke({"question": "test", "k": 2})
+
+                    # generator 소진
+                    list(chain.stream({"question": "test", "k": 2}))
+
         # 로그 확인
         log_files = list((tmp_path / "trace").glob("*.jsonl"))
         with open(log_files[0], encoding="utf-8") as f:

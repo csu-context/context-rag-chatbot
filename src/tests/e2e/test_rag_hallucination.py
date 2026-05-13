@@ -30,10 +30,15 @@ def test_rag_normal_response():
     retriever = MockRetriever(docs)
     chain = get_rag_chain(retriever)
 
-    response = chain.invoke({"question": "올해 신입 사원 연봉이 얼마야?", "k": 1})
+    full_response = ""
+    for step in chain.stream({"question": "올해 신입 사원 연봉이 얼마야?", "k": 1}):
+        if step.get("stage") == "generation" and step.get("status") == "streaming":
+            full_response += step.get("output", "")
+        elif step.get("stage") == "citation" and step.get("status") == "complete":
+            full_response += f"\n\n{step.get('output', '')}"
 
-    assert "5,000" in response
-    assert "연봉규정_2026.pdf" in response
+    assert "5,000" in full_response
+    assert "연봉규정_2026.pdf" in full_response
 
 
 @pytest.mark.skipif(
@@ -52,8 +57,11 @@ def test_rag_hallucination_prevention():
     retriever = MockRetriever(docs)
     chain = get_rag_chain(retriever)
 
-    response = chain.invoke({"question": "회사에서 법인 차량을 빌릴 수 있어?", "k": 1})
+    full_response = ""
+    for step in chain.stream({"question": "회사에서 법인 차량을 빌릴 수 있어?", "k": 1}):
+        if step.get("stage") == "generation" and step.get("status") == "streaming":
+            full_response += step.get("output", "")
 
     # 환각 방지 멘트 포함 여부 (더 유연한 검증)
     hallucination_keywords = ["제공된 문서", "찾을 수 없습니다", "답변이 불가능", "관련된 내용을"]
-    assert any(keyword in response for keyword in hallucination_keywords)
+    assert any(keyword in full_response for keyword in hallucination_keywords)

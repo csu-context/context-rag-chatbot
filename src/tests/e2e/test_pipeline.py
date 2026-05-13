@@ -58,9 +58,16 @@ def test_full_rag_pipeline():
     test_query = "복수전공의 정의가 뭐야?"
     rag_chain = get_rag_chain(db_manager)
 
-    response = rag_chain.invoke({"question": test_query, "k": 1})
+    full_response = ""
+    for step in rag_chain.stream({"question": test_query, "k": 1}):
+        if step.get("stage") == "generation" and step.get("status") == "streaming":
+            full_response += step.get("output", "")
+        elif step.get("stage") == "citation" and step.get("status") == "complete":
+            # 테스트를 위해 인용구 텍스트도 검증에 포함
+            citations = step.get("output", "")
+            full_response += f"\n\n{citations}"
 
-    assert response is not None
-    assert "복수전공" in response
-    # 출처 인용 포함 여부 확인 (chains.py에서 결합됨)
-    assert "조선대학교_학칙_샘플.md" in response
+    assert full_response is not None
+    assert "복수전공" in full_response
+    # 출처 인용 포함 여부 확인
+    assert "조선대학교_학칙_샘플.md" in full_response

@@ -18,7 +18,7 @@ from src.data.parser import ManualParser
 from src.processing.chunking import HierarchicalChunker, create_parent_child_chunks
 from src.processing.pdf_parser import EnhancedPDFParser
 from src.utils.file_utils import generate_file_hash
-from src.utils.logger import TracingLogger
+from src.utils.logger import TracingLogger, setup_global_logging
 from src.utils.paths import CACHE_DIR, PROCESSED_DATA_DIR, RAW_DATA_DIR, ensure_directories
 from src.vector_db.chroma_manager import ChromaDBManager
 
@@ -178,11 +178,11 @@ class IngestionPipeline:
         all_hierarchical_data = []
         for file_path in tqdm(files, desc="Processing Files"):
             try:
-                # 1. 파싱
-                sections = self.strategy.parse(file_path)
-
                 # 2. 계층적 청킹
                 if file_path.suffix.lower() == ".pdf":
+                    # 1. 파싱 (PDF인 경우에만 parser strategy 사용)
+                    sections = self.strategy.parse(file_path)
+
                     # EnhancedPDFParserStrategy 결과인 경우 마크다운 통째로 계층적 청킹 수행
                     if sections and sections[0].get("is_combined"):
                         for sec in sections:
@@ -222,12 +222,29 @@ class IngestionPipeline:
                                     }
                                 )
                 else:
-                    # Markdown 또는 기타 포맷 처리
-                    if sections:
-                        # ManualParser는 리스트 형태이므로 첫 번째 요소를 기준으로 처리 (통상 1개 파일당 1개 content)
-                        base_metadata = sections[0]["metadata"]
-                        md_text = sections[0]["content"]
-                        file_chunks = create_parent_child_chunks(md_text, base_metadata)
+                    # Markdown 포맷 처리 (구조 파괴를 막기 위해 파서를 거치지 않고 직접 청킹)
+                    with open(file_path, encoding="utf-8") as f:
+                        raw_md_text = f.read()
+
+                    if len(raw_md_text.strip()) < 5:
+                        logger.warning(f"마크다운 파일의 내용이 너무 짧아 건너뜁니다: {file_path.name}")
+                        continue
+
+                    # 기본 메타데이터 구성
+                    parser_type = os.getenv("PARSER_TYPE", "manual").lower()
+                    base_metadata = {
+                        MetadataFields.SOURCE_ID: generate_file_hash(file_path, parser_type),
+                        MetadataFields.SRC_NAME: file_path.name,
+                        MetadataFields.DOC_TYPE: file_path.suffix.lower().replace(".", ""),
+                        MetadataFields.PG_NUM: 1,
+                        MetadataFields.CATEGORY: file_path.parent.name if file_path.parent.name != "raw" else "일반",
+                    }
+
+                    file_chunks = create_parent_child_chunks(raw_md_text, base_metadata)
+
+                    if not file_chunks:
+                        logger.warning(f"청킹 결과가 없습니다 (형식 확인 필요): {file_path.name}")
+                    else:
                         all_hierarchical_data.extend(file_chunks)
 
             except Exception as e:
@@ -349,7 +366,7 @@ class PipelineOrchestrator:
                 try:
                     from src.vector_db.bm25_manager import BM25Manager
 
-                    BM25Manager()  # Rebuilds the index from DB
+                    BM25Manager()  # Rebuilds 수퍼 클래스
                     step["status"] = "success"
                 except Exception as e:
                     step["status"] = f"failed: {e}"
@@ -417,5 +434,6 @@ class PreprocessingPipeline:
 
 
 if __name__ == "__main__":
+    setup_global_logging()  # 실행 시 로깅 설정을 적용합니다.
     orchestrator = PipelineOrchestrator()
     orchestrator.run_ingestion()
