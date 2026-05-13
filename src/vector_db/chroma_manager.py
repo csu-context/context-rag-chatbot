@@ -8,6 +8,7 @@ import chromadb
 from chromadb.api.types import Documents, EmbeddingFunction, Embeddings
 from chromadb.config import Settings
 
+from src.common.config import settings
 from src.models.embedder import BGEEmbedder
 from src.utils.paths import VECTOR_DB_DIR, ensure_directories
 
@@ -25,8 +26,9 @@ class BGEChromaEmbeddingFunction(EmbeddingFunction):
     src.models.embedder의 BGEEmbedder를 사용하여 문서를 벡터화합니다.
     """
 
-    def __init__(self, model_name: str = "BAAI/bge-m3"):
-        self.embedder = BGEEmbedder(model_name=model_name)
+    def __init__(self, model_name: str | None = None):
+        # 중앙 설정(settings)의 임베딩 모델 사용
+        self.embedder = BGEEmbedder(model_name=model_name or settings.EMBEDDING_MODEL_NAME)
 
     def __call__(self, input: Documents) -> Embeddings:
         embeddings = self.embedder.encode(input)

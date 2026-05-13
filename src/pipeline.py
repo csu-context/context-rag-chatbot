@@ -273,7 +273,7 @@ class PipelineOrchestrator:
     """전체 파이프라인(Ingestion & Inference)을 총괄하는 오케스트레이터"""
 
     def __init__(self):
-        self.parser_type = os.getenv("PARSER_TYPE", "manual").lower()
+        self.parser_type = settings.PARSER_TYPE.lower()
         self.strategy = self._get_parser_strategy()
         self.ingestion_pipeline = IngestionPipeline(self.strategy)
         self.tracing_logger = TracingLogger()
@@ -419,3 +419,4 @@ class PreprocessingPipeline:
 if __name__ == "__main__":
     orchestrator = PipelineOrchestrator()
     orchestrator.run_ingestion()
+rator.run_ingestion()

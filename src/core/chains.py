@@ -96,11 +96,11 @@ def _do_reranking(query: str, docs: list[Document], final_k: int, session: Any) 
         return final_docs, scores
 
 
-def _do_generation(query: str, final_docs: list[Document], llm: Any, session: Any) -> str:
+async def _do_generation(query: str, final_docs: list[Document], llm: Any, session: Any) -> str:
     with session.trace_step("generation") as step:
         context = _format_docs(final_docs)
         prompt_template = ChatPromptTemplate.from_messages([("system", RAG_SYSTEM_PROMPT), ("human", "{question}")])
-        prompt_val = prompt_template.invoke({"question": query, "context": context})
+        prompt_val = await prompt_template.ainvoke({"question": query, "context": context})
 
         # LLM 정보 및 파라미터 추출
         llm_params = {}
@@ -109,7 +109,7 @@ def _do_generation(query: str, final_docs: list[Document], llm: Any, session: An
         if hasattr(llm, "temperature"):
             llm_params["temperature"] = llm.temperature
 
-        answer_obj = llm.invoke(prompt_val)
+        answer_obj = await llm.ainvoke(prompt_val)
         answer = _extract_answer(answer_obj)
 
         step.update(
@@ -131,21 +131,21 @@ def get_rag_chain(retriever_or_db):
     llm = llm_instance.get_model()
     tracing_logger = TracingLogger()
 
-    def run_full_pipeline(input_dict: dict[str, Any]) -> dict[str, Any]:
+    async def run_full_pipeline(input_dict: dict[str, Any]) -> dict[str, Any]:
         query = input_dict.get("question", "")
         # 1차 Retrieval에서 20개 추출, Reranking에서 최종 5개 추출 (요구사항 반영)
         retrieval_k = input_dict.get("k", 20)
         final_k = input_dict.get("final_k", 5)
 
         with tracing_logger.start_session(query=query) as session:
-            # 1. Retrieval
+            # 1. Retrieval (동기 함수 유지하되 필요 시 비동기 래핑 고려 가능)
             docs = _do_retrieval(retriever_or_db, query, retrieval_k, session)
 
-            # 2. Reranking
+            # 2. Reranking (동기 함수 유지)
             final_docs, _scores = _do_reranking(query, docs, final_k, session)
 
-            # 3. Generation
-            answer = _do_generation(query, final_docs, llm, session)
+            # 3. Generation (비동기 호출)
+            answer = await _do_generation(query, final_docs, llm, session)
 
             # 4. Final Formatting (Citation)
             full_answer = answer
