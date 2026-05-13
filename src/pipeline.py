@@ -10,9 +10,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from dotenv import load_dotenv
 from tqdm import tqdm
 
+from src.common.config import settings
 from src.common.constants import MetadataFields
 from src.data.parser import ManualParser
 from src.processing.chunking import HierarchicalChunker, create_parent_child_chunks
@@ -21,8 +21,6 @@ from src.utils.file_utils import generate_file_hash
 from src.utils.logger import TracingLogger
 from src.utils.paths import CACHE_DIR, PROCESSED_DATA_DIR, RAW_DATA_DIR, ensure_directories
 from src.vector_db.chroma_manager import ChromaDBManager
-
-load_dotenv()
 
 # 로깅 설정
 logger = logging.getLogger(__name__)
@@ -266,7 +264,7 @@ class IngestionPipeline:
         if not source_ids_to_delete:
             return
 
-        logger.info(f"🧹 데이터 정합성 강화: {len(source_ids_to_delete)}개 소스 ID에 대한 클린업 시작...")
+        logger.info(f"데이터 정합성 검증: {len(source_ids_to_delete)}개 소스 ID에 대한 클린업을 수행합니다.")
 
         # 1. 벡터 DB 데이터 삭제
         try:
@@ -292,7 +290,7 @@ class IngestionPipeline:
         if deleted_count > 0:
             logger.info(f"   - 물리적 데이터 파일 {deleted_count}개 삭제 완료")
 
-        logger.info("✅ 데이터 정합성 검증 및 클린업 완료.")
+        logger.info("데이터 정합성 검증 및 클린업 작업이 완료되었습니다.")
 
     def upsert_to_db(self, data: list[dict[str, Any]]):
         ids, docs, metas = [], [], []
@@ -402,7 +400,7 @@ class PipelineOrchestrator:
 
     def run_ingestion(self):
         """전체 데이터 구축 파이프라인 실행"""
-        logger.info(f"Ingestion 시작 (전략: {self.parser_type})")
+        logger.info(f"데이터 구축 파이프라인을 시작합니다. (전략: {self.parser_type})")
 
         with self.tracing_logger.start_session(type="ingestion", parser_type=self.parser_type) as session:
             # 0. 상태 진단
@@ -439,7 +437,7 @@ class PipelineOrchestrator:
                 )
 
                 if not files_to_process and not source_ids_to_delete:
-                    logger.info("변경 사항이 없어 데이터 구축을 건너뜁니다.")
+                    logger.info("변경 사항이 없으므로 데이터 구축 작업을 건너뜁니다.")
                     session.data["status"] = "no_changes"
                     return
 
@@ -450,7 +448,7 @@ class PipelineOrchestrator:
             with session.trace_step("update_manifest"):
                 self._save_manifest(new_manifest)
 
-        logger.info("Ingestion 완료!")
+        logger.info("데이터 구축 파이프라인 작업이 완료되었습니다.")
 
 
 # 하위 호환성을 위한 기존 클래스 래핑
@@ -465,17 +463,4 @@ class PreprocessingPipeline:
 if __name__ == "__main__":
     orchestrator = PipelineOrchestrator()
     orchestrator.run_ingestion()
-rator.run_ingestion()
-�� 클래스 래핑
-class PreprocessingPipeline:
-    def __init__(self, *args, **kwargs):
-        self.orchestrator = PipelineOrchestrator()
 
-    def run(self, *args, **kwargs):
-        return self.orchestrator.run_ingestion()
-
-
-if __name__ == "__main__":
-    orchestrator = PipelineOrchestrator()
-    orchestrator.run_ingestion()
-rator.run_ingestion()

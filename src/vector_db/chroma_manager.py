@@ -73,18 +73,18 @@ class ChromaDBManager:
                 )
 
                 logger.info(
-                    f"✅ ChromaDB 로드 완료 (컬렉션: {self.collection_name}, 데이터 개수: {self.collection.count()})"
+                    f"ChromaDB 로드를 완료했습니다. (컬렉션: {self.collection_name}, 데이터 개수: {self.collection.count()})"
                 )
                 return  # 성공 시 루프 탈출
 
             except Exception as e:
                 if attempt < max_retries - 1:
                     logger.warning(
-                        f"⚠️ ChromaDB 연결 실패. {retry_delay}초 후 재시도... ({attempt + 1}/{max_retries}) | 오류: {e}"
+                        f"ChromaDB 연결에 실패했습니다. {retry_delay}초 후 재시도합니다. ({attempt + 1}/{max_retries}) | 오류: {e}"
                     )
                     time.sleep(retry_delay)
                 else:
-                    logger.error("❌ ChromaDB 연결에 최종 실패했습니다. DB 상태를 확인해주세요.")
+                    logger.error("ChromaDB 연결에 최종적으로 실패했습니다. DB 상태를 확인하시기 바랍니다.")
                     # 재시도 최종 실패 시 빈 컬렉션 객체 방지 처리가 필요할 수 있으나, 여기서는 에러를 발생시킵니다.
                     raise RuntimeError("ChromaDB initialization failed.") from e
 

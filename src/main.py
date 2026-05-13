@@ -19,7 +19,7 @@ def main():
     """
     setup_global_logging()
     logger.info("=" * 50)
-    logger.info("🚀 RAG 데이터 구축 시스템 (Orchestrator)을 시작합니다.")
+    logger.info("RAG 데이터 구축 시스템(Orchestrator)을 시작합니다.")
     logger.info("=" * 50)
 
     try:
