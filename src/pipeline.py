@@ -235,25 +235,64 @@ class IngestionPipeline:
 
         return all_hierarchical_data
 
-    def save_processed_data(self, data: list[dict[str, Any]], filename: str | None = None) -> Path:
-        if not filename:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"preprocessed_{timestamp}.json"
+    def save_processed_data(self, data: list[dict[str, Any]]) -> list[Path]:
+        """
+        전처리된 데이터를 source_id별 개별 JSON 파일로 저장합니다.
+        (BM25 인덱스와의 정합성 유지를 위해 개별 파일 관리가 필수적임)
+        """
+        saved_paths = []
+        # 데이터를 source_id별로 그룹화
+        grouped_data = {}
+        for item in data:
+            sid = item["metadata"].get(MetadataFields.SOURCE_ID, "unknown")
+            if sid not in grouped_data:
+                grouped_data[sid] = []
+            grouped_data[sid].append(item)
 
-        save_path = self.processed_dir / filename
-        with open(save_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        for sid, sid_data in grouped_data.items():
+            save_path = self.processed_dir / f"{sid}.json"
+            with open(save_path, "w", encoding="utf-8") as f:
+                json.dump(sid_data, f, ensure_ascii=False, indent=2)
+            saved_paths.append(save_path)
+            logger.info(f"   - 전처리 결과 저장: {save_path.name}")
 
-        logger.info(f"전처리 결과 저장 완료: {save_path}")
-        return save_path
+        return saved_paths
 
     def cleanup_db(self, source_ids_to_delete: list[str]):
-        """DB에서 삭제된 파일의 source_id에 해당하는 벡터들을 삭제합니다."""
+        """
+        DB, 캐시 및 가공된 JSON 파일에서 삭제된 데이터를 제거합니다.
+        (BM25Manager는 processed_dir의 모든 json을 읽으므로 물리적 파일 삭제가 곧 정합성임)
+        """
         if not source_ids_to_delete:
             return
-        logger.info(f"DB 정합성 검증: {len(source_ids_to_delete)}개 소스 ID에 대한 이전 데이터 삭제 시작...")
-        self.db_manager.delete_documents(where={"source_id": {"$in": source_ids_to_delete}})
-        logger.info("DB 정합성 검증 완료.")
+
+        logger.info(f"🧹 데이터 정합성 강화: {len(source_ids_to_delete)}개 소스 ID에 대한 클린업 시작...")
+
+        # 1. 벡터 DB 데이터 삭제
+        try:
+            self.db_manager.delete_documents(where={"source_id": {"$in": source_ids_to_delete}})
+            logger.info("   - ChromaDB 벡터 데이터 삭제 완료")
+        except Exception as e:
+            logger.error(f"   - ChromaDB 삭제 실패: {e}")
+
+        # 2. 물리적 캐시 및 JSON 파일 삭제 (강화된 클린업)
+        deleted_count = 0
+        for sid in source_ids_to_delete:
+            # 파싱 캐시 삭제
+            cache_file = CACHE_DIR / f"{sid}_parsed.pkl"
+            if cache_file.exists():
+                cache_file.unlink()
+
+            # 가공된 JSON 삭제 (BM25 정합성 핵심)
+            json_file = self.processed_dir / f"{sid}.json"
+            if json_file.exists():
+                json_file.unlink()
+                deleted_count += 1
+
+        if deleted_count > 0:
+            logger.info(f"   - 물리적 데이터 파일 {deleted_count}개 삭제 완료")
+
+        logger.info("✅ 데이터 정합성 검증 및 클린업 완료.")
 
     def upsert_to_db(self, data: list[dict[str, Any]]):
         ids, docs, metas = [], [], []
@@ -303,8 +342,15 @@ class PipelineOrchestrator:
             logger.error(f"Manifest 저장 실패: {e}")
 
     def _get_parser_strategy(self) -> ParserStrategy:
+        """설정된 파서 타입에 따라 전략을 반환하며 가용성을 검증합니다."""
         if self.parser_type == "enhanced":
-            return EnhancedPDFParserStrategy()
+            try:
+                import unstructured  # noqa: F401
+                return EnhancedPDFParserStrategy()
+            except ImportError:
+                logger.error("❌ 'enhanced' 파서에 필요한 'unstructured' 라이브러리가 없습니다. 'manual'로 강제 전환합니다.")
+                return ManualParserStrategy()
+
         return ManualParserStrategy()
 
     def _calculate_delta(
@@ -337,8 +383,8 @@ class PipelineOrchestrator:
 
             if processed_data:
                 with session.trace_step("save_json") as step:
-                    save_path = self.ingestion_pipeline.save_processed_data(processed_data)
-                    step["path"] = str(save_path)
+                    save_paths = self.ingestion_pipeline.save_processed_data(processed_data)
+                    step["saved_files"] = [p.name for p in save_paths]
 
                 with session.trace_step("db_upsert"):
                     self.ingestion_pipeline.upsert_to_db(processed_data)
@@ -408,6 +454,19 @@ class PipelineOrchestrator:
 
 
 # 하위 호환성을 위한 기존 클래스 래핑
+class PreprocessingPipeline:
+    def __init__(self, *args, **kwargs):
+        self.orchestrator = PipelineOrchestrator()
+
+    def run(self, *args, **kwargs):
+        return self.orchestrator.run_ingestion()
+
+
+if __name__ == "__main__":
+    orchestrator = PipelineOrchestrator()
+    orchestrator.run_ingestion()
+rator.run_ingestion()
+�� 클래스 래핑
 class PreprocessingPipeline:
     def __init__(self, *args, **kwargs):
         self.orchestrator = PipelineOrchestrator()
