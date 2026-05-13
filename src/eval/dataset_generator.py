@@ -162,6 +162,10 @@ if __name__ == "__main__":
         # 최신 파싱 결과를 반영한 신규 합성 데이터셋
         output_path = EVAL_DATA_DIR / "synthetic_dataset_50.json"
 
-        generator = GoldenDatasetGenerator()
+        # 데이터셋 생성용 모델 설정 (기본값: Claude)
+        gen_type = os.getenv("EVAL_DATA_GEN_TYPE", "claude")
+        gen_model = os.getenv("EVAL_DATA_GEN_MODEL", "claude-haiku-4-5")
+
+        generator = GoldenDatasetGenerator(model_type=gen_type, model_name=gen_model)
         # 50개 샘플 생성
         generator.run(latest_file, output_path, num_samples=50)

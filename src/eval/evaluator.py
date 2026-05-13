@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any, cast
 
 from dotenv import load_dotenv
-from langchain_anthropic import ChatAnthropic
 from langchain_huggingface import HuggingFaceEmbeddings
 from ragas import EvaluationDataset
 from ragas.embeddings import LangchainEmbeddingsWrapper
@@ -118,15 +117,14 @@ async def main():
         return
 
     # 2. 평가 판사 및 임베딩 설정
+    eval_model_type = os.getenv("EVAL_JUDGE_TYPE", "claude")
     eval_model_name = os.getenv("EVAL_JUDGE_MODEL", DEFAULT_EVAL_MODEL)
 
-    # 평가 판사 모델 설정 (표준 방식으로 인스턴스화)
-    chat_model = ChatAnthropic(
-        model=eval_model_name,
-        anthropic_api_key=os.getenv("ANTHROPIC_API_KEY"),
-        temperature=0,
-    )
-    ragas_llm = LangchainLLMWrapper(chat_model)
+    logger.info(f"⚖️ 평가 판사 설정 (Type: {eval_model_type}, Model: {eval_model_name})")
+
+    # LLMFactory를 통해 평가 판사 인스턴스 생성
+    eval_llm_inst = LLMFactory.create_llm(model_type=eval_model_type, model_name=eval_model_name, temperature=0)
+    ragas_llm = LangchainLLMWrapper(eval_llm_inst.get_model())
 
     # 임베딩 모델 설정
     embed_model_name = os.getenv("EVAL_EMBED_MODEL", "BAAI/bge-m3")
@@ -192,7 +190,12 @@ async def main():
         with open(summary_path, "w", encoding="utf-8") as f:
             json.dump(summary_data, f, ensure_ascii=False, indent=4)
 
+        # 상세 결과(개별 샘플 점수 및 사유) CSV 저장 추가
+        details_path = eval_dir / f"eval_details_{timestamp}.csv"
+        df.to_csv(details_path, index=False, encoding="utf-8-sig")
+
         logger.info(f"✅ 완료! 요약: {summary_path}")
+        logger.info(f"📝 상세 내역 저장: {details_path}")
         logger.info(f"📊 속도: {summary_data['avg_latency_sec']:.2f}s")
         for m, s in avg_scores.items():
             logger.info(f"   - {m}: {s:.4f}")

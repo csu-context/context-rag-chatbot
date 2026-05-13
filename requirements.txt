@@ -11,6 +11,7 @@ llama-index==0.14.21
 # LLM 및 임베딩 (Gemini & Anthropic & HuggingFace)
 langchain-google-genai==4.2.2
 langchain-anthropic==1.4.3
+langchain-ollama==1.1.0
 google-genai==1.72.0
 google-generativeai==0.8.6
 langchain-huggingface==1.2.2
