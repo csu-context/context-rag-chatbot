@@ -50,7 +50,8 @@ async def test_rag_normal_response():
         chain = get_rag_chain(retriever)
 
         full_response = ""
-        async for step in chain.astream({"question": "올해 신입 사원 연봉이 얼마야?", "k": 1}):
+        # 동기 제너레이터이므로 일반 for 루프로 소비
+        for step in chain.stream({"question": "올해 신입 사원 연봉이 얼마야?", "k": 1}):
             if step.get("stage") == "generation" and step.get("status") == "streaming":
                 full_response += step.get("output", "")
             elif step.get("stage") == "citation" and step.get("status") == "complete":
@@ -95,7 +96,8 @@ async def test_rag_hallucination_prevention():
         chain = get_rag_chain(retriever)
 
         full_response = ""
-        async for step in chain.astream({"question": "회사에서 법인 차량을 빌릴 수 있어?", "k": 1}):
+        # 동기 제너레이터이므로 일반 for 루프로 소비
+        for step in chain.stream({"question": "회사에서 법인 차량을 빌릴 수 있어?", "k": 1}):
             if step.get("stage") == "generation" and step.get("status") == "streaming":
                 full_response += step.get("output", "")
 

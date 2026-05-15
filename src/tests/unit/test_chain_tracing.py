@@ -56,8 +56,8 @@ async def test_rerank_rank_change_logging(tmp_path):
 
                     chain = get_rag_chain(mock_db)
 
-                    # 동기 제너레이터를 비동기 환경에서 LangChain의 astream으로 소비 (내부적으로 동기를 비동기로 변환)
-                    async for _ in chain.astream({"question": "test", "k": 2}):
+                    # 동기 제너레이터이므로 일반 for 루프로 소비 (테스트 환경에서는 블로킹되어도 무방함)
+                    for _ in chain.stream({"question": "test", "k": 2}):
                         pass
 
         # 로그 확인

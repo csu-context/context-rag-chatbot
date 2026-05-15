@@ -80,8 +80,8 @@ async def test_full_rag_pipeline():
         rag_chain = get_rag_chain(db_manager)
 
         full_response = ""
-        # 동기 제너레이터지만 astream을 통해 비동기로 소비 가능 (LangChain 내부 변환)
-        async for step in rag_chain.astream({"question": test_query, "k": 1}):
+        # 동기 제너레이터이므로 일반 for 루프로 소비
+        for step in rag_chain.stream({"question": test_query, "k": 1}):
             if step.get("stage") == "generation" and step.get("status") == "streaming":
                 full_response += step.get("output", "")
             elif step.get("stage") == "citation" and step.get("status") == "complete":
