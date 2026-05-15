@@ -107,7 +107,7 @@ class HierarchicalChunker:
                 result_tokens = []
                 for st in split_tables:
                     token_base = f"@@TABLE_{uuid.uuid4().hex}@@"
-                    # 🚀 핵심 트릭: 분할된 표의 실제 길이만큼 언더바(_)로 패딩을 채워 TextSplitter의 오작동 방지
+                    # 핵심 트릭: 분할된 표의 실제 길이만큼 언더바(_)로 패딩을 채워 TextSplitter의 오작동 방지
                     padding = "_" * max(0, len(st) - len(token_base))
                     padded_token = token_base + padding
 

@@ -63,9 +63,9 @@ if "messages" not in st.session_state:
 
 # --- 4. 사이드바 (Sidebar) 구성 ---
 with st.sidebar:
-    st.title("🛠️ 설정 및 관리")
+    st.title("설정 및 관리")
 
-    st.subheader("🔍 검색 설정")
+    st.subheader("검색 설정")
     k_value = st.slider(
         "검색할 문서 조각 개수 (K)",
         min_value=1,
@@ -75,15 +75,15 @@ with st.sidebar:
     )
 
     st.divider()
-    st.subheader("📊 데이터베이스 상태")
+    st.subheader("데이터베이스 상태")
     count = db_manager.get_count()
     st.write(f"현재 저장된 청크 수: **{count}**")
 
-    if st.button("🔄 상태 새로고침"):
+    if st.button("상태 새로고침"):
         st.rerun()
 
     st.divider()
-    st.subheader("📄 문서 관리 (준비 중)")
+    st.subheader("문서 관리 (준비 중)")
     uploaded_files = st.file_uploader(
         "새로운 매뉴얼 업로드",
         type=["pdf", "docx", "md"],
@@ -93,7 +93,7 @@ with st.sidebar:
         st.info("파일 업로드 기능은 현재 전처리 파이프라인과 통합 중입니다.")
 
 # --- 5. 메인 채팅창 구성 ---
-st.title("🤖 지능형 사내 규정 어시스턴트")
+st.title("지능형 사내 규정 어시스턴트")
 st.markdown("사내 매뉴얼 및 규정 문서를 기반으로 답변을 생성합니다. (1차 프로토타입)")
 st.markdown("---")
 

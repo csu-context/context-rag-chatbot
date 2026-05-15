@@ -10,7 +10,7 @@ def test_format_citations():
         Document(page_content="내용2", metadata={"src_name": "guide.docx", "pg_num": 10}),
     ]
     result1 = format_citations(docs1)
-    assert "**💡 답변의 근거가 된 문서 목록:**" in result1
+    assert "**답변의 근거가 된 문서 목록:**" in result1
     assert "manual.pdf (p.5)" in result1
     assert "guide.docx (p.10)" in result1
 

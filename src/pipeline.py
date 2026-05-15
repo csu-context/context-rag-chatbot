@@ -51,13 +51,13 @@ class EnhancedPDFParserStrategy(ParserStrategy):
 
     def parse(self, file_path: Path) -> list[dict[str, Any]]:
         if file_path.suffix.lower() == ".pdf":
-            # 📌 1. 캐시 파일 경로 설정 (공통 해시 유틸리티 + 파서 타입 명시)
+            # 1. 캐시 파일 경로 설정 (공통 해시 유틸리티 + 파서 타입 명시)
             source_id = generate_file_hash(file_path, parser_type="enhanced")
             cache_file = CACHE_DIR / f"{source_id}_parsed.pkl"
 
-            # 📌 2. 캐시가 존재하면 무거운 파싱을 생략하고 바로 로드 (시간 단축)
+            # 2. 캐시가 존재하면 무거운 파싱을 생략하고 바로 로드 (시간 단축)
             if cache_file.exists():
-                logger.info(f"💾 캐시된 파싱 결과를 불러옵니다: {file_path.name}")
+                logger.info(f"캐시된 파싱 결과를 로드합니다: {file_path.name}")
                 with open(cache_file, "rb") as f:
                     return pickle.load(f)
 
@@ -128,7 +128,7 @@ class EnhancedPDFParserStrategy(ParserStrategy):
             del documents
             gc.collect()
 
-            # 📌 4. 다음 실행을 위해 파싱 결과 캐시 저장
+            # 4. 다음 실행을 위해 파싱 결과 캐시 저장
             with open(cache_file, "wb") as f:
                 pickle.dump(results, f)
 

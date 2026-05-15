@@ -36,7 +36,7 @@ def main():
         logger.info(f"최종 DB 데이터 수: {final_count}")
 
     except Exception as e:
-        logger.error(f"❌ 데이터 구축 중 오류 발생: {e}", exc_info=True)
+        logger.error(f"데이터 구축 중 오류 발생: {e}", exc_info=True)
         sys.exit(1)
 
     logger.info("시스템이 최신 데이터로 업데이트되었습니다. 이제 'streamlit run src/app.py'를 실행하세요.")
