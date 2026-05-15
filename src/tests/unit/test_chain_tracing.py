@@ -46,17 +46,17 @@ async def test_rerank_rank_change_logging(tmp_path):
 
                     mock_response = AIMessage(content="answer")
 
-                    async def mock_astream(*args, **kwargs):
+                    def mock_stream(*args, **kwargs):
                         yield mock_response
 
-                    mock_model.astream = mock_astream
+                    mock_model.stream = mock_stream
                     mock_model.ainvoke.return_value = mock_response
                     mock_llm_inst.get_model.return_value = mock_model
                     mock_factory.return_value = mock_llm_inst
 
                     chain = get_rag_chain(mock_db)
 
-                    # Async generator 소진
+                    # 동기 제너레이터를 비동기 환경에서 LangChain의 astream으로 소비 (내부적으로 동기를 비동기로 변환)
                     async for _ in chain.astream({"question": "test", "k": 2}):
                         pass
 
