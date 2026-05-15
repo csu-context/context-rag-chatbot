@@ -65,11 +65,11 @@ async def test_full_rag_pipeline():
         mock_model.model_name = "test-model"
         mock_model.temperature = 0.1
 
-        # 비동기 제너레이터를 반환하도록 astream 모의 설정
-        async def mock_astream(*args, **kwargs):
+        # 동기 제너레이터를 반환하도록 stream 모의 설정 (LangChain이 백그라운드 스레드에서 비동기 소비 가능)
+        def mock_stream(*args, **kwargs):
             yield MagicMock(content="복수전공은 주전공 외에 추가로 이수하는 전공을 의미합니다.")
 
-        mock_model.astream = mock_astream
+        mock_model.stream = mock_stream
         mock_model.ainvoke = AsyncMock(
             return_value=MagicMock(content="복수전공은 주전공 외에 추가로 이수하는 전공을 의미합니다.")
         )
@@ -80,7 +80,7 @@ async def test_full_rag_pipeline():
         rag_chain = get_rag_chain(db_manager)
 
         full_response = ""
-        # Async 제너레이터를 astream으로 소비
+        # 동기 제너레이터지만 astream을 통해 비동기로 소비 가능 (LangChain 내부 변환)
         async for step in rag_chain.astream({"question": test_query, "k": 1}):
             if step.get("stage") == "generation" and step.get("status") == "streaming":
                 full_response += step.get("output", "")

@@ -43,6 +43,29 @@ class ManualParserStrategy(ParserStrategy):
         return parser.parse()
 
 
+class MarkdownParserStrategy(ParserStrategy):
+    """Markdown 파일을 구조 파괴 없이 읽어오는 전략"""
+
+    def parse(self, file_path: Path) -> list[dict[str, Any]]:
+        with open(file_path, encoding="utf-8") as f:
+            raw_md_text = f.read()
+
+        if len(raw_md_text.strip()) < 5:
+            logger.warning(f"마크다운 파일의 내용이 너무 짧아 건너뜁니다: {file_path.name}")
+            return []
+
+        parser_type = os.getenv("PARSER_TYPE", "manual").lower()
+        base_metadata = {
+            MetadataFields.SOURCE_ID: generate_file_hash(file_path, parser_type),
+            MetadataFields.SRC_NAME: file_path.name,
+            MetadataFields.DOC_TYPE: file_path.suffix.lower().replace(".", ""),
+            MetadataFields.PG_NUM: 1,
+            MetadataFields.CATEGORY: file_path.parent.name if file_path.parent.name != "raw" else "일반",
+        }
+
+        return [{"is_raw_markdown": True, "content": raw_md_text, "metadata": base_metadata}]
+
+
 class EnhancedPDFParserStrategy(ParserStrategy):
     """Unstructured 기반 고도화된 PDF 파서를 사용하는 전략"""
 
@@ -135,10 +158,9 @@ class EnhancedPDFParserStrategy(ParserStrategy):
 
             return results
         else:
-            # PDF가 아닌 경우 ManualParser로 Fallback (enhanced 파이프라인에서 돌아감을 명시)
-            relative_path = file_path.relative_to(RAW_DATA_DIR)
-            parser = self.manual_parser(str(relative_path), parser_type="enhanced")
-            return parser.parse()
+            # PDF가 아닌 경우 예외를 방지하기 위해 Markdown 파서로 우회
+            logger.info(f"PDF 파서에서 처리할 수 없는 확장자입니다. Markdown 전략으로 전환합니다: {file_path.name}")
+            return MarkdownParserStrategy().parse(file_path)
 
 
 class IngestionPipeline:
@@ -175,74 +197,53 @@ class IngestionPipeline:
         all_hierarchical_data = []
         for file_path in tqdm(files, desc="Processing Files"):
             try:
-                # 2. 계층적 청킹
-                if file_path.suffix.lower() == ".pdf":
-                    # 1. 파싱 (PDF인 경우에만 parser strategy 사용)
-                    sections = self.strategy.parse(file_path)
+                # 1. 파일 확장자에 따른 전략 동적 선택 및 파싱
+                active_strategy = self.strategy if file_path.suffix.lower() == ".pdf" else MarkdownParserStrategy()
 
-                    # EnhancedPDFParserStrategy 결과인 경우 마크다운 통째로 계층적 청킹 수행
-                    if sections and sections[0].get("is_combined"):
-                        for sec in sections:
-                            base_metadata = sec["metadata"]
-                            md_text = sec["content"]
-                            file_chunks = create_parent_child_chunks(md_text, base_metadata)
-                            all_hierarchical_data.extend(file_chunks)
-                    else:
-                        # 기존 ManualParser PDF 처리 방식 (Fallback 호환성)
-                        for sec in sections:
-                            parent_id = str(uuid.uuid4())
-                            meta_for_children = sec["metadata"].copy()
-                            sec_title = f"{sec.get('chapter', '기본 섹션')} > {sec.get('article', '기본 섹션')}"
-                            meta_for_children[MetadataFields.SEC_TITLE] = sec_title
-                            meta_for_children[MetadataFields.HEADER_PATH] = sec_title
+                sections = active_strategy.parse(file_path)
 
-                            children = self.chunker.split_into_children(sec["content"], parent_id, meta_for_children)
+                if not sections:
+                    continue
 
-                            if children:
-                                parent_metadata = {
-                                    MetadataFields.SOURCE_ID: sec["metadata"].get(MetadataFields.SOURCE_ID, "UNKNOWN"),
-                                    MetadataFields.SRC_NAME: sec["metadata"].get(MetadataFields.SRC_NAME, "UNKNOWN"),
-                                    MetadataFields.DOC_TYPE: sec["metadata"].get(MetadataFields.DOC_TYPE, "pdf"),
-                                    MetadataFields.PG_NUM: sec["metadata"].get(MetadataFields.PG_NUM, 1),
-                                    MetadataFields.SEC_TITLE: sec_title,
-                                    MetadataFields.CHUNK_ID: parent_id,
-                                    MetadataFields.PARENT_ID: None,
-                                    MetadataFields.HEADER_PATH: sec_title,
-                                    MetadataFields.IS_TABLE: False,
-                                }
-                                all_hierarchical_data.append(
-                                    {
-                                        "parent_id": parent_id,
-                                        "parent_text": sec["content"],
-                                        "metadata": parent_metadata,
-                                        "children": children,
-                                    }
-                                )
-                else:
-                    # Markdown 포맷 처리 (구조 파괴를 막기 위해 파서를 거치지 않고 직접 청킹)
-                    with open(file_path, encoding="utf-8") as f:
-                        raw_md_text = f.read()
-
-                    if len(raw_md_text.strip()) < 5:
-                        logger.warning(f"마크다운 파일의 내용이 너무 짧아 건너뜁니다: {file_path.name}")
-                        continue
-
-                    # 기본 메타데이터 구성
-                    parser_type = os.getenv("PARSER_TYPE", "manual").lower()
-                    base_metadata = {
-                        MetadataFields.SOURCE_ID: generate_file_hash(file_path, parser_type),
-                        MetadataFields.SRC_NAME: file_path.name,
-                        MetadataFields.DOC_TYPE: file_path.suffix.lower().replace(".", ""),
-                        MetadataFields.PG_NUM: 1,
-                        MetadataFields.CATEGORY: file_path.parent.name if file_path.parent.name != "raw" else "일반",
-                    }
-
-                    file_chunks = create_parent_child_chunks(raw_md_text, base_metadata)
-
-                    if not file_chunks:
-                        logger.warning(f"청킹 결과가 없습니다 (형식 확인 필요): {file_path.name}")
-                    else:
+                # 2. 계층적 청킹 (결과 타입별 분기 처리)
+                if sections[0].get("is_raw_markdown"):
+                    file_chunks = create_parent_child_chunks(sections[0]["content"], sections[0]["metadata"])
+                    all_hierarchical_data.extend(file_chunks)
+                elif sections[0].get("is_combined"):
+                    for sec in sections:
+                        file_chunks = create_parent_child_chunks(sec["content"], sec["metadata"])
                         all_hierarchical_data.extend(file_chunks)
+                else:
+                    # 기존 ManualParser PDF 처리 방식 (Fallback 호환성)
+                    for sec in sections:
+                        parent_id = str(uuid.uuid4())
+                        meta_for_children = sec["metadata"].copy()
+                        sec_title = f"{sec.get('chapter', '기본 섹션')} > {sec.get('article', '기본 섹션')}"
+                        meta_for_children[MetadataFields.SEC_TITLE] = sec_title
+                        meta_for_children[MetadataFields.HEADER_PATH] = sec_title
+
+                        children = self.chunker.split_into_children(sec["content"], parent_id, meta_for_children)
+
+                        if children:
+                            parent_metadata = {
+                                MetadataFields.SOURCE_ID: sec["metadata"].get(MetadataFields.SOURCE_ID, "UNKNOWN"),
+                                MetadataFields.SRC_NAME: sec["metadata"].get(MetadataFields.SRC_NAME, "UNKNOWN"),
+                                MetadataFields.DOC_TYPE: sec["metadata"].get(MetadataFields.DOC_TYPE, "pdf"),
+                                MetadataFields.PG_NUM: sec["metadata"].get(MetadataFields.PG_NUM, 1),
+                                MetadataFields.SEC_TITLE: sec_title,
+                                MetadataFields.CHUNK_ID: parent_id,
+                                MetadataFields.PARENT_ID: None,
+                                MetadataFields.HEADER_PATH: sec_title,
+                                MetadataFields.IS_TABLE: False,
+                            }
+                            all_hierarchical_data.append(
+                                {
+                                    "parent_id": parent_id,
+                                    "parent_text": sec["content"],
+                                    "metadata": parent_metadata,
+                                    "children": children,
+                                }
+                            )
 
             except Exception as e:
                 logger.error(f"파일 처리 실패: {file_path.name} - {e!s}")

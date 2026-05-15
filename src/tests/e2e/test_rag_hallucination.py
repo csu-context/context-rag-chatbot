@@ -39,10 +39,10 @@ async def test_rag_normal_response():
         mock_model.model_name = "test-model"
         mock_model.temperature = 0.1
 
-        async def mock_astream(*args, **kwargs):
+        def mock_stream(*args, **kwargs):
             yield MagicMock(content="2026년 신입 사원 연봉은 5,000만 원입니다.")
 
-        mock_model.astream = mock_astream
+        mock_model.stream = mock_stream
         mock_model.ainvoke = AsyncMock(return_value=MagicMock(content="2026년 신입 사원 연봉은 5,000만 원입니다."))
         mock_llm_inst.get_model.return_value = mock_model
         mock_factory.return_value = mock_llm_inst
@@ -84,10 +84,10 @@ async def test_rag_hallucination_prevention():
         mock_model.model_name = "test-model"
         mock_model.temperature = 0.1
 
-        async def mock_astream(*args, **kwargs):
+        def mock_stream(*args, **kwargs):
             yield MagicMock(content="제공된 문서에서 관련 내용을 찾을 수 없습니다.")
 
-        mock_model.astream = mock_astream
+        mock_model.stream = mock_stream
         mock_model.ainvoke = AsyncMock(return_value=MagicMock(content="제공된 문서에서 관련 내용을 찾을 수 없습니다."))
         mock_llm_inst.get_model.return_value = mock_model
         mock_factory.return_value = mock_llm_inst

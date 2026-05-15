@@ -123,6 +123,11 @@ with st.sidebar:
     if st.button("상태 새로고침"):
         st.rerun()
 
+    st.divider()
+    show_expert_mode = st.toggle(
+        "상세 추론 과정 보기", value=False, help="리랭킹 점수 등 전문가용 추론 과정을 표시합니다."
+    )
+
 # --- 5. 메인 채팅창 구성 ---
 st.title("지능형 사내 규정 어시스턴트")
 st.markdown("사내 매뉴얼 및 규정 문서를 기반으로 답변을 생성합니다. (1차 프로토타입)")
@@ -137,25 +142,26 @@ for msg_idx, message in enumerate(st.session_state.messages):
         if message["role"] == "assistant" and message.get("citations"):
             citations = message["citations"]
 
-            with st.expander("🛠️ 추론 과정 및 문서 순위 변화 분석"):
-                st.markdown("### 📊 리랭킹 전/후 점수 비교")
-                df_data = []
-                for i, d in enumerate(citations):
-                    source = d.metadata.get(MetadataFields.SRC_NAME) or "알 수 없는 파일"
-                    page = d.metadata.get(MetadataFields.PG_NUM) or "-"
-                    orig_score = d.metadata.get("score", 0.0)
-                    rerank_score = d.metadata.get("rerank_score", 0.0)
+            if show_expert_mode:
+                with st.expander("🛠️ 추론 과정 및 문서 순위 변화 분석"):
+                    st.markdown("### 📊 리랭킹 전/후 점수 비교")
+                    df_data = []
+                    for i, d in enumerate(citations):
+                        source = d.metadata.get(MetadataFields.SRC_NAME) or "알 수 없는 파일"
+                        page = d.metadata.get(MetadataFields.PG_NUM) or "-"
+                        orig_score = d.metadata.get("score", 0.0)
+                        rerank_score = d.metadata.get("rerank_score", 0.0)
 
-                    df_data.append(
-                        {
-                            "최종 순위": i + 1,
-                            "출처": source,
-                            "페이지": page,
-                            "초기 점수 (Vector)": orig_score,
-                            "최종 점수 (Reranker)": rerank_score,
-                        }
-                    )
-                st.dataframe(pd.DataFrame(df_data), use_container_width=True)
+                        df_data.append(
+                            {
+                                "최종 순위": i + 1,
+                                "출처": source,
+                                "페이지": page,
+                                "초기 점수 (Vector)": orig_score,
+                                "최종 점수 (Reranker)": rerank_score,
+                            }
+                        )
+                    st.dataframe(pd.DataFrame(df_data), use_container_width=True)
 
             st.markdown("**참고 문서:**")
             cols = st.columns(len(citations))
@@ -181,18 +187,17 @@ if prompt := st.chat_input("규정에 대해 궁금한 점을 물어보세요.")
 
         status = st.status("답변 생성 파이프라인 진행 중...", expanded=True)
 
+        full_response = ""
+        response_container = st.empty()
+        final_docs = []
+
         try:
             # 상태 표시기
             retrieval_msg = st.empty()
             reranking_msg = st.empty()
             generation_msg = st.empty()
 
-            # 스트리밍 결과 변수
-            full_response = ""
-            response_container = st.empty()
-
             docs = []
-            final_docs = []
 
             # 비동기 Generator를 LangChain RunnableLambda를 통해 동기식으로 소비 (stream() 메서드 활용)
             for step in rag_chain.stream({"question": prompt, "k": k_value, "final_k": final_k_value}):
@@ -243,10 +248,19 @@ if prompt := st.chat_input("규정에 대해 궁금한 점을 물어보세요.")
         except Exception as e:
             logger.error(f"답변 생성 오류: {e}", exc_info=True)
             status.update(label="파이프라인 실행 실패", state="error", expanded=True)
-            st.error(f"답변 생성 중 오류가 발생했습니다: {e}")
-            st.session_state.messages.append(
-                {"role": "assistant", "content": "죄송합니다. 내부 시스템 오류로 답변을 생성할 수 없습니다."}
-            )
+
+            # 스트리밍 도중 끊긴 경우 불완전한 답변임을 명시
+            if full_response:
+                error_msg = "\n\n⚠️ **[시스템 안내] 통신 오류로 인해 답변이 불완전할 수 있습니다.**"
+                response_container.markdown(full_response + error_msg)
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": full_response + error_msg, "citations": final_docs}
+                )
+            else:
+                st.error(f"답변 생성 중 오류가 발생했습니다: {e}")
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": "죄송합니다. 내부 시스템 오류로 답변을 생성할 수 없습니다."}
+                )
 
 # --- 7. 푸터 ---
 st.markdown("---")
