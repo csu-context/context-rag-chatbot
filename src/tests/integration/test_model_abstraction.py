@@ -7,7 +7,13 @@ from src.models.llm_gemini import GeminiModel
 
 def test_factory_creation():
     """팩토리가 Gemini 모델을 정상적으로 생성하는지 확인"""
-    with patch.dict("os.environ", {"MODEL_TYPE": "gemini", "MODEL_NAME": "gemini-pro", "GOOGLE_API_KEY": "dummy-key"}):
+    from src.models.factory import settings
+
+    with (
+        patch.object(settings, "MODEL_TYPE", "gemini"),
+        patch.object(settings, "MODEL_NAME", "gemini-pro"),
+        patch.object(settings, "GOOGLE_API_KEY", "dummy-key"),
+    ):
         llm = LLMFactory.create_llm()
         assert isinstance(llm, GeminiModel)
         assert llm.model_name == "gemini-pro"

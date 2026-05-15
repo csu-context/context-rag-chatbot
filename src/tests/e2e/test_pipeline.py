@@ -1,4 +1,5 @@
 import os
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from dotenv import load_dotenv
@@ -12,12 +13,13 @@ from src.vector_db.chroma_manager import ChromaDBManager
 load_dotenv()
 
 
+@pytest.mark.asyncio
 @pytest.mark.skipif(
     os.getenv("CI") == "true"
     or (os.getenv("GOOGLE_API_KEY", "") in ["", "None"] and os.getenv("ANTHROPIC_API_KEY", "") in ["", "None"]),
     reason="CI 환경에서는 기 설정된 모델 접근 권한 문제로 스킵하거나 API 키가 없습니다.",
 )
-def test_full_rag_pipeline():
+async def test_full_rag_pipeline():
     """데이터 전처리부터 RAG 답변 생성까지의 전체 파이프라인 테스트"""
     # 1. 테스트 데이터 준비
     sample_markdown = """
@@ -54,20 +56,38 @@ def test_full_rag_pipeline():
     db_manager = ChromaDBManager(collection_name="test_e2e_collection")
     db_manager.upsert_documents(ids=flat_ids, documents=flat_texts, metadatas=flat_metadatas)
 
-    # 4. RAG 체인 호출 및 검증
+    # 4. RAG 체인 호출 및 검증 (Mock LLM)
     test_query = "복수전공의 정의가 뭐야?"
-    rag_chain = get_rag_chain(db_manager)
 
-    full_response = ""
-    for step in rag_chain.stream({"question": test_query, "k": 1}):
-        if step.get("stage") == "generation" and step.get("status") == "streaming":
-            full_response += step.get("output", "")
-        elif step.get("stage") == "citation" and step.get("status") == "complete":
-            # 테스트를 위해 인용구 텍스트도 검증에 포함
-            citations = step.get("output", "")
-            full_response += f"\n\n{citations}"
+    with patch("src.models.factory.LLMFactory.create_llm") as mock_factory:
+        mock_llm_inst = MagicMock()
+        mock_model = MagicMock()
+        mock_model.model_name = "test-model"
+        mock_model.temperature = 0.1
+
+        # 비동기 제너레이터를 반환하도록 astream 모의 설정
+        async def mock_astream(*args, **kwargs):
+            yield MagicMock(content="복수전공은 주전공 외에 추가로 이수하는 전공을 의미합니다.")
+
+        mock_model.astream = mock_astream
+        mock_model.ainvoke = AsyncMock(
+            return_value=MagicMock(content="복수전공은 주전공 외에 추가로 이수하는 전공을 의미합니다.")
+        )
+
+        mock_llm_inst.get_model.return_value = mock_model
+        mock_factory.return_value = mock_llm_inst
+
+        rag_chain = get_rag_chain(db_manager)
+
+        full_response = ""
+        # Async 제너레이터를 astream으로 소비
+        async for step in rag_chain.astream({"question": test_query, "k": 1}):
+            if step.get("stage") == "generation" and step.get("status") == "streaming":
+                full_response += step.get("output", "")
+            elif step.get("stage") == "citation" and step.get("status") == "complete":
+                citations = step.get("output", "")
+                full_response += f"\n\n{citations}"
 
     assert full_response is not None
     assert "복수전공" in full_response
-    # 출처 인용 포함 여부 확인
     assert "조선대학교_학칙_샘플.md" in full_response

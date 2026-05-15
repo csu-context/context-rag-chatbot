@@ -1,6 +1,7 @@
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from langchain_core.documents import Document
 from langchain_core.messages import AIMessage
 
@@ -8,7 +9,8 @@ from src.core.chains import get_rag_chain
 from src.utils.logger import TracingLogger
 
 
-def test_rerank_rank_change_logging(tmp_path):
+@pytest.mark.asyncio
+async def test_rerank_rank_change_logging(tmp_path):
     """리랭킹 전후 순위 변화가 로그에 정확히 기록되는지 검증"""
     TracingLogger.reset_instance()
     with patch("src.utils.logger.LOGS_DIR", tmp_path):
@@ -38,20 +40,25 @@ def test_rerank_rank_change_logging(tmp_path):
                 with patch("src.models.factory.LLMFactory.create_llm") as mock_factory:
                     mock_llm_inst = MagicMock()
                     mock_model = MagicMock()
+                    mock_model.ainvoke = AsyncMock()
                     mock_model.model_name = "test-model"
-                    mock_model.temperature = 0.5
+                    mock_model.temperature = 0.5  # JSON 직렬화 가능하도록 구체적인 타입(float) 할당
 
-                    # invoke -> stream으로 변경됨에 따라 모의 응답 리스트 반환
                     mock_response = AIMessage(content="answer")
-                    mock_model.stream.return_value = [mock_response]
 
+                    async def mock_astream(*args, **kwargs):
+                        yield mock_response
+
+                    mock_model.astream = mock_astream
+                    mock_model.ainvoke.return_value = mock_response
                     mock_llm_inst.get_model.return_value = mock_model
                     mock_factory.return_value = mock_llm_inst
 
                     chain = get_rag_chain(mock_db)
 
-                    # generator 소진
-                    list(chain.stream({"question": "test", "k": 2}))
+                    # Async generator 소진
+                    async for _ in chain.astream({"question": "test", "k": 2}):
+                        pass
 
         # 로그 확인
         log_files = list((tmp_path / "trace").glob("*.jsonl"))

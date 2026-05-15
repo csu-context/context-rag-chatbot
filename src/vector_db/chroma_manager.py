@@ -8,6 +8,7 @@ import chromadb
 from chromadb.api.types import Documents, EmbeddingFunction, Embeddings
 from chromadb.config import Settings
 
+from src.common.config import settings
 from src.models.embedder import BGEEmbedder
 from src.utils.paths import VECTOR_DB_DIR, ensure_directories
 
@@ -25,8 +26,9 @@ class BGEChromaEmbeddingFunction(EmbeddingFunction):
     src.models.embedder의 BGEEmbedder를 사용하여 문서를 벡터화합니다.
     """
 
-    def __init__(self, model_name: str = "BAAI/bge-m3"):
-        self.embedder = BGEEmbedder(model_name=model_name)
+    def __init__(self, model_name: str | None = None):
+        # 중앙 설정(settings)의 임베딩 모델 사용
+        self.embedder = BGEEmbedder(model_name=model_name or settings.EMBEDDING_MODEL_NAME)
 
     def __call__(self, input: Documents) -> Embeddings:
         embeddings = self.embedder.encode(input)
@@ -71,18 +73,19 @@ class ChromaDBManager:
                 )
 
                 logger.info(
-                    f"✅ ChromaDB 로드 완료 (컬렉션: {self.collection_name}, 데이터 개수: {self.collection.count()})"
+                    f"ChromaDB 로드 완료. (컬렉션: {self.collection_name}, 데이터 개수: {self.collection.count()})"
                 )
                 return  # 성공 시 루프 탈출
 
             except Exception as e:
                 if attempt < max_retries - 1:
                     logger.warning(
-                        f"⚠️ ChromaDB 연결 실패. {retry_delay}초 후 재시도... ({attempt + 1}/{max_retries}) | 오류: {e}"
+                        f"ChromaDB 연결 실패. {retry_delay}초 후 재시도합니다. "
+                        f"({attempt + 1}/{max_retries}) | 오류: {e}"
                     )
                     time.sleep(retry_delay)
                 else:
-                    logger.error("❌ ChromaDB 연결에 최종 실패했습니다. DB 상태를 확인해주세요.")
+                    logger.error("ChromaDB 연결에 최종적으로 실패했습니다. DB 상태를 확인하시기 바랍니다.")
                     # 재시도 최종 실패 시 빈 컬렉션 객체 방지 처리가 필요할 수 있으나, 여기서는 에러를 발생시킵니다.
                     raise RuntimeError("ChromaDB initialization failed.") from e
 
