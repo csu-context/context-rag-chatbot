@@ -1,8 +1,6 @@
 import logging
-import os
 
-from dotenv import load_dotenv
-
+from src.common.config import settings
 from src.common.constants import MetadataFields
 from src.vector_db.bm25_manager import BM25Manager
 
@@ -11,10 +9,10 @@ logger = logging.getLogger(__name__)
 
 class EnsembleRetriever:
     def __init__(self, chroma_manager=None, bm25_manager=None):
-        load_dotenv()
-        self.rrf_k = int(os.getenv("RRF_K", 60))
-        self.weight_bm25 = float(os.getenv("HYBRID_WEIGHT_BM25", 0.5))
-        self.weight_vector = float(os.getenv("HYBRID_WEIGHT_VECTOR", 0.5))
+        # 중앙 설정(settings) 참조
+        self.rrf_k = settings.RRF_K
+        self.weight_bm25 = settings.HYBRID_WEIGHT_BM25
+        self.weight_vector = settings.HYBRID_WEIGHT_VECTOR
         self.chroma = chroma_manager
         self.bm25 = bm25_manager if bm25_manager else BM25Manager()
 

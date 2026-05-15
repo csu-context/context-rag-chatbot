@@ -1,4 +1,5 @@
 import os
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from dotenv import load_dotenv
@@ -12,12 +13,13 @@ from src.vector_db.chroma_manager import ChromaDBManager
 load_dotenv()
 
 
+@pytest.mark.asyncio
 @pytest.mark.skipif(
     os.getenv("CI") == "true"
     or (os.getenv("GOOGLE_API_KEY", "") in ["", "None"] and os.getenv("ANTHROPIC_API_KEY", "") in ["", "None"]),
     reason="CI 환경에서는 기 설정된 모델 접근 권한 문제로 스킵하거나 API 키가 없습니다.",
 )
-def test_full_rag_pipeline():
+async def test_full_rag_pipeline():
     """데이터 전처리부터 RAG 답변 생성까지의 전체 파이프라인 테스트"""
     # 1. 테스트 데이터 준비
     sample_markdown = """
@@ -54,13 +56,25 @@ def test_full_rag_pipeline():
     db_manager = ChromaDBManager(collection_name="test_e2e_collection")
     db_manager.upsert_documents(ids=flat_ids, documents=flat_texts, metadatas=flat_metadatas)
 
-    # 4. RAG 체인 호출 및 검증
+    # 4. RAG 체인 호출 및 검증 (Mock LLM)
     test_query = "복수전공의 정의가 뭐야?"
-    rag_chain = get_rag_chain(db_manager)
 
-    response = rag_chain.invoke({"question": test_query, "k": 1})
+    with patch("src.models.factory.LLMFactory.create_llm") as mock_factory:
+        mock_llm_inst = MagicMock()
+        mock_model = AsyncMock()
+        mock_model.model_name = "test-model"
+        mock_model.temperature = 0.1
+
+        mock_response = MagicMock()
+        mock_response.content = "복수전공은 주전공 외에 추가로 이수하는 전공을 의미합니다."
+        mock_model.ainvoke.return_value = mock_response
+        mock_llm_inst.get_model.return_value = mock_model
+        mock_factory.return_value = mock_llm_inst
+
+        rag_chain = get_rag_chain(db_manager)
+        response_dict = await rag_chain.ainvoke({"question": test_query, "k": 1})
+        response = response_dict["answer"]
 
     assert response is not None
     assert "복수전공" in response
-    # 출처 인용 포함 여부 확인 (chains.py에서 결합됨)
     assert "조선대학교_학칙_샘플.md" in response

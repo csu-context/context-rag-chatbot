@@ -58,7 +58,7 @@ async def run_rag_inference(test_data: list[dict[str, Any]]) -> tuple[Evaluation
     model_name = str(temp_llm.model_name)
 
     samples = []
-    logger.info(f"🚀 {len(test_data)}개 샘플 추론 시작 (모델: {model_name})")
+    logger.info(f"{len(test_data)}개 샘플 추론 시작 (모델: {model_name})")
 
     for i, row in enumerate(test_data):
         question = row["question"]
@@ -120,7 +120,7 @@ async def main():
     eval_model_type = os.getenv("EVAL_JUDGE_TYPE", "claude")
     eval_model_name = os.getenv("EVAL_JUDGE_MODEL", DEFAULT_EVAL_MODEL)
 
-    logger.info(f"⚖️ 평가 판사 설정 (Type: {eval_model_type}, Model: {eval_model_name})")
+    logger.info(f"평가 판사 설정 (Type: {eval_model_type}, Model: {eval_model_name})")
 
     # LLMFactory를 통해 평가 판사 인스턴스 생성
     eval_llm_inst = LLMFactory.create_llm(model_type=eval_model_type, model_name=eval_model_name, temperature=0)
@@ -139,7 +139,7 @@ async def main():
         ContextRecall(),
     ]
 
-    logger.info(f"📊 RAGAS 지표 계산 시작 (평가 모델: {eval_model_name})")
+    logger.info(f"RAGAS 지표 계산 시작 (평가 모델: {eval_model_name})")
 
     try:
         # 3. 평가 실행
@@ -194,9 +194,9 @@ async def main():
         details_path = eval_dir / f"eval_details_{timestamp}.csv"
         df.to_csv(details_path, index=False, encoding="utf-8-sig")
 
-        logger.info(f"✅ 완료! 요약: {summary_path}")
-        logger.info(f"📝 상세 내역 저장: {details_path}")
-        logger.info(f"📊 속도: {summary_data['avg_latency_sec']:.2f}s")
+        logger.info(f"평가 완료. 요약 저장: {summary_path}")
+        logger.info(f"상세 내역 저장: {details_path}")
+        logger.info(f"평균 응답 속도: {summary_data['avg_latency_sec']:.2f}s")
         for m, s in avg_scores.items():
             logger.info(f"   - {m}: {s:.4f}")
 

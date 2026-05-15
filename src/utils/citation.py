@@ -40,7 +40,7 @@ def format_citations(docs: list[Document]) -> str:
         return ""
 
     # 번호를 매겨서 반환 (본문의 [1], [2]와 매칭)
-    citation_text = "\n\n---\n**💡 답변의 근거가 된 문서 목록:**\n"
+    citation_text = "\n\n---\n**답변의 근거가 된 문서 목록:**\n"
     for i, s in enumerate(sources, 1):
         citation_text += f"- **[{i}]** {s}\n"
 
