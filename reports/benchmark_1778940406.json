@@ -1,0 +1,24 @@
+{
+  "file": "조선대학교_학칙.pdf",
+  "timestamp": 1778940406.9633126,
+  "parsers": {
+    "pymupdf": {
+      "total_pages": 57,
+      "parse_time": 0.05875134468078613,
+      "title": "N/A",
+      "engine": "pymupdf",
+      "korean_chars": 39661,
+      "text_length": 81846,
+      "table_count": 0
+    },
+    "docling": {
+      "total_pages": 57,
+      "parse_time": 108.52904534339905,
+      "title": "Docling parsed document",
+      "engine": "docling",
+      "korean_chars": 39867,
+      "text_length": 120600,
+      "table_count": 34
+    }
+  }
+}

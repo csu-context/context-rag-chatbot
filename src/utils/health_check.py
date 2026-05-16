@@ -29,16 +29,28 @@ def check_env():
     logger.info("[1/4] 환경 변수 및 설정 점검")
     load_dotenv()
 
-    required_keys = ["GOOGLE_API_KEY", "MODEL_TYPE", "EMBEDDING_MODEL_NAME"]
+    # 필수 키: 실제 동작에 필요한 API 키만 체크 (EMBEDDING_MODEL_NAME은 config 기본값으로 동작)
+    # MODEL_TYPE에 따라 필요한 API 키가 달라지므로 model_type 기반으로 동적 체크
+    model_type = os.getenv("MODEL_TYPE", "ollama").lower()
     all_pass = True
+
+    # model_type별 필수 API 키 매핑
+    required_by_model = {
+        "gemini": ["GOOGLE_API_KEY"],
+        "claude": ["ANTHROPIC_API_KEY"],
+        "ollama": [],  # 로컬 모델이므로 API 키 불필요
+    }
+    required_keys = required_by_model.get(model_type, [])
+
+    logger.info(f"  모델 타입: {model_type} | 체크 대상 키: {required_keys or '없음(로컬)'}")
 
     for key in required_keys:
         val = os.getenv(key)
-        if val:
-            display_val = f"{val[:8]}****" if "KEY" in key else val
+        if val and val != f"your_{key.lower()}_here":
+            display_val = f"{val[:8]}****"
             logger.info(f"  [PASS] {key}: {display_val}")
         else:
-            logger.error(f"  [FAIL] {key}: 누락됨!")
+            logger.error(f"  [FAIL] {key}: 누락됨 또는 기본값!")
             all_pass = False
 
     return all_pass
