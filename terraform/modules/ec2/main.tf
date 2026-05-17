@@ -14,7 +14,7 @@ resource "aws_security_group" "app_sg" {
     from_port   = 8501
     to_port     = 8501
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = ["0.0.0.0/0"] # 실제 운영 환경에서는 접속 허용 IP 대역 제한 권장
   }
 
   egress {
