@@ -2,21 +2,6 @@ from unittest.mock import MagicMock, patch
 
 from src.models.base import LLMResponse
 from src.models.factory import LLMFactory
-from src.models.llm_gemini import GeminiModel
-
-
-def test_factory_creation():
-    """팩토리가 Gemini 모델을 정상적으로 생성하는지 확인"""
-    from src.models.factory import settings
-
-    with (
-        patch.object(settings, "MODEL_TYPE", "gemini"),
-        patch.object(settings, "MODEL_NAME", "gemini-pro"),
-        patch.object(settings, "GOOGLE_API_KEY", "dummy-key"),
-    ):
-        llm = LLMFactory.create_llm()
-        assert isinstance(llm, GeminiModel)
-        assert llm.model_name == "gemini-pro"
 
 
 def test_llm_response_structure():
@@ -26,20 +11,31 @@ def test_llm_response_structure():
     assert response.usage["total_tokens"] == 10
 
 
-@patch("langchain_google_genai.ChatGoogleGenerativeAI.invoke")
-def test_gemini_model_invoke(mock_invoke):
-    """Gemini 모델 호출 시 LLMResponse로 변환되는지 확인 (Mock)"""
-    with patch.dict("os.environ", {"GOOGLE_API_KEY": "dummy-key"}):
-        # Mock 설정
-        mock_res = MagicMock()
-        mock_res.content = "가짜 답변"
-        mock_res.usage_metadata = {"total_token_count": 5}
-        mock_res.response_metadata = {"finish_reason": "stop"}
-        mock_invoke.return_value = mock_res
+def test_factory_anthropic_model():
+    """팩토리가 AnthropicModel 인스턴스를 올바르게 생성하는지 확인"""
+    with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"}):
+        # ChatAnthropic의 인스턴스 생성을 모킹합니다.
+        with patch("src.models.llm_anthropic.ChatAnthropic") as mock_chat:
+            mock_instance = MagicMock()
+            mock_chat.return_value = mock_instance
 
-        model = GeminiModel(model_name="test", api_key="dummy-key")
-        result = model.invoke("안녕")
+            factory = LLMFactory()
+            model = factory.get_model("anthropic", model_name="claude-3-opus")
 
-        assert isinstance(result, LLMResponse)
-        assert result.content == "가짜 답변"
-        assert result.usage["total_tokens"] == 5
+            assert model.model_type == "anthropic"
+            assert model.model_name == "claude-3-opus"
+
+
+def test_factory_ollama_model():
+    """팩토리가 OllamaModel 인스턴스를 올바르게 생성하는지 확인"""
+    with patch.dict("os.environ", {"OLLAMA_BASE_URL": "http://localhost:11434"}):
+        # ChatOllama의 인스턴스 생성을 모킹합니다.
+        with patch("src.models.llm_ollama.ChatOllama") as mock_chat:
+            mock_instance = MagicMock()
+            mock_chat.return_value = mock_instance
+
+            factory = LLMFactory()
+            model = factory.get_model("ollama", model_name="gemma2")
+
+            assert model.model_type == "ollama"
+            assert model.model_name == "gemma2"

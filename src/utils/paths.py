@@ -30,6 +30,13 @@ BM25_CACHE_FILE = CACHE_DIR / "bm25_index.pkl"
 CROSS_ENCODER_CACHE_DIR = CACHE_DIR / "cross-encoder"
 
 
+# 4. 설정 및 사전 파일 경로
+SYNONYMS_FILE = (BASE_DIR / "src" / "common" / "synonyms.json").resolve()
+CACHE_DIR = (BASE_DIR / ".cache").resolve()
+BM25_CACHE_FILE = CACHE_DIR / "bm25_index.pkl"
+CROSS_ENCODER_CACHE_DIR = CACHE_DIR / "cross-encoder"
+
+
 # 3. 디렉토리 목록 (자동 생성용)
 REQUIRED_DIRECTORIES = [
     RAW_DATA_DIR,
