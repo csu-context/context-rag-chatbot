@@ -41,7 +41,7 @@ unstructured[pdf]==0.22.27
 pytesseract==0.3.13
 pandas==3.0.2
 tabulate==0.10.0
-docling==0.10.0
+docling>=2.0.0
 
 # UI 및 유틸리티
 streamlit==1.57.0
