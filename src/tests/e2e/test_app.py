@@ -1,6 +1,8 @@
 import asyncio
 import time
+
 import pytest
+
 from src.core.chains import get_rag_chain
 from src.core.retriever import EnsembleRetriever
 from src.vector_db.bm25_manager import BM25Manager
@@ -39,6 +41,7 @@ TEST_CASES = [
     },
 ]
 
+
 @pytest.fixture(scope="module")
 def rag_setup():
     """RAG 파이프라인 전체를 초기화하는 Pytest Fixture"""
@@ -47,10 +50,11 @@ def rag_setup():
     bm25 = BM25Manager()
     retriever = EnsembleRetriever(chroma_manager=db, bm25_manager=bm25)
     rag_chain = get_rag_chain(retriever)
-    
+
     print(f"  - ChromaDB: {db.get_count()} 청크")
     print(f"  - BM25: {len(bm25.corpus_data)} docs")
     return rag_chain
+
 
 @pytest.mark.parametrize("tc", TEST_CASES, ids=[tc["id"] for tc in TEST_CASES])
 def test_rag_chain_e2e(tc, rag_setup):
@@ -64,7 +68,7 @@ def test_rag_chain_e2e(tc, rag_setup):
     start = time.time()
     resp = asyncio.run(rag_chain.ainvoke({"question": tc["query"], "k": 10, "final_k": 3}))
     elapsed = time.time() - start
-    
+
     answer = resp["answer"]
     sources = resp["source_documents"]
 
