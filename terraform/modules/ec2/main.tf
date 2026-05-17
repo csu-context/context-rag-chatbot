@@ -1,25 +1,3 @@
-variable "vpc_id" {
-  description = "VPC ID"
-  type        = string
-}
-
-variable "subnet_id" {
-  description = "Subnet ID"
-  type        = string
-}
-
-variable "instance_type" {
-  description = "EC2 instance type"
-  type        = string
-  default     = "g4dn.xlarge"
-}
-
-variable "project_name" {
-  description = "Project name"
-  type        = string
-  default     = "rag-chatbot"
-}
-
 resource "aws_security_group" "app_sg" {
   name        = "${var.project_name}-app-sg"
   description = "Allow inbound traffic for RAG Chatbot"
@@ -121,8 +99,4 @@ resource "aws_instance" "app" {
   tags = {
     Name = "${var.project_name}-app-instance"
   }
-}
-
-output "instance_public_ip" {
-  value = aws_instance.app.public_ip
 }
