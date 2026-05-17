@@ -88,10 +88,7 @@ class DoclingPDFParser:
             try:
                 from docling.document_converter import DocumentConverter
             except ImportError as err:
-                raise ImportError(
-                    "docling 라이브러리가 필요합니다.\n"
-                    "설치: pip install docling"
-                ) from err
+                raise ImportError("docling 라이브러리가 필요합니다.\n설치: pip install docling") from err
 
             logger.info("Docling DocumentConverter 초기화 중... (AI 모델 로드로 잠시 소요될 수 있음)")
             self._converter = DocumentConverter()
@@ -124,10 +121,7 @@ class DoclingPDFParser:
         # 2. 표 구조를 개별 메타데이터로 추출
         tables_metadata = self._extract_tables_metadata(doc)
 
-        logger.info(
-            f"Docling 파싱 완료: {file_path.name} "
-            f"(표 {len(tables_metadata)}개 감지)"
-        )
+        logger.info(f"Docling 파싱 완료: {file_path.name} (표 {len(tables_metadata)}개 감지)")
 
         return {
             "markdown": markdown_text,
@@ -148,9 +142,7 @@ class DoclingPDFParser:
                     "row_count": len(table.data.grid) if hasattr(table, "data") and hasattr(table.data, "grid") else 0,
                     "col_count": (
                         len(table.data.grid[0])
-                        if hasattr(table, "data")
-                        and hasattr(table.data, "grid")
-                        and table.data.grid
+                        if hasattr(table, "data") and hasattr(table.data, "grid") and table.data.grid
                         else 0
                     ),
                 }

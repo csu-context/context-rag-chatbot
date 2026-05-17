@@ -2,29 +2,31 @@
 Streamlit 앱 구동 테스트 스크립트
 RAG 파이프라인 전 과정 (Retrieval -> Reranking -> Generation) 검증
 """
+
 import asyncio
 import sys
 import time
+
 from dotenv import load_dotenv
 
 # Windows cp949 환경에서 이모지 등 유니코드 출력 처리
-if sys.stdout.encoding and sys.stdout.encoding.lower() != 'utf-8':
-    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 load_dotenv()
 
-from src.core.chains import get_rag_chain
-from src.core.retriever import EnsembleRetriever
-from src.vector_db.chroma_manager import ChromaDBManager
-from src.vector_db.bm25_manager import BM25Manager
+from src.core.chains import get_rag_chain  # noqa: E402
+from src.core.retriever import EnsembleRetriever  # noqa: E402
+from src.vector_db.bm25_manager import BM25Manager  # noqa: E402
+from src.vector_db.chroma_manager import ChromaDBManager  # noqa: E402
 
 # ── 초기화 ──────────────────────────────────────────────────
 print("=" * 60)
 print("  RAG 앱 구동 테스트")
 print("=" * 60)
 
-db      = ChromaDBManager(collection_name="rag_collection")
-bm25    = BM25Manager()
+db = ChromaDBManager(collection_name="rag_collection")
+bm25 = BM25Manager()
 retriever = EnsembleRetriever(chroma_manager=db, bm25_manager=bm25)
 rag_chain = get_rag_chain(retriever)
 
@@ -81,11 +83,9 @@ for tc in TEST_CASES:
 
     start = time.time()
     try:
-        resp = asyncio.run(
-            rag_chain.ainvoke({"question": tc["query"], "k": 10, "final_k": 3})
-        )
+        resp = asyncio.run(rag_chain.ainvoke({"question": tc["query"], "k": 10, "final_k": 3}))
         elapsed = time.time() - start
-        answer  = resp["answer"]
+        answer = resp["answer"]
         sources = resp["source_documents"]
 
         # 기대 키워드 포함 여부 확인
@@ -95,13 +95,15 @@ for tc in TEST_CASES:
         print(f"  A: {answer[:120].replace(chr(10), ' ')}...")
         print(f"  출처 문서: {len(sources)}개 | 응답 시간: {elapsed:.2f}초 | 상태: [{status}]")
 
-        results.append({
-            "id": tc["id"],
-            "status": status,
-            "elapsed": elapsed,
-            "answer_len": len(answer),
-            "source_count": len(sources),
-        })
+        results.append(
+            {
+                "id": tc["id"],
+                "status": status,
+                "elapsed": elapsed,
+                "answer_len": len(answer),
+                "source_count": len(sources),
+            }
+        )
 
     except Exception as e:
         elapsed = time.time() - start
@@ -115,7 +117,7 @@ print("=" * 60)
 print("  테스트 결과 요약")
 print("=" * 60)
 print(f"  {'ID':<8} {'상태':<6} {'응답시간':>8}  {'답변길이':>8}  {'참조문서':>6}")
-print(f"  {'-'*8} {'-'*6} {'-'*8}  {'-'*8}  {'-'*6}")
+print(f"  {'-' * 8} {'-' * 6} {'-' * 8}  {'-' * 8}  {'-' * 6}")
 for r in results:
     status = r.get("status", "FAIL")
     elapsed = r.get("elapsed", 0)
@@ -125,7 +127,7 @@ for r in results:
 
 pass_count = sum(1 for r in results if r["status"] in ("PASS", "WARN"))
 fail_count = sum(1 for r in results if r["status"] == "FAIL")
-avg_time   = sum(r.get("elapsed", 0) for r in results) / len(results)
+avg_time = sum(r.get("elapsed", 0) for r in results) / len(results)
 
 print()
 print(f"  통과: {pass_count}/{len(results)} | 실패: {fail_count} | 평균 응답시간: {avg_time:.2f}초")

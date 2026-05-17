@@ -2,6 +2,7 @@
 요구사항 충족 여부 자동 검증 스크립트
 이슈 문서의 모든 조항을 코드로 검증합니다.
 """
+
 import json
 import sys
 from pathlib import Path
@@ -59,7 +60,7 @@ for f in benchmark_jsons:
 check(
     "벤치마크 JSON 엔진 3종 이상",
     len(engines_in_json) >= 3,
-    f"현재 {len(engines_in_json)}종: {sorted(engines_in_json)} (필요: 3종)"
+    f"현재 {len(engines_in_json)}종: {sorted(engines_in_json)} (필요: 3종)",
 )
 
 # 코드에서 3종 파서 클래스 존재 여부
@@ -96,7 +97,7 @@ claude_results_in_json = any(
 check(
     "벤치마크 JSON: Claude 평가 결과 포함",
     claude_results_in_json,
-    "JSON 결과에 claude 필드 없음 (unstructured 미실행으로 미완성)" if not claude_results_in_json else "포함됨"
+    "JSON 결과에 claude 필드 없음 (unstructured 미실행으로 미완성)" if not claude_results_in_json else "포함됨",
 )
 
 # ──────────────────────────────────────────────────────
@@ -123,7 +124,7 @@ has_comparison = "comparison" in latest if benchmark_jsons else False
 check(
     "CER/비교 메트릭 존재",
     has_comparison,
-    "comparison 필드 없음" if not has_comparison else str(latest.get("comparison"))
+    "comparison 필드 없음" if not has_comparison else str(latest.get("comparison")),
 )
 
 # ──────────────────────────────────────────────────────
@@ -139,9 +140,12 @@ check("캐시 로직 (pickle)", "pickle" in pipeline_src)
 # ChromaDB 실제 데이터 확인
 try:
     from dotenv import load_dotenv
+
     load_dotenv()
-    from src.vector_db.chroma_manager import ChromaDBManager
     import logging
+
+    from src.vector_db.chroma_manager import ChromaDBManager
+
     logging.disable(logging.CRITICAL)
     db = ChromaDBManager(collection_name="rag_collection")
     count = db.get_count()
@@ -152,7 +156,11 @@ except Exception as e:
 
 # BM25 캐시
 bm25_cache = ROOT / ".cache" / "bm25_index.pkl"
-check("BM25 인덱스 캐시 존재", bm25_cache.exists(), f"{bm25_cache.stat().st_size // 1024} KB" if bm25_cache.exists() else "없음")
+check(
+    "BM25 인덱스 캐시 존재",
+    bm25_cache.exists(),
+    f"{bm25_cache.stat().st_size // 1024} KB" if bm25_cache.exists() else "없음",
+)
 
 # processed JSON
 processed_files = [f for f in (ROOT / "data" / "processed").glob("*.json") if f.name != "manifest.json"]

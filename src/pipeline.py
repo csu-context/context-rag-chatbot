@@ -70,10 +70,7 @@ class DoclingPDFParserStrategy(ParserStrategy):
             start_time = time.time()
             parsed = self.pdf_parser.parse(file_path)  # {markdown, tables, page_count, table_count}
             elapsed = time.time() - start_time
-            logger.info(
-                f"파싱 완료: {file_path.name} "
-                f"(소요 시간: {elapsed:.2f}초, 표 {parsed['table_count']}개 감지)"
-            )
+            logger.info(f"파싱 완료: {file_path.name} (소요 시간: {elapsed:.2f}초, 표 {parsed['table_count']}개 감지)")
 
             # 3. Docling 결과를 pipeline 호환 포맷으로 매핑
             #    is_combined=True 플래그로 create_parent_child_chunks 경로를 타도록 지정

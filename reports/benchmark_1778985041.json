@@ -1,0 +1,73 @@
+{
+  "file": "조선대학교_학칙.pdf",
+  "timestamp": 1778985041.1169734,
+  "parsers": {
+    "pymupdf": {
+      "total_pages": 57,
+      "parse_time": 0.07590365409851074,
+      "title": "N/A",
+      "engine": "pymupdf",
+      "korean_chars": 39661,
+      "text_length": 81846,
+      "table_count": 0,
+      "claude": {
+        "korean_integrity": 4,
+        "structure": 3,
+        "tables": 1,
+        "readability": 3,
+        "overall": 3,
+        "notes": "한글 문자는 대체로 정상 파싱되었으나 구조적 문제가 존재합니다. 강점: 한글 글자 깨짐이 거의 없음(4점). 약점: (1) 구조 보존 미흡 - 들여쓰기, 번호 매김 형식이 일관성 없음(예: '제1장', '제1조' 표기 불일치), 계층 구조가 명확하지 않음(3점); (2) 표 추출 완전 실패 - 문서에 표가 있을 가능성 높으나 0개로 추출됨(1점); (3) 가독성 저하 - 개정 내역 표기(<2025.12.18.> 등)가 본문에 혼재되어 있고, 문단 구분이 불명확함. 마지막 문장이 절단되어 있음(3점). 개선 필요: 메타데이터와 본문 분리, 개정 이력 별도 표시, 계층 구조 명확화, 표 인식 알고리즘 개선."
+      }
+    },
+    "unstructured": {
+      "total_pages": 57,
+      "parse_time": 19.71018099784851,
+      "title": "N/A",
+      "engine": "unstructured(pdfminer-fast)",
+      "korean_chars": 39661,
+      "text_length": 100251,
+      "table_count": 0,
+      "claude": {
+        "korean_integrity": 4,
+        "structure": 2,
+        "tables": 1,
+        "readability": 2,
+        "overall": 2,
+        "notes": "한글 문자는 대부분 무결하나 심각한 구조적 손상이 있음. 공백 처리 불일치로 '학칙 학사․학사팀'처럼 단어가 비정상적으로 분리되고, 개정일자와 본문이 연결되어 있으며, 문장 부호가 부적절하게 배치됨(예: '목적 이  학칙은'). 제목과 조항 번호의 계층 구조가 명확하지 않고, 괄호와 화살표 표기가 일관성 없음. 개정 이력 정보가 본문에 산재되어 있음. 표 추출 기능 부재. 전반적으로 OCR 후처리가 부족하며 문서의 논리적 구조가 훼손된 상태."
+      }
+    },
+    "docling": {
+      "total_pages": 57,
+      "parse_time": 122.53343224525452,
+      "title": "Docling parsed document",
+      "engine": "docling",
+      "korean_chars": 39867,
+      "text_length": 120600,
+      "table_count": 34,
+      "claude": {
+        "korean_integrity": 4,
+        "structure": 3,
+        "tables": 2,
+        "readability": 3,
+        "overall": 3,
+        "notes": "한글 문자는 대부분 무결하나 일부 특수문자 변환 오류 발생(&lt; &gt; 등). 제목과 항목 구조는 인식되었으나 장(章) 표기가 누락되어 계층 구조 완성도 부족. 표 추출에서 헤더-본문 구분 오류 있고 마지막 항목이 잘려있음. 개정일자 표기 형식 불일치(&lt;2010. 12. 29.&gt; vs <2019. 11. 25.>) 있어 통일성 필요. 전반적으로 OCR 품질은 양호하나 표 구조 인식과 완전성에서 개선 필요."
+      }
+    }
+  },
+  "comparison": {
+    "reference_engine": "pymupdf",
+    "pymupdf_vs_docling": {
+      "cer": 20.54,
+      "table_preservation_docling": 100.0,
+      "table_count_pymupdf": 0,
+      "table_count_docling": 34,
+      "korean_chars_pymupdf": 39661,
+      "korean_chars_docling": 39867
+    },
+    "pymupdf_vs_unstructured": {
+      "cer": 27.67,
+      "table_count_unstructured": 0,
+      "korean_chars_unstructured": 39661
+    }
+  }
+}
