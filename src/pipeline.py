@@ -1,4 +1,3 @@
-import gc
 import json
 import logging
 import pickle
@@ -14,7 +13,7 @@ from src.common.config import settings
 from src.common.constants import MetadataFields
 from src.data.parser import ManualParser
 from src.processing.chunking import HierarchicalChunker, create_parent_child_chunks
-from src.processing.pdf_parser import DoclingPDFParser, EnhancedPDFParser
+from src.processing.pdf_parser import DoclingPDFParser
 from src.utils.file_utils import generate_file_hash
 from src.utils.logger import TracingLogger
 from src.utils.paths import CACHE_DIR, PROCESSED_DATA_DIR, RAW_DATA_DIR, ensure_directories
@@ -102,104 +101,6 @@ class DoclingPDFParserStrategy(ParserStrategy):
             # PDF가 아닌 경우 ManualParser로 Fallback
             relative_path = file_path.relative_to(RAW_DATA_DIR)
             parser = self.manual_parser(str(relative_path), parser_type="docling")
-            return parser.parse()
-
-
-class EnhancedPDFParserStrategy(ParserStrategy):
-    """Unstructured 기반 고도화된 PDF 파서를 사용하는 전략"""
-
-    def __init__(self):
-        self.pdf_parser = EnhancedPDFParser()
-        self.manual_parser = ManualParser  # MD 파일 등을 위해 필요
-
-    def parse(self, file_path: Path) -> list[dict[str, Any]]:
-        if file_path.suffix.lower() == ".pdf":
-            # 1. 캐시 파일 경로 설정 (공통 해시 유틸리티 + 파서 타입 명시)
-            source_id = generate_file_hash(file_path, parser_type="enhanced")
-            cache_file = CACHE_DIR / f"{source_id}_parsed.pkl"
-
-            # 2. 캐시가 존재하면 무거운 파싱을 생략하고 바로 로드 (시간 단축)
-            if cache_file.exists():
-                logger.info(f"캐시된 파싱 결과를 로드합니다: {file_path.name}")
-                with open(cache_file, "rb") as f:
-                    return pickle.load(f)
-
-            logger.info(f"EnhancedPDFParser를 사용하여 PDF 파싱: {file_path.name}")
-            start_time = time.time()
-            documents = self.pdf_parser.parse(file_path)
-            elapsed = time.time() - start_time
-            logger.info(f"파싱 완료: {file_path.name} (소요 시간: {elapsed:.2f}초)")
-
-            # unstructured의 반환값을 페이지 단위로 그룹화하여 마크다운 텍스트로 결합 (페이지 정보 보존)
-            results = []
-            current_page = 1
-            current_content = []
-            last_title = ""
-
-            for doc in documents:
-                pg = doc.metadata.get(MetadataFields.PG_NUM, 1)
-                cat = doc.metadata.get(MetadataFields.CATEGORY, "")
-                content = doc.page_content.strip()
-                if not content:
-                    continue
-
-                if pg != current_page and current_content:
-                    results.append(
-                        {
-                            "is_combined": True,
-                            "content": "\n\n".join(current_content),
-                            "metadata": {
-                                MetadataFields.SOURCE_ID: source_id,
-                                MetadataFields.SRC_NAME: file_path.name,
-                                MetadataFields.PG_NUM: current_page,
-                                MetadataFields.DOC_TYPE: "pdf",
-                                MetadataFields.CATEGORY: file_path.parent.name,
-                            },
-                        }
-                    )
-                    current_content = []
-                    # 다음 페이지에도 직전 타이틀(Context)을 상속시켜 계층 구조가 유지되도록 함
-                    if last_title:
-                        current_content.append(f"\n# {last_title}\n")
-
-                if cat == "Title":
-                    current_content.append(f"\n# {content}\n")
-                    last_title = content
-                elif cat == "Table":
-                    current_content.append(f"\n{content}\n")
-                else:
-                    current_content.append(content)
-
-                current_page = pg
-
-            if current_content:
-                results.append(
-                    {
-                        "is_combined": True,
-                        "content": "\n\n".join(current_content),
-                        "metadata": {
-                            MetadataFields.SOURCE_ID: source_id,
-                            MetadataFields.SRC_NAME: file_path.name,
-                            MetadataFields.PG_NUM: current_page,
-                            MetadataFields.DOC_TYPE: "pdf",
-                            MetadataFields.CATEGORY: file_path.parent.name,
-                        },
-                    }
-                )
-
-            # 리소스 해제 (Memory Leak 방지)
-            del documents
-            gc.collect()
-
-            # 4. 다음 실행을 위해 파싱 결과 캐시 저장
-            with open(cache_file, "wb") as f:
-                pickle.dump(results, f)
-
-            return results
-        else:
-            # PDF가 아닌 경우 ManualParser로 Fallback (enhanced 파이프라인에서 돌아감을 명시)
-            relative_path = file_path.relative_to(RAW_DATA_DIR)
-            parser = self.manual_parser(str(relative_path), parser_type="enhanced")
             return parser.parse()
 
 
@@ -418,15 +319,6 @@ class PipelineOrchestrator:
                     "'manual'로 강제 전환합니다.\n"
                     "설치: pip install docling"
                 )
-                return ManualParserStrategy()
-
-        if self.parser_type == "enhanced":
-            try:
-                import unstructured  # noqa: F401
-
-                return EnhancedPDFParserStrategy()
-            except ImportError:
-                logger.error("'enhanced' 파서용 'unstructured' 라이브러리가 없습니다. 'manual'로 강제 전환합니다.")
                 return ManualParserStrategy()
 
         return ManualParserStrategy()
