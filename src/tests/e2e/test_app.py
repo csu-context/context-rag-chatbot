@@ -1,4 +1,5 @@
 import asyncio
+import os
 import time
 
 import pytest
@@ -57,6 +58,10 @@ def rag_setup():
 
 
 @pytest.mark.parametrize("tc", TEST_CASES, ids=[tc["id"] for tc in TEST_CASES])
+@pytest.mark.skipif(
+    os.getenv("CI") == "true",
+    reason="CI 환경에서는 실제 LLM(Ollama/API) 서버가 구동되지 않으므로 E2E 테스트를 스킵합니다.",
+)
 def test_rag_chain_e2e(tc, rag_setup):
     """
     E2E 테스트: 쿼리에 대해 RAG 체인이 정상적으로 답변과 출처를 반환하는지,
