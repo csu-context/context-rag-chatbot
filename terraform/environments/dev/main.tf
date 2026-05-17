@@ -13,4 +13,5 @@ module "ec2" {
   subnet_id     = module.vpc.public_subnet_id
   instance_type = var.instance_type
   project_name  = var.project_name
+  key_name      = var.key_name
 }

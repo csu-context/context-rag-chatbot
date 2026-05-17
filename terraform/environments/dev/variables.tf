@@ -15,3 +15,9 @@ variable "instance_type" {
   type        = string
   default     = "g4dn.xlarge"
 }
+
+variable "key_name" {
+  description = "AWS Key Pair name"
+  type        = string
+  default     = "rag-chatbot-key"
+}

@@ -234,3 +234,9 @@ chroma/
 
 # Deployment Keys
 .deploy_keys/
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+.terraform.lock.hcl
