@@ -89,24 +89,38 @@ class EnsembleRetriever:
 
     def compare_retrievers(self, query: str, n: int = 3) -> None:
         """BM25 단독 / Vector 단독 / 하이브리드 결과를 비교 출력."""
+        # 질의 출력 구문
+        print(f"\n{'=' * 60}")
+        print(f"질의: '{query}'")
+        print(f"{'=' * 60}")
         logger.info(f"\n{'=' * 60}")
         logger.info(f"질의: '{query}'")
         logger.info(f"{'=' * 60}")
 
+        # BM25 검색 수행 및 결과 출력
         bm25_results = self._get_bm25_results(query, n)
+        print(f"\n[BM25 단독] {len(bm25_results)}개")
         logger.info(f"\n[BM25 단독] {len(bm25_results)}개")
         for r in bm25_results:
             score = r.get("_bm25_score", "-")
+            print(f"  - {r.get('content', '')[:50]}  (score: {score})")
             logger.info(f"  - {r.get('content', '')[:50]}  (score: {score})")
 
+        # Vector 검색 수행 및 결과 출력
         vector_results = self._get_vector_results(query, n)
+        print(f"\n[Vector 단독] {len(vector_results)}개")
         logger.info(f"\n[Vector 단독] {len(vector_results)}개")
         for r in vector_results:
+            print(f"  - {r.get('content', '')[:50]}")
             logger.info(f"  - {r.get('content', '')[:50]}")
 
+        # 하이브리드 RRF 검색 수행 및 결과 출력
         hybrid_results = self.get_relevant_documents(query, n)
+        print(f"\n[하이브리드 RRF] {len(hybrid_results)}개")
         logger.info(f"\n[하이브리드 RRF] {len(hybrid_results)}개")
         for r in hybrid_results:
+            print(f"  - {r.get('content', '')[:50]}  (rrf: {r.get('_rrf_score', '-')})")
             logger.info(f"  - {r.get('content', '')[:50]}  (rrf: {r.get('_rrf_score', '-')})")
 
+        print(f"{'=' * 60}\n")
         logger.info(f"{'=' * 60}\n")

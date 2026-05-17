@@ -7,8 +7,8 @@ from src.models.base import BaseLLM
 
 
 class AnthropicModel(BaseLLM):
-    """
-    Anthropic Claude 모델을 프로젝트 표준 인터페이스에 맞춰 구현한 클래스입니다.
+    """Anthropic Claude 모델을 프로젝트 표준 인터페이스에 맞춰 구현한 클래스입니다.
+
     BaseLLM 추상 클래스를 상속받아 일관된 모델 호출 인터페이스를 제공합니다.
     """
 
@@ -17,7 +17,8 @@ class AnthropicModel(BaseLLM):
         super().__init__(model_name=model_name)
         self._model_name = model_name
 
-        api_key = os.getenv("ANTHROPIC_API_KEY")
+        # 직접 전달받은 api_key가 없다면 환경 변수에서 가져옵니다.
+        api_key = kwargs.pop("api_key", os.getenv("ANTHROPIC_API_KEY"))
         if not api_key:
             raise ValueError("환경 변수 'ANTHROPIC_API_KEY'가 설정되지 않았습니다.")
 

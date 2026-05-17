@@ -5,10 +5,10 @@ from pathlib import Path
 # 로깅 설정
 logger = logging.getLogger(__name__)
 
-# 1. BASE_DIR 정의: src/utils/paths.py 기준으로 프로젝트 루트를 가리킴
+# 1. BASE_DIR 정의: src/utils/paths.py 기준으로 프로젝트 루트를 가리킵니다.
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
-# [DevOps] 프로젝트 루트를 sys.path에 추가하여 어디서든 src 패키지 임포트 가능하게 설정
+# [DevOps] 프로젝트 루트를 sys.path에 추가하여 어디서든 src 패키지 임포트 가능하게 설정합니다.
 if str(BASE_DIR) not in sys.path:
     sys.path.append(str(BASE_DIR))
 
@@ -23,21 +23,13 @@ MODELS_DIR = (BASE_DIR / "models").resolve()
 LOGS_DIR = (BASE_DIR / "logs").resolve()
 EVAL_LOGS_DIR = (LOGS_DIR / "eval").resolve()
 
-# 4. 설정 및 사전 파일 경로
+# 3. 설정 및 사전 파일 경로
 SYNONYMS_FILE = (BASE_DIR / "src" / "common" / "synonyms.json").resolve()
 CACHE_DIR = (BASE_DIR / ".cache").resolve()
 BM25_CACHE_FILE = CACHE_DIR / "bm25_index.pkl"
 CROSS_ENCODER_CACHE_DIR = CACHE_DIR / "cross-encoder"
 
-
-# 4. 설정 및 사전 파일 경로
-SYNONYMS_FILE = (BASE_DIR / "src" / "common" / "synonyms.json").resolve()
-CACHE_DIR = (BASE_DIR / ".cache").resolve()
-BM25_CACHE_FILE = CACHE_DIR / "bm25_index.pkl"
-CROSS_ENCODER_CACHE_DIR = CACHE_DIR / "cross-encoder"
-
-
-# 3. 디렉토리 목록 (자동 생성용)
+# 4. 디렉토리 목록 (자동 생성용)
 REQUIRED_DIRECTORIES = [
     RAW_DATA_DIR,
     PROCESSED_DATA_DIR,
@@ -48,10 +40,10 @@ REQUIRED_DIRECTORIES = [
 
 
 def ensure_directories():
-    """
-    프로젝트 실행 시 필요한 모든 디렉토리가 없을 경우 자동으로 생성함.
+    """프로젝트 실행 시 필요한 모든 디렉토리가 없을 경우 자동으로 생성합니다.
+
     parents=True: 부모 디렉토리가 없으면 함께 생성
-    exist_ok=True: 이미 디렉토리가 존재해도 에러를 발생시키지 않음
+    exist_ok=True: 이미 디렉토리가 존재해도 에러를 발생시키지 않습니다.
     """
     for directory in REQUIRED_DIRECTORIES:
         if not directory.exists():

@@ -1,4 +1,4 @@
-
+import time
 import streamlit as st
 
 # --- 1. 페이지 설정 (가장 상단에 위치) ---
@@ -20,7 +20,7 @@ with st.sidebar:
     st.subheader("모델 설정")
     selected_model = st.selectbox(
         "사용할 LLM 모델 선택",
-        ["gpt-3.5-turbo", "gpt-4o", "llama-3-70b"],
+        ["claude-3-5-sonnet-20240620", "gemma2"],
         index=0
     )
 
@@ -47,9 +47,6 @@ with st.sidebar:
         # 추후 여기에 전처리 파이프라인 연동 로직 추가 예정
         if st.button("문서 DB화 시작"):
             with st.spinner("문서를 분석하고 DB에 저장 중입니다..."):
-                # 예시 로직
-                import time
-
                 time.sleep(2)
                 st.success("문서 DB화 완료!")
 
@@ -86,9 +83,6 @@ if prompt := st.chat_input("궁금한 점을 입력해 주세요."):
     # 5-3. 챗봇의 답변을 생성하는 로직 (추후 백엔드 엔진 연동)
     with st.chat_message("assistant"):
         with st.spinner("생각 중..."):
-            # 예시 답변 (추후 RAG 엔진 답변으로 대체)
-            import time
-
             time.sleep(1)  # RAG 연동 전 가짜 대기 시간
 
             # 답변 예시

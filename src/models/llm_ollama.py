@@ -1,3 +1,4 @@
+import logging
 import os
 from typing import Any
 
@@ -5,10 +6,12 @@ from langchain_ollama import ChatOllama
 
 from src.models.base import BaseLLM
 
+logger = logging.getLogger(__name__)
+
 
 class OllamaModel(BaseLLM):
-    """
-    Ollama를 통해 로컬 환경에서 구동되는 sLLM 모델을 제어하는 클래스입니다.
+    """Ollama를 통해 로컬 환경에서 구동되는 sLLM 모델을 제어하는 클래스입니다.
+
     BaseLLM 인터페이스를 상속받아 프로젝트 내부의 일관된 규격을 유지합니다.
     """
 
@@ -17,25 +20,36 @@ class OllamaModel(BaseLLM):
         super().__init__(model_name=model_name)
         self._model_name = model_name
 
-        # Ollama는 API 키가 아니라 접속할 로컬 호스트 주소(URL)가 필요합니다.
-        base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-        if not base_url:
+        # 환경 변수 또는 직접 전달된 URL 사용
+        self.base_url = kwargs.pop("base_url", os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"))
+        if not self.base_url:
             raise ValueError("환경 변수 'OLLAMA_BASE_URL' 설정이 올바르지 않습니다.")
+
+        temperature = kwargs.pop("temperature", 0.1)
 
         self.llm = ChatOllama(
             model=model_name,
-            base_url=base_url,
+            base_url=self.base_url,
+            temperature=temperature,
             **kwargs
         )
 
     def invoke(self, prompt: str, **kwargs: Any) -> str:
         """동기 방식으로 Ollama 모델에 입력을 전달하고 생성된 텍스트를 반환합니다."""
-        return self.llm.invoke(prompt, **kwargs).content
+        try:
+            return self.llm.invoke(prompt, **kwargs).content
+        except Exception as e:
+            logger.error(f"Ollama({self.model_name}) 호출 중 오류 발생: {e}")
+            raise e
 
     async def ainvoke(self, prompt: str, **kwargs: Any) -> str:
         """비동기 방식으로 Ollama 모델에 입력을 전달하고 생성된 텍스트를 반환합니다."""
-        response = await self.llm.ainvoke(prompt, **kwargs)
-        return response.content
+        try:
+            response = await self.llm.ainvoke(prompt, **kwargs)
+            return response.content
+        except Exception as e:
+            logger.error(f"Ollama({self.model_name}) 비동기 호출 중 오류 발생: {e}")
+            raise e
 
     @property
     def model_name(self) -> str:

@@ -261,23 +261,26 @@ if __name__ == "__main__":
 
     from src.utils.logger import setup_global_logging
 
-    setup_global_logging()
+    if __name__ == "__main__":
+        # 단독 실행 시 테스트 로직
+        setup_global_logging()
 
-    supported_files = []
-    for ext in [".pdf", ".md", ".markdown"]:
-        supported_files.extend(list(RAW_DATA_DIR.glob(f"*{ext}")))
+        # data/raw 디렉토리에서 테스트할 첫 번째 파일 자동 검색
+        supported_files = []
+        for ext in [".pdf", ".md", ".markdown"]:
+            supported_files.extend(list(RAW_DATA_DIR.glob(f"*{ext}")))
 
-    if supported_files:
-        test_file = supported_files[0].name
-        logger.info(f"테스트 파일 탐지됨: {test_file}")
-        try:
-            parser = ManualParser(test_file)
-            parsed_data = parser.parse()
-            logger.info(f"파싱 성공: {len(parsed_data)} 청크 추출됨")
+        if supported_files:
+            test_file = supported_files[0].name
+            logger.info(f"테스트 파일이 탐지되었습니다.: {test_file}")
+            try:
+                parser = ManualParser(test_file)
+                parsed_data = parser.parse()
+                logger.info(f"파싱 성공: {len(parsed_data)} 청크가 추출 되었습니다.")
 
-            if parsed_data:
-                logger.info(f"[첫 번째 청크 샘플]\n{json.dumps(parsed_data[0], ensure_ascii=False, indent=2)}")
-        except Exception as e:
-            logger.error(f"파싱 중 에러 발생: {e}")
-    else:
-        logger.warning(f"테스트를 위한 지원 파일(.pdf, .md)이 {RAW_DATA_DIR} 에 없습니다.")
+                # 샘플 출력
+                if parsed_data:
+                    logger.info("\n[첫 번째 청크 샘플]")
+                    print(json.dumps(parsed_data[0], ensure_ascii=False, indent=2))
+            except Exception as e:
+                logger.error(f"파싱 중 에러 발생: {e}")
