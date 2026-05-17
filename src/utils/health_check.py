@@ -12,16 +12,12 @@ try:
 except ImportError:
     # 직접 실행 시 src를 찾지 못할 경우를 대비한 로컬 임포트 (paths.py가 같은 폴더에 있으므로 가능)
     from paths import BASE_DIR, RAW_DATA_DIR, REQUIRED_DIRECTORIES, ensure_directories
+from src.common.config import settings
+from src.common.constants import MetadataFields
+from src.utils.file_utils import generate_file_hash
 
 # 로깅 설정
 logger = logging.getLogger(__name__)
-
-
-def generate_source_id(file_path: Path) -> str:
-    """ManualParser와 동일한 로직으로 파일 해시(source_id) 생성"""
-    stats = file_path.stat()
-    unique_str = f"{file_path.name}_{stats.st_mtime}"
-    return hashlib.md5(unique_str.encode()).hexdigest()[:12]
 
 
 def check_env():
@@ -31,7 +27,7 @@ def check_env():
 
     # 필수 키: 실제 동작에 필요한 API 키만 체크 (EMBEDDING_MODEL_NAME은 config 기본값으로 동작)
     # MODEL_TYPE에 따라 필요한 API 키가 달라지므로 model_type 기반으로 동적 체크
-    model_type = os.getenv("MODEL_TYPE", "ollama").lower()
+    model_type = settings.MODEL_TYPE.lower()
     all_pass = True
 
     # model_type별 필수 API 키 매핑
@@ -45,7 +41,7 @@ def check_env():
     logger.info(f"  모델 타입: {model_type} | 체크 대상 키: {required_keys or '없음(로컬)'}")
 
     for key in required_keys:
-        val = os.getenv(key)
+        val = getattr(settings, key, None)
         if val and val != f"your_{key.lower()}_here":
             display_val = f"{val[:8]}****"
             logger.info(f"  [PASS] {key}: {display_val}")
@@ -89,7 +85,7 @@ def check_model_loading():
     try:
         from src.models.embedder import BGEEmbedder
 
-        model_name = os.getenv("EMBEDDING_MODEL_NAME", "BAAI/bge-m3")
+        model_name = settings.EMBEDDING_MODEL_NAME
 
         start_time = time.time()
         embedder = BGEEmbedder(model_name=model_name)
@@ -127,8 +123,8 @@ def check_database_status():
 
         db_file_map = {}
         for meta in metadatas:
-            src_name = meta.get("src_name", "UNKNOWN")
-            src_id = meta.get("source_id", "UNKNOWN")
+            src_name = meta.get(MetadataFields.SRC_NAME, "UNKNOWN")
+            src_id = meta.get(MetadataFields.SOURCE_ID, "UNKNOWN")
             if src_name not in db_file_map:
                 db_file_map[src_name] = {"source_id": src_id, "count": 0}
             db_file_map[src_name]["count"] += 1
@@ -139,7 +135,7 @@ def check_database_status():
         for ext in [".pdf", ".md", ".markdown"]:
             raw_files.extend(list(RAW_DATA_DIR.glob(f"**/*{ext}")))
 
-        local_files_info = {f.name: generate_source_id(f) for f in raw_files}
+        local_files_info = {f.name: generate_file_hash(f, parser_type=settings.PARSER_TYPE) for f in raw_files}
         all_filenames = set(local_files_info.keys()) | set(db_file_map.keys())
 
         for fname in sorted(all_filenames):
