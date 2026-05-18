@@ -185,7 +185,7 @@ class ChromaDBManager:
         try:
             results = self.collection.get(
                 where={MetadataFields.SRC_NAME: source_name},
-                include=[]  # 실제 데이터는 필요 없으므로 빈 리스트
+                include=[],  # 실제 데이터는 필요 없으므로 빈 리스트
             )
             return len(results["ids"])
         except Exception as e:
