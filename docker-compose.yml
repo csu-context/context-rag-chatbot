@@ -18,21 +18,46 @@ services:
     environment:
       - CHROMA_SERVER_HOST=chromadb
       - CHROMA_SERVER_PORT=8000
+      - OLLAMA_BASE_URL=http://ollama:11434
       - HF_HOME=/app/models
     ports:
       - "8501:8501"
-    # ChromaDB 서버가 준비될 때까지 대기
+    # ChromaDB 및 Ollama 서버가 준비될 때까지 대기
     depends_on:
       - chromadb
-    # NVIDIA GPU 연동 (Windows/Linux GPU 사용자 전용)
-    # 필요 시 아래 주석을 해제하여 사용하세요.
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: all
-    #           capabilities: [gpu]
+      - ollama
+    # [주의] NVIDIA GPU 가속 설정
+    # AWS GPU 인스턴스(g4dn) 환경에서는 아래 deploy 섹션이 활성화되어야 합니다.
+    # 단, MacBook(M1/M2/M3) 또는 GPU가 없는 로컬 환경에서 실행할 경우 
+    # 아래 'deploy' 섹션 전체를 반드시 주석 처리해야 컨테이너가 정상 기동됩니다.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks:
+      - rag-network
+
+
+  # Ollama 서비스 (로컬 sLLM 엔진)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: rag-chatbot-ollama
+    volumes:
+      - ./models/ollama:/root/.ollama
+    ports:
+      - "11434:11434"
+    # [주의] NVIDIA GPU 가속 설정
+    # MacBook 또는 CPU 전용 환경에서는 아래 'deploy' 섹션을 주석 처리하세요.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     networks:
       - rag-network
 
@@ -42,12 +67,12 @@ services:
     image: chromadb/chroma:latest
     container_name: rag-chatbot-chromadb
     volumes:
-      - ./vector_db:/chroma/chroma
+      - ./vector_db:/data
     ports:
       - "8000:8000"
     environment:
       - IS_PERSISTENT=TRUE
-      - PERSIST_DIRECTORY=/chroma/chroma
+      - PERSIST_DIRECTORY=/data
     networks:
       - rag-network
 
