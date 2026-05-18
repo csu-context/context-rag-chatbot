@@ -9,6 +9,7 @@ from chromadb.api.types import Documents, EmbeddingFunction, Embeddings
 from chromadb.config import Settings
 
 from src.common.config import settings
+from src.common.constants import MetadataFields
 from src.models.embedder import BGEEmbedder
 from src.utils.paths import VECTOR_DB_DIR, ensure_directories
 
@@ -177,6 +178,18 @@ class ChromaDBManager:
         try:
             return self.collection.count()
         except Exception:
+            return 0
+
+    def get_source_count(self, source_name: str) -> int:
+        """특정 소스 파일명(metadata.src_name)에 해당하는 청크 수를 반환합니다."""
+        try:
+            results = self.collection.get(
+                where={MetadataFields.SRC_NAME: source_name},
+                include=[]  # 실제 데이터는 필요 없으므로 빈 리스트
+            )
+            return len(results["ids"])
+        except Exception as e:
+            logger.error(f"소스별 카운트 조회 중 오류 발생 ({source_name}): {e}")
             return 0
 
     def delete_documents(self, where: dict[str, Any]):

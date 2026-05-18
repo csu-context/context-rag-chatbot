@@ -124,10 +124,6 @@ chown -R ubuntu:ubuntu /home/ubuntu/app
 echo "Starting services with docker-compose..."
 docker compose up -d
 
-# 8. Ollama 모델 사전 로드 (백그라운드에서 진행)
-echo "Pulling Ollama model in background..."
-docker exec rag-chatbot-ollama ollama pull llama3.2:1b &
-
 echo "Infrastructure & Application Setup Completed!"
 EOF
 
