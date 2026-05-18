@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import pickle
 import time
 import uuid
@@ -15,7 +16,7 @@ from src.data.parser import ManualParser
 from src.processing.chunking import HierarchicalChunker, create_parent_child_chunks
 from src.processing.pdf_parser import DoclingPDFParser
 from src.utils.file_utils import generate_file_hash
-from src.utils.logger import TracingLogger
+from src.utils.logger import TracingLogger, setup_global_logging
 from src.utils.paths import CACHE_DIR, PROCESSED_DATA_DIR, RAW_DATA_DIR, ensure_directories
 from src.vector_db.chroma_manager import ChromaDBManager
 
@@ -39,6 +40,29 @@ class ManualParserStrategy(ParserStrategy):
         relative_path = file_path.relative_to(RAW_DATA_DIR)
         parser = ManualParser(str(relative_path), parser_type="manual")
         return parser.parse()
+
+
+class MarkdownParserStrategy(ParserStrategy):
+    """Markdown 파일을 구조 파괴 없이 읽어오는 전략"""
+
+    def parse(self, file_path: Path) -> list[dict[str, Any]]:
+        with open(file_path, encoding="utf-8") as f:
+            raw_md_text = f.read()
+
+        if len(raw_md_text.strip()) < 5:
+            logger.warning(f"마크다운 파일의 내용이 너무 짧아 건너뜁니다: {file_path.name}")
+            return []
+
+        parser_type = os.getenv("PARSER_TYPE", "manual").lower()
+        base_metadata = {
+            MetadataFields.SOURCE_ID: generate_file_hash(file_path, parser_type),
+            MetadataFields.SRC_NAME: file_path.name,
+            MetadataFields.DOC_TYPE: file_path.suffix.lower().replace(".", ""),
+            MetadataFields.PG_NUM: 1,
+            MetadataFields.CATEGORY: file_path.parent.name if file_path.parent.name != "raw" else "일반",
+        }
+
+        return [{"is_raw_markdown": True, "content": raw_md_text, "metadata": base_metadata}]
 
 
 class DoclingPDFParserStrategy(ParserStrategy):
@@ -138,57 +162,53 @@ class IngestionPipeline:
         all_hierarchical_data = []
         for file_path in tqdm(files, desc="Processing Files"):
             try:
-                # 1. 파싱
-                sections = self.strategy.parse(file_path)
+                # 1. 파일 확장자에 따른 전략 동적 선택 및 파싱
+                active_strategy = self.strategy if file_path.suffix.lower() == ".pdf" else MarkdownParserStrategy()
 
-                # 2. 계층적 청킹
-                if file_path.suffix.lower() == ".pdf":
-                    # EnhancedPDFParserStrategy 결과인 경우 마크다운 통째로 계층적 청킹 수행
-                    if sections and sections[0].get("is_combined"):
-                        for sec in sections:
-                            base_metadata = sec["metadata"]
-                            md_text = sec["content"]
-                            file_chunks = create_parent_child_chunks(md_text, base_metadata)
-                            all_hierarchical_data.extend(file_chunks)
-                    else:
-                        # 기존 ManualParser PDF 처리 방식 (Fallback 호환성)
-                        for sec in sections:
-                            parent_id = str(uuid.uuid4())
-                            meta_for_children = sec["metadata"].copy()
-                            sec_title = f"{sec.get('chapter', '기본 섹션')} > {sec.get('article', '기본 섹션')}"
-                            meta_for_children[MetadataFields.SEC_TITLE] = sec_title
-                            meta_for_children[MetadataFields.HEADER_PATH] = sec_title
+                sections = active_strategy.parse(file_path)
 
-                            children = self.chunker.split_into_children(sec["content"], parent_id, meta_for_children)
+                if not sections:
+                    continue
 
-                            if children:
-                                parent_metadata = {
-                                    MetadataFields.SOURCE_ID: sec["metadata"].get(MetadataFields.SOURCE_ID, "UNKNOWN"),
-                                    MetadataFields.SRC_NAME: sec["metadata"].get(MetadataFields.SRC_NAME, "UNKNOWN"),
-                                    MetadataFields.DOC_TYPE: sec["metadata"].get(MetadataFields.DOC_TYPE, "pdf"),
-                                    MetadataFields.PG_NUM: sec["metadata"].get(MetadataFields.PG_NUM, 1),
-                                    MetadataFields.SEC_TITLE: sec_title,
-                                    MetadataFields.CHUNK_ID: parent_id,
-                                    MetadataFields.PARENT_ID: None,
-                                    MetadataFields.HEADER_PATH: sec_title,
-                                    MetadataFields.IS_TABLE: False,
-                                }
-                                all_hierarchical_data.append(
-                                    {
-                                        "parent_id": parent_id,
-                                        "parent_text": sec["content"],
-                                        "metadata": parent_metadata,
-                                        "children": children,
-                                    }
-                                )
-                else:
-                    # Markdown 또는 기타 포맷 처리
-                    if sections:
-                        # ManualParser는 리스트 형태이므로 첫 번째 요소를 기준으로 처리 (통상 1개 파일당 1개 content)
-                        base_metadata = sections[0]["metadata"]
-                        md_text = sections[0]["content"]
-                        file_chunks = create_parent_child_chunks(md_text, base_metadata)
+                # 2. 계층적 청킹 (결과 타입별 분기 처리)
+                if sections[0].get("is_raw_markdown"):
+                    file_chunks = create_parent_child_chunks(sections[0]["content"], sections[0]["metadata"])
+                    all_hierarchical_data.extend(file_chunks)
+                elif sections[0].get("is_combined"):
+                    for sec in sections:
+                        file_chunks = create_parent_child_chunks(sec["content"], sec["metadata"])
                         all_hierarchical_data.extend(file_chunks)
+                else:
+                    # 기존 ManualParser PDF 처리 방식 (Fallback 호환성)
+                    for sec in sections:
+                        parent_id = str(uuid.uuid4())
+                        meta_for_children = sec["metadata"].copy()
+                        sec_title = f"{sec.get('chapter', '기본 섹션')} > {sec.get('article', '기본 섹션')}"
+                        meta_for_children[MetadataFields.SEC_TITLE] = sec_title
+                        meta_for_children[MetadataFields.HEADER_PATH] = sec_title
+
+                        children = self.chunker.split_into_children(sec["content"], parent_id, meta_for_children)
+
+                        if children:
+                            parent_metadata = {
+                                MetadataFields.SOURCE_ID: sec["metadata"].get(MetadataFields.SOURCE_ID, "UNKNOWN"),
+                                MetadataFields.SRC_NAME: sec["metadata"].get(MetadataFields.SRC_NAME, "UNKNOWN"),
+                                MetadataFields.DOC_TYPE: sec["metadata"].get(MetadataFields.DOC_TYPE, "pdf"),
+                                MetadataFields.PG_NUM: sec["metadata"].get(MetadataFields.PG_NUM, 1),
+                                MetadataFields.SEC_TITLE: sec_title,
+                                MetadataFields.CHUNK_ID: parent_id,
+                                MetadataFields.PARENT_ID: None,
+                                MetadataFields.HEADER_PATH: sec_title,
+                                MetadataFields.IS_TABLE: False,
+                            }
+                            all_hierarchical_data.append(
+                                {
+                                    "parent_id": parent_id,
+                                    "parent_text": sec["content"],
+                                    "metadata": parent_metadata,
+                                    "children": children,
+                                }
+                            )
 
             except Exception as e:
                 logger.error(f"파일 처리 실패: {file_path.name} - {e!s}")
@@ -365,7 +385,7 @@ class PipelineOrchestrator:
                 try:
                     from src.vector_db.bm25_manager import BM25Manager
 
-                    BM25Manager()  # Rebuilds the index from DB
+                    BM25Manager()  # Rebuilds 수퍼 클래스
                     step["status"] = "success"
                 except Exception as e:
                     step["status"] = f"failed: {e}"
@@ -439,5 +459,6 @@ class PreprocessingPipeline:
 
 
 if __name__ == "__main__":
+    setup_global_logging()  # 실행 시 로깅 설정을 적용합니다.
     orchestrator = PipelineOrchestrator()
     orchestrator.run_ingestion()
