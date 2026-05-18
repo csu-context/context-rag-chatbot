@@ -47,7 +47,7 @@ services:
     container_name: rag-chatbot-ollama
     volumes:
       - ./models/ollama:/root/.ollama
-      - ./scripts/ollama_init.sh:/root/ollama_init.sh
+      - ./docker/ollama_init.sh:/root/ollama_init.sh
     ports:
       - "11434:11434"
     env_file:
