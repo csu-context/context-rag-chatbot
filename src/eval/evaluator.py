@@ -66,16 +66,24 @@ async def run_rag_inference(test_data: list[dict[str, Any]]) -> tuple[Evaluation
 
         start_time = time.time()
         try:
-            # invoke 결과는 {"answer": "...", "source_documents": [...]} 형태임
-            response_dict = rag_chain.invoke({"question": question})
-            full_response = response_dict["answer"]
-            source_docs = response_dict["source_documents"]
+            full_response = ""
+            source_docs = []
+
+            # 스트리밍 파이프라인 소비
+            for step in rag_chain.stream({"question": question}):
+                stage = step.get("stage")
+                status = step.get("status")
+
+                if stage == "generation" and status == "streaming":
+                    full_response += step.get("output", "")
+                elif stage == "citation" and status == "complete":
+                    source_docs = step.get("source_documents", [])
 
             # Ragas 평가를 위해 검색된 문서들의 텍스트 추출 (이중 검색 제거)
             contexts = [doc.page_content for doc in source_docs]
 
-            # 답변에서 출처 부분 제거 (Ragas 평가는 답변 본문 중심)
-            answer = full_response.split("\n\n출처:")[0].strip() if "\n\n출처:" in full_response else full_response
+            # 답변 본문 사용
+            answer = full_response.strip()
 
             latency = time.time() - start_time
 

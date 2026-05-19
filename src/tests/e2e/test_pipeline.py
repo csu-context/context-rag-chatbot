@@ -61,20 +61,33 @@ async def test_full_rag_pipeline():
 
     with patch("src.models.factory.LLMFactory.create_llm") as mock_factory:
         mock_llm_inst = MagicMock()
-        mock_model = AsyncMock()
+        mock_model = MagicMock()
         mock_model.model_name = "test-model"
         mock_model.temperature = 0.1
 
-        mock_response = MagicMock()
-        mock_response.content = "복수전공은 주전공 외에 추가로 이수하는 전공을 의미합니다."
-        mock_model.ainvoke.return_value = mock_response
+        # 동기 제너레이터를 반환하도록 stream 모의 설정 (LangChain이 백그라운드 스레드에서 비동기 소비 가능)
+        def mock_stream(*args, **kwargs):
+            yield MagicMock(content="복수전공은 주전공 외에 추가로 이수하는 전공을 의미합니다.")
+
+        mock_model.stream = mock_stream
+        mock_model.ainvoke = AsyncMock(
+            return_value=MagicMock(content="복수전공은 주전공 외에 추가로 이수하는 전공을 의미합니다.")
+        )
+
         mock_llm_inst.get_model.return_value = mock_model
         mock_factory.return_value = mock_llm_inst
 
         rag_chain = get_rag_chain(db_manager)
-        response_dict = await rag_chain.ainvoke({"question": test_query, "k": 1})
-        response = response_dict["answer"]
 
-    assert response is not None
-    assert "복수전공" in response
-    assert "조선대학교_학칙_샘플.md" in response
+        full_response = ""
+        # 동기 제너레이터이므로 일반 for 루프로 소비
+        for step in rag_chain.stream({"question": test_query, "k": 1}):
+            if step.get("stage") == "generation" and step.get("status") == "streaming":
+                full_response += step.get("output", "")
+            elif step.get("stage") == "citation" and step.get("status") == "complete":
+                citations = step.get("output", "")
+                full_response += f"\n\n{citations}"
+
+    assert full_response is not None
+    assert "복수전공" in full_response
+    assert "조선대학교_학칙_샘플.md" in full_response

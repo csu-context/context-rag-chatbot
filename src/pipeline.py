@@ -1,6 +1,6 @@
-import gc
 import json
 import logging
+import os
 import pickle
 import time
 import uuid
@@ -14,9 +14,9 @@ from src.common.config import settings
 from src.common.constants import MetadataFields
 from src.data.parser import ManualParser
 from src.processing.chunking import HierarchicalChunker, create_parent_child_chunks
-from src.processing.pdf_parser import EnhancedPDFParser
+from src.processing.pdf_parser import DoclingPDFParser
 from src.utils.file_utils import generate_file_hash
-from src.utils.logger import TracingLogger
+from src.utils.logger import TracingLogger, setup_global_logging
 from src.utils.paths import CACHE_DIR, PROCESSED_DATA_DIR, RAW_DATA_DIR, ensure_directories
 from src.vector_db.chroma_manager import ChromaDBManager
 
@@ -42,101 +42,89 @@ class ManualParserStrategy(ParserStrategy):
         return parser.parse()
 
 
-class EnhancedPDFParserStrategy(ParserStrategy):
-    """Unstructured 기반 고도화된 PDF 파서를 사용하는 전략"""
+class MarkdownParserStrategy(ParserStrategy):
+    """Markdown 파일을 구조 파괴 없이 읽어오는 전략"""
+
+    def parse(self, file_path: Path) -> list[dict[str, Any]]:
+        with open(file_path, encoding="utf-8") as f:
+            raw_md_text = f.read()
+
+        if len(raw_md_text.strip()) < 5:
+            logger.warning(f"마크다운 파일의 내용이 너무 짧아 건너뜁니다: {file_path.name}")
+            return []
+
+        parser_type = os.getenv("PARSER_TYPE", "manual").lower()
+        base_metadata = {
+            MetadataFields.SOURCE_ID: generate_file_hash(file_path, parser_type),
+            MetadataFields.SRC_NAME: file_path.name,
+            MetadataFields.DOC_TYPE: file_path.suffix.lower().replace(".", ""),
+            MetadataFields.PG_NUM: 1,
+            MetadataFields.CATEGORY: file_path.parent.name if file_path.parent.name != "raw" else "일반",
+        }
+
+        return [{"is_raw_markdown": True, "content": raw_md_text, "metadata": base_metadata}]
+
+
+class DoclingPDFParserStrategy(ParserStrategy):
+    """
+    IBM Docling 기반 고품질 PDF 파서 전략.
+    - 표 구조 34개+ 자동 감지 및 마크다운 변환
+    - 한글 OCR (RapidOCR) 지원
+    - 레이아웃 구조 보존 (단일 Converter 인스턴스 재사용으로 메모리 효율 확보)
+    """
 
     def __init__(self):
-        self.pdf_parser = EnhancedPDFParser()
-        self.manual_parser = ManualParser  # MD 파일 등을 위해 필요
+        self.pdf_parser = DoclingPDFParser()  # AI 모델 1회만 로드
+        self.manual_parser = ManualParser  # PDF 외 파일 (MD 등) Fallback
 
     def parse(self, file_path: Path) -> list[dict[str, Any]]:
         if file_path.suffix.lower() == ".pdf":
-            # 1. 캐시 파일 경로 설정 (공통 해시 유틸리티 + 파서 타입 명시)
-            source_id = generate_file_hash(file_path, parser_type="enhanced")
+            # 1. 캐시 파일 경로 설정
+            source_id = generate_file_hash(file_path, parser_type="docling")
             cache_file = CACHE_DIR / f"{source_id}_parsed.pkl"
 
-            # 2. 캐시가 존재하면 무거운 파싱을 생략하고 바로 로드 (시간 단축)
+            # 2. 캐시 존재 시 무거운 파싱 생략
             if cache_file.exists():
-                logger.info(f"캐시된 파싱 결과를 로드합니다: {file_path.name}")
+                logger.info(f"캐시된 Docling 파싱 결과를 로드합니다: {file_path.name}")
                 with open(cache_file, "rb") as f:
                     return pickle.load(f)
 
-            logger.info(f"EnhancedPDFParser를 사용하여 PDF 파싱: {file_path.name}")
+            logger.info(f"DoclingPDFParser를 사용하여 PDF 파싱: {file_path.name}")
             start_time = time.time()
-            documents = self.pdf_parser.parse(file_path)
+            parsed = self.pdf_parser.parse(file_path)  # {markdown, tables, page_count, table_count}
             elapsed = time.time() - start_time
-            logger.info(f"파싱 완료: {file_path.name} (소요 시간: {elapsed:.2f}초)")
+            logger.info(f"파싱 완료: {file_path.name} (소요 시간: {elapsed:.2f}초, 표 {parsed['table_count']}개 감지)")
 
-            # unstructured의 반환값을 페이지 단위로 그룹화하여 마크다운 텍스트로 결합 (페이지 정보 보존)
-            results = []
-            current_page = 1
-            current_content = []
-            last_title = ""
+            # 3. Docling 결과를 pipeline 호환 포맷으로 매핑
+            #    is_combined=True 플래그로 create_parent_child_chunks 경로를 타도록 지정
+            results = [
+                {
+                    "is_combined": True,
+                    "content": parsed["markdown"],
+                    "metadata": {
+                        MetadataFields.SOURCE_ID: source_id,
+                        MetadataFields.SRC_NAME: file_path.name,
+                        MetadataFields.PG_NUM: 1,
+                        MetadataFields.DOC_TYPE: "pdf",
+                        MetadataFields.CATEGORY: file_path.parent.name,
+                        # Docling 전용 메타데이터: 표 감지 정보
+                        "parser": "docling",
+                        "table_count": parsed["table_count"],
+                        "page_count": parsed["page_count"],
+                        "has_table": parsed["table_count"] > 0,
+                    },
+                }
+            ]
 
-            for doc in documents:
-                pg = doc.metadata.get(MetadataFields.PG_NUM, 1)
-                cat = doc.metadata.get(MetadataFields.CATEGORY, "")
-                content = doc.page_content.strip()
-                if not content:
-                    continue
-
-                if pg != current_page and current_content:
-                    results.append(
-                        {
-                            "is_combined": True,
-                            "content": "\n\n".join(current_content),
-                            "metadata": {
-                                MetadataFields.SOURCE_ID: source_id,
-                                MetadataFields.SRC_NAME: file_path.name,
-                                MetadataFields.PG_NUM: current_page,
-                                MetadataFields.DOC_TYPE: "pdf",
-                                MetadataFields.CATEGORY: file_path.parent.name,
-                            },
-                        }
-                    )
-                    current_content = []
-                    # 다음 페이지에도 직전 타이틀(Context)을 상속시켜 계층 구조가 유지되도록 함
-                    if last_title:
-                        current_content.append(f"\n# {last_title}\n")
-
-                if cat == "Title":
-                    current_content.append(f"\n# {content}\n")
-                    last_title = content
-                elif cat == "Table":
-                    current_content.append(f"\n{content}\n")
-                else:
-                    current_content.append(content)
-
-                current_page = pg
-
-            if current_content:
-                results.append(
-                    {
-                        "is_combined": True,
-                        "content": "\n\n".join(current_content),
-                        "metadata": {
-                            MetadataFields.SOURCE_ID: source_id,
-                            MetadataFields.SRC_NAME: file_path.name,
-                            MetadataFields.PG_NUM: current_page,
-                            MetadataFields.DOC_TYPE: "pdf",
-                            MetadataFields.CATEGORY: file_path.parent.name,
-                        },
-                    }
-                )
-
-            # 리소스 해제 (Memory Leak 방지)
-            del documents
-            gc.collect()
-
-            # 4. 다음 실행을 위해 파싱 결과 캐시 저장
+            # 4. 캐시 저장
             with open(cache_file, "wb") as f:
                 pickle.dump(results, f)
 
             return results
         else:
-            # PDF가 아닌 경우 ManualParser로 Fallback (enhanced 파이프라인에서 돌아감을 명시)
+            # PDF가 아닌 경우 ManualParser로 Fallback
             relative_path = file_path.relative_to(RAW_DATA_DIR)
-            parser = self.manual_parser(str(relative_path), parser_type="enhanced")
+            parser = self.manual_parser(str(relative_path), parser_type="docling")
             return parser.parse()
 
 
@@ -174,57 +162,53 @@ class IngestionPipeline:
         all_hierarchical_data = []
         for file_path in tqdm(files, desc="Processing Files"):
             try:
-                # 1. 파싱
-                sections = self.strategy.parse(file_path)
+                # 1. 파일 확장자에 따른 전략 동적 선택 및 파싱
+                active_strategy = self.strategy if file_path.suffix.lower() == ".pdf" else MarkdownParserStrategy()
 
-                # 2. 계층적 청킹
-                if file_path.suffix.lower() == ".pdf":
-                    # EnhancedPDFParserStrategy 결과인 경우 마크다운 통째로 계층적 청킹 수행
-                    if sections and sections[0].get("is_combined"):
-                        for sec in sections:
-                            base_metadata = sec["metadata"]
-                            md_text = sec["content"]
-                            file_chunks = create_parent_child_chunks(md_text, base_metadata)
-                            all_hierarchical_data.extend(file_chunks)
-                    else:
-                        # 기존 ManualParser PDF 처리 방식 (Fallback 호환성)
-                        for sec in sections:
-                            parent_id = str(uuid.uuid4())
-                            meta_for_children = sec["metadata"].copy()
-                            sec_title = f"{sec.get('chapter', '기본 섹션')} > {sec.get('article', '기본 섹션')}"
-                            meta_for_children[MetadataFields.SEC_TITLE] = sec_title
-                            meta_for_children[MetadataFields.HEADER_PATH] = sec_title
+                sections = active_strategy.parse(file_path)
 
-                            children = self.chunker.split_into_children(sec["content"], parent_id, meta_for_children)
+                if not sections:
+                    continue
 
-                            if children:
-                                parent_metadata = {
-                                    MetadataFields.SOURCE_ID: sec["metadata"].get(MetadataFields.SOURCE_ID, "UNKNOWN"),
-                                    MetadataFields.SRC_NAME: sec["metadata"].get(MetadataFields.SRC_NAME, "UNKNOWN"),
-                                    MetadataFields.DOC_TYPE: sec["metadata"].get(MetadataFields.DOC_TYPE, "pdf"),
-                                    MetadataFields.PG_NUM: sec["metadata"].get(MetadataFields.PG_NUM, 1),
-                                    MetadataFields.SEC_TITLE: sec_title,
-                                    MetadataFields.CHUNK_ID: parent_id,
-                                    MetadataFields.PARENT_ID: None,
-                                    MetadataFields.HEADER_PATH: sec_title,
-                                    MetadataFields.IS_TABLE: False,
-                                }
-                                all_hierarchical_data.append(
-                                    {
-                                        "parent_id": parent_id,
-                                        "parent_text": sec["content"],
-                                        "metadata": parent_metadata,
-                                        "children": children,
-                                    }
-                                )
-                else:
-                    # Markdown 또는 기타 포맷 처리
-                    if sections:
-                        # ManualParser는 리스트 형태이므로 첫 번째 요소를 기준으로 처리 (통상 1개 파일당 1개 content)
-                        base_metadata = sections[0]["metadata"]
-                        md_text = sections[0]["content"]
-                        file_chunks = create_parent_child_chunks(md_text, base_metadata)
+                # 2. 계층적 청킹 (결과 타입별 분기 처리)
+                if sections[0].get("is_raw_markdown"):
+                    file_chunks = create_parent_child_chunks(sections[0]["content"], sections[0]["metadata"])
+                    all_hierarchical_data.extend(file_chunks)
+                elif sections[0].get("is_combined"):
+                    for sec in sections:
+                        file_chunks = create_parent_child_chunks(sec["content"], sec["metadata"])
                         all_hierarchical_data.extend(file_chunks)
+                else:
+                    # 기존 ManualParser PDF 처리 방식 (Fallback 호환성)
+                    for sec in sections:
+                        parent_id = str(uuid.uuid4())
+                        meta_for_children = sec["metadata"].copy()
+                        sec_title = f"{sec.get('chapter', '기본 섹션')} > {sec.get('article', '기본 섹션')}"
+                        meta_for_children[MetadataFields.SEC_TITLE] = sec_title
+                        meta_for_children[MetadataFields.HEADER_PATH] = sec_title
+
+                        children = self.chunker.split_into_children(sec["content"], parent_id, meta_for_children)
+
+                        if children:
+                            parent_metadata = {
+                                MetadataFields.SOURCE_ID: sec["metadata"].get(MetadataFields.SOURCE_ID, "UNKNOWN"),
+                                MetadataFields.SRC_NAME: sec["metadata"].get(MetadataFields.SRC_NAME, "UNKNOWN"),
+                                MetadataFields.DOC_TYPE: sec["metadata"].get(MetadataFields.DOC_TYPE, "pdf"),
+                                MetadataFields.PG_NUM: sec["metadata"].get(MetadataFields.PG_NUM, 1),
+                                MetadataFields.SEC_TITLE: sec_title,
+                                MetadataFields.CHUNK_ID: parent_id,
+                                MetadataFields.PARENT_ID: None,
+                                MetadataFields.HEADER_PATH: sec_title,
+                                MetadataFields.IS_TABLE: False,
+                            }
+                            all_hierarchical_data.append(
+                                {
+                                    "parent_id": parent_id,
+                                    "parent_text": sec["content"],
+                                    "metadata": parent_metadata,
+                                    "children": children,
+                                }
+                            )
 
             except Exception as e:
                 logger.error(f"파일 처리 실패: {file_path.name} - {e!s}")
@@ -338,14 +322,23 @@ class PipelineOrchestrator:
             logger.error(f"Manifest 저장 실패: {e}")
 
     def _get_parser_strategy(self) -> ParserStrategy:
-        """설정된 파서 타입에 따라 전략을 반환하며 가용성을 검증합니다."""
-        if self.parser_type == "enhanced":
-            try:
-                import unstructured  # noqa: F401
+        """설정된 파서 타입에 따라 전략을 반환하며 가용성을 검증합니다.
 
-                return EnhancedPDFParserStrategy()
+        - "docling"  : IBM Docling 기반 (표 구조 + 한글 OCR, 권장)
+        - "enhanced" : Unstructured 기반 (hi_res + YOLO, 레거시)
+        - "manual"   : PyMuPDF 기반 (초고속, 기본)
+        """
+        if self.parser_type == "docling":
+            try:
+                import docling  # noqa: F401
+
+                return DoclingPDFParserStrategy()
             except ImportError:
-                logger.error("'enhanced' 파서용 'unstructured' 라이브러리가 없습니다. 'manual'로 강제 전환합니다.")
+                logger.error(
+                    "'docling' 파서용 'docling' 라이브러리가 없습니다. "
+                    "'manual'로 강제 전환합니다.\n"
+                    "설치: pip install docling"
+                )
                 return ManualParserStrategy()
 
         return ManualParserStrategy()
@@ -392,7 +385,7 @@ class PipelineOrchestrator:
                 try:
                     from src.vector_db.bm25_manager import BM25Manager
 
-                    BM25Manager()  # Rebuilds the index from DB
+                    BM25Manager()  # Rebuilds 수퍼 클래스
                     step["status"] = "success"
                 except Exception as e:
                     step["status"] = f"failed: {e}"
@@ -402,17 +395,23 @@ class PipelineOrchestrator:
         logger.info(f"데이터 구축 파이프라인을 시작합니다. (전략: {self.parser_type})")
 
         with self.tracing_logger.start_session(type="ingestion", parser_type=self.parser_type) as session:
-            # 0. 상태 진단
+            # 0. 상태 진단 (DB 연결 여부만 필수 체크 - API 키는 비차단)
             with session.trace_step("diagnostics") as step:
                 from src.utils.health_check import run_full_diagnostics
 
                 is_healthy, report = run_full_diagnostics(silent=True, check_model=False)
                 step["status"] = "healthy" if is_healthy else "unhealthy"
+                step["report"] = report
 
-                if not is_healthy:
-                    logger.error(f"시스템 진단 실패: {report}")
+                # DB 연결 실패만 치명적 오류로 처리 (API 키 누락은 파싱/임베딩에 영향 없음)
+                db_connected = report.get("db", {}).get("connected", False)
+                if not db_connected:
+                    logger.error(f"ChromaDB 연결 실패로 파이프라인을 중단합니다: {report}")
                     session.data["status"] = "failed_diagnostics"
                     return
+
+                if not is_healthy:
+                    logger.warning(f"일부 진단 항목 미통과 (파이프라인은 계속 진행): {report}")
 
             # 1. 스캔 및 증분 업데이트 대상 식별
             with session.trace_step("scan_and_check_updates") as step:
@@ -460,5 +459,6 @@ class PreprocessingPipeline:
 
 
 if __name__ == "__main__":
+    setup_global_logging()  # 실행 시 로깅 설정을 적용합니다.
     orchestrator = PipelineOrchestrator()
     orchestrator.run_ingestion()

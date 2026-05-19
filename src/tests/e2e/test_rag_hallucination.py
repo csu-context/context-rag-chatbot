@@ -33,22 +33,32 @@ async def test_rag_normal_response():
 
     with patch("src.models.factory.LLMFactory.create_llm") as mock_factory:
         mock_llm_inst = MagicMock()
-        mock_model = AsyncMock()
+        mock_model = MagicMock()
 
         # TracingLogger 직렬화를 위해 속성에 실제 값 할당
         mock_model.model_name = "test-model"
         mock_model.temperature = 0.1
 
-        mock_model.ainvoke.return_value = MagicMock(content="2026년 신입 사원 연봉은 5,000만 원입니다.")
+        def mock_stream(*args, **kwargs):
+            yield MagicMock(content="2026년 신입 사원 연봉은 5,000만 원입니다.")
+
+        mock_model.stream = mock_stream
+        mock_model.ainvoke = AsyncMock(return_value=MagicMock(content="2026년 신입 사원 연봉은 5,000만 원입니다."))
         mock_llm_inst.get_model.return_value = mock_model
         mock_factory.return_value = mock_llm_inst
 
         chain = get_rag_chain(retriever)
-        response_dict = await chain.ainvoke({"question": "올해 신입 사원 연봉이 얼마야?", "k": 1})
-        response = response_dict["answer"]
 
-    assert "5,000" in response
-    assert "연봉규정_2026.pdf" in response
+        full_response = ""
+        # 동기 제너레이터이므로 일반 for 루프로 소비
+        for step in chain.stream({"question": "올해 신입 사원 연봉이 얼마야?", "k": 1}):
+            if step.get("stage") == "generation" and step.get("status") == "streaming":
+                full_response += step.get("output", "")
+            elif step.get("stage") == "citation" and step.get("status") == "complete":
+                full_response += f"\n\n{step.get('output', '')}"
+
+    assert "5,000" in full_response
+    assert "연봉규정_2026.pdf" in full_response
 
 
 @pytest.mark.asyncio
@@ -69,19 +79,27 @@ async def test_rag_hallucination_prevention():
 
     with patch("src.models.factory.LLMFactory.create_llm") as mock_factory:
         mock_llm_inst = MagicMock()
-        mock_model = AsyncMock()
+        mock_model = MagicMock()
 
         # TracingLogger 직렬화를 위해 속성에 실제 값 할당
         mock_model.model_name = "test-model"
         mock_model.temperature = 0.1
 
-        mock_model.ainvoke.return_value = MagicMock(content="제공된 문서에서 관련 내용을 찾을 수 없습니다.")
+        def mock_stream(*args, **kwargs):
+            yield MagicMock(content="제공된 문서에서 관련 내용을 찾을 수 없습니다.")
+
+        mock_model.stream = mock_stream
+        mock_model.ainvoke = AsyncMock(return_value=MagicMock(content="제공된 문서에서 관련 내용을 찾을 수 없습니다."))
         mock_llm_inst.get_model.return_value = mock_model
         mock_factory.return_value = mock_llm_inst
 
         chain = get_rag_chain(retriever)
-        response_dict = await chain.ainvoke({"question": "회사에서 법인 차량을 빌릴 수 있어?", "k": 1})
-        response = response_dict["answer"]
+
+        full_response = ""
+        # 동기 제너레이터이므로 일반 for 루프로 소비
+        for step in chain.stream({"question": "회사에서 법인 차량을 빌릴 수 있어?", "k": 1}):
+            if step.get("stage") == "generation" and step.get("status") == "streaming":
+                full_response += step.get("output", "")
 
     hallucination_keywords = ["제공된 문서", "찾을 수 없습니다", "답변이 불가능", "관련된 내용을"]
-    assert any(keyword in response for keyword in hallucination_keywords)
+    assert any(keyword in full_response for keyword in hallucination_keywords)

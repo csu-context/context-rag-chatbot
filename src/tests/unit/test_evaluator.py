@@ -21,10 +21,15 @@ def mock_rag_chain():
     # run_rag_inference 내부에서 import되는 get_rag_chain을 모킹
     with patch("src.core.chains.get_rag_chain") as mock:
         chain_inst = MagicMock()
-        chain_inst.invoke.return_value = {
-            "answer": "Test answer\n\n출처: [doc1, p.1]",
-            "source_documents": [MagicMock(page_content="A info", metadata={"src_name": "doc1", "pg_num": 1})],
-        }
+        # 체인은 이제 generator를 반환하는 stream 메서드를 사용함
+        chain_inst.stream.return_value = [
+            {"stage": "generation", "status": "streaming", "output": "Test answer"},
+            {
+                "stage": "citation",
+                "status": "complete",
+                "source_documents": [MagicMock(page_content="A info", metadata={"src_name": "doc1", "pg_num": 1})],
+            },
+        ]
         mock.return_value = chain_inst
         yield mock
 
@@ -61,7 +66,11 @@ async def test_run_rag_inference(mock_db_manager, mock_rag_chain, mock_llm_facto
 @pytest.mark.asyncio
 async def test_run_rag_inference_error_handling(mock_db_manager, mock_rag_chain, mock_llm_factory):
     # 체인 실행 시 에러 발생 시뮬레이션
-    mock_rag_chain.return_value.invoke.side_effect = Exception("Chain error")
+    def mock_stream_error(*args, **kwargs):
+        raise Exception("Chain error")
+        yield {}
+
+    mock_rag_chain.return_value.stream.side_effect = mock_stream_error
 
     test_data = [{"question": "Error?", "ground_truth": "None"}]
 

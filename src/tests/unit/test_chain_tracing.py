@@ -17,8 +17,8 @@ async def test_rerank_rank_change_logging(tmp_path):
         # Mock DB
         mock_db = MagicMock()
 
-        # _perform_retrieval 로직 시뮬레이션을 위해 Document 객체로 변환되어 반환되도록 패치
-        with patch("src.core.chains._perform_retrieval") as mock_retrieval:
+        # RAGPipeline 클래스의 _perform_retrieval 메서드를 패치
+        with patch("src.core.chains.RAGPipeline._perform_retrieval") as mock_retrieval:
             mock_retrieval.return_value = [
                 Document(page_content="doc1", metadata={"chunk_id": "id1"}),
                 Document(page_content="doc2", metadata={"chunk_id": "id2"}),
@@ -39,21 +39,27 @@ async def test_rerank_rank_change_logging(tmp_path):
                 # Mock LLM
                 with patch("src.models.factory.LLMFactory.create_llm") as mock_factory:
                     mock_llm_inst = MagicMock()
-                    # chains.py는 이제 llm_instance.get_model().ainvoke()를 호출하므로 get_model 모의 추가
                     mock_model = MagicMock()
                     mock_model.ainvoke = AsyncMock()
                     mock_model.model_name = "test-model"
                     mock_model.temperature = 0.5  # JSON 직렬화 가능하도록 구체적인 타입(float) 할당
 
-                    # ainvoke 결과는 보통 content 속성이 있는 객체(예: AIMessage)를 반환
                     mock_response = AIMessage(content="answer")
 
+                    def mock_stream(*args, **kwargs):
+                        yield mock_response
+
+                    mock_model.stream = mock_stream
                     mock_model.ainvoke.return_value = mock_response
                     mock_llm_inst.get_model.return_value = mock_model
                     mock_factory.return_value = mock_llm_inst
 
                     chain = get_rag_chain(mock_db)
-                    await chain.ainvoke({"question": "test", "k": 2})
+
+                    # 동기 제너레이터이므로 일반 for 루프로 소비 (테스트 환경에서는 블로킹되어도 무방함)
+                    for _ in chain.stream({"question": "test", "k": 2}):
+                        pass
+
         # 로그 확인
         log_files = list((tmp_path / "trace").glob("*.jsonl"))
         with open(log_files[0], encoding="utf-8") as f:
@@ -69,5 +75,5 @@ async def test_rerank_rank_change_logging(tmp_path):
             # llm_params 추출 확인
             assert "llm_params" in gen_step
             assert gen_step["llm_params"].get("model") == "test-model"
-            assert gen_step["llm_params"].get("temperature") == 0.5
+            assert gen_step["llm_params"].get("temperature") == "0.5"
             assert "latency_ms" in gen_step

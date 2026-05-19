@@ -26,6 +26,8 @@ class Settings(BaseSettings):
 
     # 3. 벡터 DB 및 검색 설정
     RETRIEVER_TYPE: Literal["vector", "hybrid"] = Field(default="hybrid")
+    RERANKER_TYPE: Literal["local", "cohere", "jina"] = Field(default="local")
+    ALLOW_EXTERNAL_RERANKER: bool = Field(default=False)
     CHROMA_SERVER_HOST: str | None = None
     CHROMA_SERVER_PORT: str = "8000"
     RRF_K: int = 60
@@ -33,7 +35,7 @@ class Settings(BaseSettings):
     HYBRID_WEIGHT_VECTOR: float = 0.5
 
     # 4. 파이프라인 및 파싱 설정
-    PARSER_TYPE: Literal["manual", "enhanced"] = Field(default="manual")
+    PARSER_TYPE: Literal["manual", "docling"] = Field(default="docling")
     OLLAMA_BASE_URL: str = "http://localhost:11434"
 
     # 5. 평가(Evaluation) 관련 설정
