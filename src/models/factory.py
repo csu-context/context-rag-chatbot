@@ -1,5 +1,5 @@
-from models.llm_anthropic import AnthropicModel
-from models.llm_ollama import OllamaModel
+from src.models.llm_anthropic import AnthropicModel
+from src.models.llm_ollama import OllamaModel
 
 
 class LLMFactory:
@@ -9,7 +9,7 @@ class LLMFactory:
         pass
 
     @staticmethod
-    def get_model(model_type: str, model_name: str = None):
+    def get_model(model_type: str, model_name: str | None = None):
         """지정된 model_type에 따라 적절한 LLM 객체를 반환"""
         model_type = model_type.lower()
 

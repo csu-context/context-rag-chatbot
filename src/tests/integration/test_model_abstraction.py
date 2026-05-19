@@ -1,21 +1,16 @@
-import os
 from unittest.mock import MagicMock, patch
 
 import pytest
-from dotenv import load_dotenv
 
-from models.factory import LLMFactory
-from models.llm_anthropic import AnthropicModel
-from models.llm_ollama import OllamaModel
-
-# 테스트 실행 전 환경 변수 로드
-load_dotenv()
+from src.models.factory import LLMFactory
+from src.models.llm_anthropic import AnthropicModel
+from src.models.llm_ollama import OllamaModel
 
 
 def test_factory_anthropic_model():
     """팩토리가 AnthropicModel 인스턴스를 올바르게 생성하는지 확인"""
     with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"}), patch(
-            "models.llm_anthropic.ChatAnthropic"
+        "src.models.llm_anthropic.ChatAnthropic"
     ) as mock_chat:
         mock_instance = MagicMock()
         mock_chat.return_value = mock_instance
@@ -30,8 +25,8 @@ def test_factory_anthropic_model():
 def test_factory_ollama_model():
     """팩토리가 OllamaModel 인스턴스를 올바르게 생성하는지 확인"""
     with patch.dict(
-            "os.environ", {"OLLAMA_BASE_URL": "http://localhost:11434"}
-    ), patch("models.llm_ollama.ChatOllama") as mock_chat:
+        "os.environ", {"OLLAMA_BASE_URL": "http://localhost:11434"}
+    ), patch("src.models.llm_ollama.ChatOllama") as mock_chat:
         mock_instance = MagicMock()
         mock_chat.return_value = mock_instance
 
