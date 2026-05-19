@@ -17,139 +17,134 @@ from src.utils.logger import TracingLogger
 logger = logging.getLogger(__name__)
 
 
-def _perform_retrieval(retriever_or_db: Any, query: str, k: int) -> list[Document]:
-    """리트리버 유연화에 따른 검색 수행 로직 분리"""
-    if hasattr(retriever_or_db, "get_relevant_documents"):
-        results = retriever_or_db.get_relevant_documents(query, n=k)
-        docs = []
-        for res in results:
-            if isinstance(res, Document):
-                docs.append(res)
-            else:
-                docs.append(
-                    Document(
-                        page_content=res.get("content", ""),
-                        metadata={**res.get("metadata", {}), "score": res.get("score") or res.get("_rrf_score", 0)},
+class RAGPipeline:
+    """RAG 파이프라인의 핵심 로직을 관리하는 클래스"""
+
+    def __init__(self, retriever_or_db: Any, llm: Any = None, reranker: Any = None):
+        self.retriever_or_db = retriever_or_db
+        self.llm = llm or LLMFactory.create_llm().get_model()
+        self.reranker = reranker or RerankerFactory.create()
+        self.tracing_logger = TracingLogger()
+        self.cache = SemanticCache()
+
+    def _perform_retrieval(self, query: str, k: int) -> list[Document]:
+        """리트리버 타입에 따른 검색 수행 로직"""
+        if hasattr(self.retriever_or_db, "get_relevant_documents"):
+            results = self.retriever_or_db.get_relevant_documents(query, n=k)
+            docs = []
+            for res in results:
+                if isinstance(res, Document):
+                    docs.append(res)
+                else:
+                    docs.append(
+                        Document(
+                            page_content=res.get("content", ""),
+                            metadata={
+                                **res.get("metadata", {}),
+                                "score": res.get("score") or res.get("_rrf_score", 0),
+                            },
+                        )
                     )
-                )
-        return docs
+            return docs
 
-    # 기존 ChromaDBManager 호환성 유지
-    search_results = retriever_or_db.search(query_text=query, k=k)
-    return [
-        Document(page_content=res["content"], metadata={**res["metadata"], "score": res["score"]})
-        for res in search_results
-    ]
+        # 기존 ChromaDBManager 호환성 유지
+        search_results = self.retriever_or_db.search(query_text=query, k=k)
+        return [
+            Document(page_content=res["content"], metadata={**res["metadata"], "score": res["score"]})
+            for res in search_results
+        ]
 
+    def _format_docs(self, docs: list[Document]) -> str:
+        """프롬프트 주입을 위한 컨텍스트 포맷팅"""
+        formatted = []
+        for doc in docs:
+            source = doc.metadata.get(MetadataFields.SRC_NAME) or "알 수 없는 파일"
+            page = doc.metadata.get(MetadataFields.PG_NUM) or "-"
+            content = f"내용: {doc.page_content}\n출처: [{source}, p.{page}]"
+            formatted.append(content)
+        return "\n\n".join(formatted)
 
-def _format_docs(docs: list[Document]) -> str:
-    """프롬프트 주입을 위한 컨텍스트 포맷팅."""
-    formatted = []
-    for doc in docs:
-        source = doc.metadata.get(MetadataFields.SRC_NAME) or "알 수 없는 파일"
-        page = doc.metadata.get(MetadataFields.PG_NUM) or "-"
-        content = f"내용: {doc.page_content}\n출처: [{source}, p.{page}]"
-        formatted.append(content)
-    return "\n\n".join(formatted)
+    def _do_retrieval(self, query: str, k: int, session: Any) -> list[Document]:
+        with session.trace_step("retrieval") as step:
+            docs = self._perform_retrieval(query, k)
+            step.update(
+                {
+                    "output_count": len(docs),
+                    "data": [{"content": d.page_content[:100] + "...", "metadata": d.metadata} for d in docs],
+                }
+            )
+            return docs
 
+    def _do_reranking(
+        self, query: str, docs: list[Document], final_k: int, session: Any
+    ) -> tuple[list[Document], list[float]]:
+        with session.trace_step("reranking") as step:
+            if docs:
+                pre_rerank_ids = [d.metadata.get(MetadataFields.CHUNK_ID) or "unknown" for d in docs]
+                pre_rerank_scores = [d.metadata.get("score", 0.0) for d in docs]
 
-def _extract_answer(answer_obj: Any) -> str:
-    """LLM의 응답 객체에서 텍스트를 추출합니다."""
-    if hasattr(answer_obj, "content"):
-        return str(answer_obj.content)
-    return str(answer_obj)
+                rerank_result = self.reranker.rerank_with_timeout(query, docs, top_k=final_k)
+                final_docs = rerank_result.documents
+                scores = rerank_result.scores
+                post_rerank_ids = [d.metadata.get(MetadataFields.CHUNK_ID) or "unknown" for d in final_docs]
+            else:
+                final_docs, scores, pre_rerank_ids, post_rerank_ids, pre_rerank_scores = [], [], [], [], []
+                rerank_result = None
 
+            step.update(
+                {
+                    "output_count": len(final_docs),
+                    "model": str(rerank_result.model_name) if rerank_result else "none",
+                    "scores": [f"{s:.4f}" for s in scores],
+                    "rank_change": {"before": pre_rerank_ids, "after": post_rerank_ids},
+                    "pre_rerank_scores": pre_rerank_scores,
+                }
+            )
+            return final_docs, scores
 
-def _do_retrieval(retriever_or_db, query: str, k: int, session: Any) -> list[Document]:
-    with session.trace_step("retrieval") as step:
-        docs = _perform_retrieval(retriever_or_db, query, k)
-        step.update(
-            {
-                "output_count": len(docs),
-                "data": [{"content": d.page_content[:100] + "...", "metadata": d.metadata} for d in docs],
+    def _stream_generation(self, query: str, final_docs: list[Document], session: Any) -> Iterator[str]:
+        with session.trace_step("generation") as step:
+            context = self._format_docs(final_docs)
+            prompt_template = ChatPromptTemplate.from_messages([("system", RAG_SYSTEM_PROMPT), ("human", "{question}")])
+            prompt_val = prompt_template.invoke({"question": query, "context": context})
+
+            llm_params = {
+                "model": str(getattr(self.llm, "model_name", "unknown")),
+                "temperature": str(getattr(self.llm, "temperature", "unknown")),
             }
-        )
-        return docs
 
+            step.update(
+                {
+                    "prompt_preview": str(prompt_val.to_messages()[0].content)[:200] + "...",
+                    "llm_params": llm_params,
+                }
+            )
 
-def _do_reranking(query: str, docs: list[Document], final_k: int, session: Any) -> tuple[list[Document], list[float]]:
-    with session.trace_step("reranking") as step:
-        if docs:
-            # 리랭킹 전 ID 순서 기록 (순위 변화 추적용)
-            pre_rerank_ids = [d.metadata.get(MetadataFields.CHUNK_ID) or "unknown" for d in docs]
-            pre_rerank_scores = [d.metadata.get("score", 0.0) for d in docs]
+            full_answer = ""
+            for chunk in self.llm.stream(prompt_val):
+                content = self._extract_answer(chunk)
+                full_answer += content
+                yield content
 
-            reranker = RerankerFactory.create()
-            rerank_result = reranker.rerank_with_timeout(query, docs, top_k=final_k)
-            final_docs = rerank_result.documents
-            scores = rerank_result.scores
+            step.update({"answer_length": len(full_answer)})
+            session.data["final_answer"] = full_answer
 
-            # 리랭킹 후 ID 순서 기록
-            post_rerank_ids = [d.metadata.get(MetadataFields.CHUNK_ID) or "unknown" for d in final_docs]
-        else:
-            final_docs, scores, pre_rerank_ids, post_rerank_ids, pre_rerank_scores = [], [], [], [], []
+    @staticmethod
+    def _extract_answer(answer_obj: Any) -> str:
+        if hasattr(answer_obj, "content"):
+            return str(answer_obj.content)
+        return str(answer_obj)
 
-        step.update(
-            {
-                "output_count": len(final_docs),
-                "scores": [f"{s:.4f}" for s in scores],
-                "rank_change": {"before": pre_rerank_ids, "after": post_rerank_ids},
-                "pre_rerank_scores": pre_rerank_scores,
-            }
-        )
-        return final_docs, scores
-
-
-def _stream_generation(query: str, final_docs: list[Document], llm: Any, session: Any) -> Iterator[str]:
-    """LLM 스트리밍을 통해 답변을 생성하고 토큰을 순차적으로 반환합니다."""
-    with session.trace_step("generation") as step:
-        context = _format_docs(final_docs)
-        prompt_template = ChatPromptTemplate.from_messages([("system", RAG_SYSTEM_PROMPT), ("human", "{question}")])
-        prompt_val = prompt_template.invoke({"question": query, "context": context})
-
-        # LLM 정보 및 파라미터 추출
-        llm_params = {}
-        if hasattr(llm, "model_name"):
-            llm_params["model"] = llm.model_name
-        if hasattr(llm, "temperature"):
-            llm_params["temperature"] = llm.temperature
-
-        step.update(
-            {
-                "prompt_preview": str(prompt_val.to_messages()[0].content)[:200] + "...",
-                "llm_params": llm_params,
-            }
-        )
-
-        full_answer = ""
-        for chunk in llm.stream(prompt_val):
-            content = _extract_answer(chunk)
-            full_answer += content
-            yield content
-
-        step.update({"answer_length": len(full_answer)})
-        session.data["final_answer"] = full_answer
-
-
-def get_rag_chain(retriever_or_db):
-    """
-    RAG 파이프라인 체인을 생성합니다. 동기 스트리밍 및 상태 추적을 지원합니다.
-    retriever_or_db: ChromaDBManager 인스턴스 또는 get_relevant_documents를 지원하는 리트리버
-    """
-    llm_instance = LLMFactory.create_llm()
-    llm = llm_instance.get_model()
-    tracing_logger = TracingLogger()
-    cache = SemanticCache()
-
-    def run_streaming_pipeline(input_dict: dict[str, Any]) -> Iterator[dict[str, Any]]:
+    def stream(self, input_dict: dict[str, Any]) -> Iterator[dict[str, Any]]:
+        """전체 RAG 파이프라인을 스트리밍 모드로 실행합니다."""
         query = input_dict.get("question", "")
         retrieval_k = input_dict.get("k", 20)
         final_k = input_dict.get("final_k", 5)
 
-        with tracing_logger.start_session(query=query) as session:
+        with self.tracing_logger.start_session(query=query) as session:
             # 1. Semantic Cache Check
             yield {"stage": "cache", "status": "running"}
-            cached_result = cache.get(query)
+            cached_result = self.cache.get(query)
             if cached_result:
                 session.data["cache_hit"] = True
                 yield {"stage": "cache", "status": "hit"}
@@ -170,21 +165,20 @@ def get_rag_chain(retriever_or_db):
 
             # 2. Retrieval
             yield {"stage": "retrieval", "status": "running"}
-            docs = _do_retrieval(retriever_or_db, query, retrieval_k, session)
+            docs = self._do_retrieval(query, retrieval_k, session)
             yield {"stage": "retrieval", "status": "complete", "output": docs}
 
             # 3. Reranking
             yield {"stage": "reranking", "status": "running"}
-            final_docs, scores = _do_reranking(query, docs, final_k, session)
+            final_docs, scores = self._do_reranking(query, docs, final_k, session)
             for doc, score in zip(final_docs, scores, strict=False):
                 doc.metadata["rerank_score"] = score
             yield {"stage": "reranking", "status": "complete", "output": final_docs}
 
             # 4. Generation
             yield {"stage": "generation", "status": "running"}
-            answer_stream = _stream_generation(query, final_docs, llm, session)
             full_answer = ""
-            for token in answer_stream:
+            for token in self._stream_generation(query, final_docs, session):
                 full_answer += token
                 yield {"stage": "generation", "status": "streaming", "output": token}
             yield {"stage": "generation", "status": "complete"}
@@ -204,8 +198,14 @@ def get_rag_chain(retriever_or_db):
                     }
                 )
 
-            cache.add(query, full_answer, docs_for_cache)
+            self.cache.add(query, full_answer, docs_for_cache)
 
             yield {"stage": "citation", "status": "complete", "output": citations_str, "source_documents": final_docs}
 
-    return RunnableLambda(run_streaming_pipeline)
+
+def get_rag_chain(retriever_or_db):
+    """
+    RAG 파이프라인 체인을 생성합니다. LangChain Runnable 인터페이스를 준수합니다.
+    """
+    pipeline = RAGPipeline(retriever_or_db)
+    return RunnableLambda(pipeline.stream)

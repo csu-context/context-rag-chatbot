@@ -17,8 +17,8 @@ async def test_rerank_rank_change_logging(tmp_path):
         # Mock DB
         mock_db = MagicMock()
 
-        # _perform_retrieval 로직 시뮬레이션을 위해 Document 객체로 변환되어 반환되도록 패치
-        with patch("src.core.chains._perform_retrieval") as mock_retrieval:
+        # RAGPipeline 클래스의 _perform_retrieval 메서드를 패치
+        with patch("src.core.chains.RAGPipeline._perform_retrieval") as mock_retrieval:
             mock_retrieval.return_value = [
                 Document(page_content="doc1", metadata={"chunk_id": "id1"}),
                 Document(page_content="doc2", metadata={"chunk_id": "id2"}),
@@ -75,5 +75,5 @@ async def test_rerank_rank_change_logging(tmp_path):
             # llm_params 추출 확인
             assert "llm_params" in gen_step
             assert gen_step["llm_params"].get("model") == "test-model"
-            assert gen_step["llm_params"].get("temperature") == 0.5
+            assert gen_step["llm_params"].get("temperature") == "0.5"
             assert "latency_ms" in gen_step

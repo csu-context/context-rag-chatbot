@@ -46,6 +46,8 @@ docling>=2.0.0
 # UI 및 유틸리티
 streamlit==1.57.0
 python-dotenv==1.2.2
+pydantic==2.12.5
+pydantic-settings==2.14.1
 rank-bm25==0.2.2
 kiwipiepy==0.23.1
 scikit-learn==1.8.0
@@ -54,3 +56,4 @@ scikit-learn==1.8.0
 pytest==9.0.3
 pytest-mock==3.15.1
 pytest-cov==7.1.0
+ruff==0.15.10
