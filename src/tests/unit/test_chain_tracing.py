@@ -1,5 +1,5 @@
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from langchain_core.documents import Document
@@ -36,27 +36,22 @@ async def test_rerank_rank_change_logging(tmp_path):
                 )
                 mock_get_reranker.return_value = mock_reranker
 
-                # Mock LLM
-                with patch("src.models.factory.LLMFactory().get_model") as mock_factory:
-                    mock_llm_inst = MagicMock()
+                # Mock LLM Factory
+                with patch("src.models.factory.LLMFactory.get_model") as mock_get_model:
                     mock_model = MagicMock()
-                    mock_model.ainvoke = AsyncMock()
                     mock_model.model_name = "test-model"
-                    mock_model.temperature = 0.5  # JSON 직렬화 가능하도록 구체적인 타입(float) 할당
+                    mock_model.temperature = 0.5
 
                     mock_response = AIMessage(content="answer")
-
-                    def mock_stream(*args, **kwargs):
-                        yield mock_response
-
-                    mock_model.stream = mock_stream
+                    # 파라미터 무시를 위해 lambda 활용
+                    mock_model.stream = lambda *_, **__: [mock_response]
                     mock_model.ainvoke.return_value = mock_response
-                    mock_llm_inst.get_model.return_value = mock_model
-                    mock_factory.return_value = mock_llm_inst
+
+                    mock_get_model.return_value = mock_model
 
                     chain = get_rag_chain(mock_db)
 
-                    # 동기 제너레이터이므로 일반 for 루프로 소비 (테스트 환경에서는 블로킹되어도 무방함)
+                    # 동기 제너레이터이므로 일반 for 루프로 소비
                     for _ in chain.stream({"question": "test", "k": 2}):
                         pass
 
@@ -72,8 +67,7 @@ async def test_rerank_rank_change_logging(tmp_path):
 
             # Generation step 검증
             gen_step = next(s for s in log_data["steps"] if s["step"] == "generation")
-            # llm_params 추출 확인
             assert "llm_params" in gen_step
             assert gen_step["llm_params"].get("model") == "test-model"
-            assert gen_step["llm_params"].get("temperature") == "0.5"
+            assert str(gen_step["llm_params"].get("temperature")) == "0.5"
             assert "latency_ms" in gen_step

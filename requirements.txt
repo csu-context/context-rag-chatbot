@@ -29,7 +29,7 @@ accelerate==1.13.0
 # 벡터 데이터베이스 및 MLOps 평가
 chromadb==1.5.9
 # noinspection PyPackageRequirementsInspection
-ragas==0.4.3
+ragas>=0.4.4
 datasets==4.8.5
 pyarrow==24.0.0
 tqdm==4.67.3
@@ -55,3 +55,5 @@ scikit-learn==1.8.0
 pytest==9.0.3
 pytest-mock==3.15.1
 pytest-cov==7.1.0
+
+pydantic

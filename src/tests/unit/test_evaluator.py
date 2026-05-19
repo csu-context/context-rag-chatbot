@@ -18,10 +18,8 @@ def mock_db_manager():
 
 @pytest.fixture
 def mock_rag_chain():
-    # run_rag_inference 내부에서 import되는 get_rag_chain을 모킹
     with patch("src.core.chains.get_rag_chain") as mock:
         chain_inst = MagicMock()
-        # 체인은 이제 generator를 반환하는 stream 메서드를 사용함
         chain_inst.stream.return_value = [
             {"stage": "generation", "status": "streaming", "output": "Test answer"},
             {
@@ -36,11 +34,17 @@ def mock_rag_chain():
 
 @pytest.fixture
 def mock_llm_factory():
-    with patch("src.eval.evaluator.LLMFactory") as mock:
-        mock_inst = MagicMock()
-        mock_inst.model_name = "test-model"
-        mock.create_llm.return_value = mock_inst
-        yield mock
+    # LLMFactory 인스턴스를 직접 생성하지 않고 메서드 자체를 패치
+    with patch("src.eval.evaluator.LLMFactory") as mock_factory_cls:
+        mock_instance = MagicMock()
+        mock_model = MagicMock()
+        mock_model.model_name = "test-model"
+
+        # 팩토리 인스턴스가 get_model을 호출하면 mock_model을 반환하도록 설정
+        mock_instance.get_model.return_value = mock_model
+        mock_factory_cls.return_value = mock_instance
+
+        yield mock_instance
 
 
 @pytest.mark.asyncio
@@ -55,17 +59,15 @@ async def test_run_rag_inference(mock_db_manager, mock_rag_chain, mock_llm_facto
     assert len(dataset) == 1
     assert model_name == "test-model"
 
-    # Ragas v0.4.x EvaluationDataset은 samples 리스트를 가짐
     sample = dataset[0]
     assert sample.user_input == "What is A?"
-    assert sample.response == "Test answer"  # 출처 제거 확인
+    assert sample.response == "Test answer"
     assert "A info" in sample.retrieved_contexts
     assert sample.reference == "A is alpha"
 
 
 @pytest.mark.asyncio
 async def test_run_rag_inference_error_handling(mock_db_manager, mock_rag_chain, mock_llm_factory):
-    # 체인 실행 시 에러 발생 시뮬레이션
     def mock_stream_error(*args, **kwargs):
         raise Exception("Chain error")
         yield {}
@@ -76,5 +78,4 @@ async def test_run_rag_inference_error_handling(mock_db_manager, mock_rag_chain,
 
     dataset, _ = await run_rag_inference(test_data)
 
-    # 에러 발생 시 해당 샘플은 제외되어야 함
     assert len(dataset) == 0

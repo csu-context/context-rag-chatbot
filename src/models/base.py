@@ -44,8 +44,17 @@ class BaseLLM(ABC):
     """모든 LLM 모델 구현체가 상속받아야 하는 추상 베이스 클래스"""
 
     def __init__(self, model_name: str):
-        # setter를 사용하지 않고 바로 할당할 수 있도록 private 변수로 관리하지 않고 직접 속성 할당
-        self.model_name = model_name
+        self._model_name = model_name
+
+    @property
+    def model_name(self) -> str:
+        """모델 명을 반환합니다."""
+        return self._model_name
+
+    @model_name.setter
+    def model_name(self, value: str):
+        """모델 명을 설정합니다."""
+        self._model_name = value
 
     @abstractmethod
     def invoke(self, prompt: Any, **kwargs: Any) -> LLMResponse:

@@ -1,4 +1,3 @@
-# src/models/embedder.py
 import logging
 
 import torch
@@ -30,5 +29,5 @@ class BGEEmbedder:
         return self.model.encode(sentences, normalize_embeddings=True)
 
     def get_dimension(self):
-        # 벡터 차원 확인
-        return self.model.get_sentence_embedding_dimension()
+        # 경고 메시지 해결: 최신 메서드인 get_embedding_dimension 사용
+        return self.model.get_embedding_dimension()
