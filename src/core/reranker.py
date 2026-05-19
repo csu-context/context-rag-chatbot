@@ -27,6 +27,7 @@ class RerankResult:
 
     documents: list[Document]
     scores: list[float]
+    model_name: str = "unknown"
     filtered_count: int = 0
     elapsed_time_sec: float = 0.0
 
@@ -37,7 +38,8 @@ class BaseReranker(ABC):
     MAX_INFER_TIME_SEC = 5  # API 타임아웃
     PERFORMANCE_THRESHOLD_SEC = 3.0  # 지연 기준 시간 (이 시간 초과 시 top_k 동적 조정)
 
-    def __init__(self, top_k: int = 5, threshold: float = 0.3):
+    def __init__(self, name: str, top_k: int = 5, threshold: float = 0.3):
+        self.name = name
         self.top_k = top_k
         self.threshold = threshold
         self._last_latency = 0.0
@@ -57,9 +59,8 @@ class BaseReranker(ABC):
         """이전 추론 지연 시간에 따라 top_k를 동적으로 조정합니다."""
         if self._last_latency > self.PERFORMANCE_THRESHOLD_SEC:
             adjusted = max(1, top_k // 2)
-            model_ident = getattr(self, "name", self.__class__.__name__)
             logger.warning(
-                f"[{model_ident}] High latency detected ({self._last_latency:.2f}s). "
+                f"[{self.name}] High latency detected ({self._last_latency:.2f}s). "
                 f"Adjusting top_k from {top_k} to {adjusted}."
             )
             return adjusted
@@ -81,13 +82,14 @@ class BaseReranker(ABC):
             return result
         except Exception as e:
             self._last_latency = time.time() - start_time
-            model_ident = getattr(self, "name", self.__class__.__name__)
-            logger.warning(f"Reranking failed in {model_ident}: {e}. Returning original documents.")
+            logger.warning(f"Reranking failed in {self.name}: {e}. Returning original documents.")
             # 실패 시 원본 문서에서 top_k만큼 잘라서 반환
             return RerankResult(
                 documents=documents[:adjusted_top_k],
                 scores=[0.0] * min(len(documents), adjusted_top_k),
+                model_name=self.name,
                 filtered_count=max(0, len(documents) - adjusted_top_k),
+                elapsed_time_sec=self._last_latency,
             )
 
 
@@ -107,10 +109,9 @@ class CrossEncoderReranker(BaseReranker):
         threshold: float | None = None,
         device: str | None = None,
     ):
-        super().__init__(top_k, threshold or 0.3)
+        super().__init__(name="Local CrossEncoder", top_k=top_k, threshold=threshold or 0.3)
         self.model_name = model_name
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-        self.name = "Local CrossEncoder"
 
         if threshold is None:
             self._set_model_defaults()
@@ -175,7 +176,12 @@ class CrossEncoderReranker(BaseReranker):
         effective_threshold = threshold if threshold is not None else self.threshold
 
         if len(documents) < 2:
-            return RerankResult(documents=documents, scores=[0.5] * len(documents))
+            return RerankResult(
+                documents=documents,
+                scores=[0.5] * len(documents),
+                model_name=self.name,
+                elapsed_time_sec=0.0,
+            )
 
         pairs = [(query, doc.page_content) for doc in documents]
         model = self._load_model()
@@ -191,20 +197,21 @@ class CrossEncoderReranker(BaseReranker):
         return RerankResult(
             documents=[d for _, d in ranked],
             scores=[s for s, _ in ranked],
+            model_name=self.name,
             filtered_count=len(documents) - len(ranked),
             elapsed_time_sec=elapsed_time,
         )
 
 
 class APIBaseReranker(BaseReranker):
-    """API 기반 리랭커 공통 로직 추상화 클래스"""
+    """API 기반 리랭커 공통 로직 추상화 클래스 (Session 재사용)"""
 
     def __init__(self, api_key: str | None, model_name: str, api_url: str, top_k: int, threshold: float, name: str):
-        super().__init__(top_k, threshold)
+        super().__init__(name=name, top_k=top_k, threshold=threshold)
         self.api_key = api_key
         self.model_name = model_name
         self.api_url = api_url
-        self.name = name
+        self._session = requests.Session()  # Connection Pooling 지원
 
     def _build_payload(self, query: str, documents: list[Document], top_k: int) -> dict:
         return {
@@ -239,18 +246,27 @@ class APIBaseReranker(BaseReranker):
         effective_threshold = threshold if threshold is not None else self.threshold
 
         if not documents:
-            return RerankResult(documents=[], scores=[])
+            return RerankResult(documents=[], scores=[], model_name=self.name)
 
         if not self.api_key:
-            logger.warning(f"{self.name}_API_KEY is not set. Failing over.")
+            logger.warning(f"[{self.name}] API_KEY is not set. Failing over.")
             raise ValueError(f"API Key missing for {self.name}")
 
         start_time = time.time()
         headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
         payload = self._build_payload(query, documents, effective_top_k)
 
-        response = requests.post(self.api_url, headers=headers, json=payload, timeout=self.MAX_INFER_TIME_SEC)
-        response.raise_for_status()
+        try:
+            response = self._session.post(
+                self.api_url,
+                headers=headers,
+                json=payload,
+                timeout=self.MAX_INFER_TIME_SEC,
+            )
+            response.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            logger.error(f"[{self.name}] API request failed: {e}")
+            raise
 
         result = response.json()
         elapsed_time = time.time() - start_time
@@ -268,6 +284,7 @@ class APIBaseReranker(BaseReranker):
         return RerankResult(
             documents=final_docs[:effective_top_k],
             scores=final_scores[:effective_top_k],
+            model_name=self.name,
             filtered_count=len(documents) - len(final_docs[:effective_top_k]),
             elapsed_time_sec=elapsed_time,
         )
