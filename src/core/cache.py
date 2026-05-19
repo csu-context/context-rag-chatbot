@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 
 class SemanticCache:
-    def __init__(self, collection_name="semantic_cache", threshold=0.95):
+    def __init__(self, collection_name="semantic_cache", threshold=0.90):
         self.db_manager = ChromaDBManager(collection_name=collection_name)
         self.collection = self.db_manager.collection
         self.threshold = threshold
