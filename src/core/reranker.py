@@ -329,6 +329,18 @@ class RerankerFactory:
     @staticmethod
     def create(top_k: int = 5) -> BaseReranker:
         reranker_type = os.getenv("RERANKER_TYPE", "local").lower()
+        # 🔐 보안 가드레일: 외부 API 리랭커 사용 허용 여부 체크
+        allow_external = os.getenv("ALLOW_EXTERNAL_RERANKER", "false").lower() == "true"
+
+        if reranker_type in ["cohere", "jina"]:
+            if not allow_external:
+                logger.warning(
+                    f"Security Policy: External reranker '{reranker_type}' is blocked. "
+                    "Set ALLOW_EXTERNAL_RERANKER=true to enable it. Falling back to 'local'."
+                )
+                reranker_type = "local"
+            else:
+                logger.info(f"External reranker '{reranker_type}' is enabled by policy.")
 
         if reranker_type == "cohere":
             logger.info("Using CohereReranker")
