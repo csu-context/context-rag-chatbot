@@ -47,8 +47,12 @@ services:
     container_name: rag-chatbot-ollama
     volumes:
       - ./models/ollama:/root/.ollama
+      - ./docker/ollama_init.sh:/root/ollama_init.sh
     ports:
       - "11434:11434"
+    env_file:
+      - .env
+    entrypoint: ["/bin/bash", "/root/ollama_init.sh"]
     # [주의] NVIDIA GPU 가속 설정
     # MacBook 또는 CPU 전용 환경에서는 아래 'deploy' 섹션을 주석 처리하세요.
     deploy:
