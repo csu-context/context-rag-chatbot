@@ -10,6 +10,7 @@ import requests
 import torch
 from langchain_core.documents import Document
 
+from src.common.config import settings
 from src.utils.paths import CROSS_ENCODER_CACHE_DIR
 
 # sentence_transformers는 선택적 의존성이므로, 필요할 때만 import 시도
@@ -328,26 +329,26 @@ class RerankerFactory:
 
     @staticmethod
     def create(top_k: int = 5) -> BaseReranker:
-        reranker_type = os.getenv("RERANKER_TYPE", "local").lower()
-        # 🔐 보안 가드레일: 외부 API 리랭커 사용 허용 여부 체크
-        allow_external = os.getenv("ALLOW_EXTERNAL_RERANKER", "false").lower() == "true"
+        reranker_type = settings.RERANKER_TYPE.lower()
+        # 보안 가드레일: 외부 API 리랭커 사용 허용 여부 체크
+        allow_external = settings.ALLOW_EXTERNAL_RERANKER
 
         if reranker_type in ["cohere", "jina"]:
             if not allow_external:
                 logger.warning(
-                    f"Security Policy: External reranker '{reranker_type}' is blocked. "
-                    "Set ALLOW_EXTERNAL_RERANKER=true to enable it. Falling back to 'local'."
+                    f"보안 정책: 외부 리랭커 '{reranker_type}' 사용이 차단되었습니다. "
+                    ".env 파일에서 ALLOW_EXTERNAL_RERANKER=true 설정을 확인하십시오. 로컬 모델로 전환합니다."
                 )
                 reranker_type = "local"
             else:
-                logger.info(f"External reranker '{reranker_type}' is enabled by policy.")
+                logger.info(f"보안 정책에 따라 외부 리랭커 '{reranker_type}' 사용이 허용되었습니다.")
 
         if reranker_type == "cohere":
-            logger.info("Using CohereReranker")
+            logger.info("Cohere 리랭커를 사용합니다.")
             return CohereReranker(top_k=top_k)
         elif reranker_type == "jina":
-            logger.info("Using JinaReranker")
+            logger.info("Jina 리랭커를 사용합니다.")
             return JinaReranker(top_k=top_k)
         else:
-            logger.info("Using CrossEncoderReranker (Local)")
+            logger.info("로컬 CrossEncoder 리랭커를 사용합니다.")
             return CrossEncoderReranker.get_instance()
