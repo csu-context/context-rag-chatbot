@@ -41,6 +41,6 @@ def test_ollama_model_invoke(mock_chat_ollama):
 
 def test_factory_ollama_creation(mock_chat_ollama):
     # LLMFactory를 통한 생성 테스트
-    model = LLMFactory.create_llm(model_type="ollama", model_name="solar")
+    model = LLMFactory().get_model(model_type="ollama", model_name="solar")
     assert isinstance(model, OllamaModel)
     assert model.model_name == "solar"

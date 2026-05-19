@@ -54,7 +54,7 @@ async def run_rag_inference(test_data: list[dict[str, Any]]) -> tuple[Evaluation
     rag_chain = get_rag_chain(db_manager)
 
     # 모델 정보 획득 (로깅용)
-    temp_llm = LLMFactory.create_llm()
+    temp_llm = LLMFactory().get_model()
     model_name = str(temp_llm.model_name)
 
     samples = []
@@ -131,7 +131,7 @@ async def main():
     logger.info(f"평가 판사 설정 (Type: {eval_model_type}, Model: {eval_model_name})")
 
     # LLMFactory를 통해 평가 판사 인스턴스 생성
-    eval_llm_inst = LLMFactory.create_llm(model_type=eval_model_type, model_name=eval_model_name, temperature=0)
+    eval_llm_inst = LLMFactory().get_model(model_type=eval_model_type, model_name=eval_model_name, temperature=0)
     ragas_llm = LangchainLLMWrapper(eval_llm_inst.get_model())
 
     # 임베딩 모델 설정

@@ -37,7 +37,7 @@ def test_gemini_integration():
             else default
         )
 
-        llm_instance = LLMFactory.create_llm()
+        llm_instance = LLMFactory().get_model()
         assert isinstance(llm_instance, GeminiModel)
         assert llm_instance.model_name == target_model
 

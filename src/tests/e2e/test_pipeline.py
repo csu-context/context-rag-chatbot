@@ -59,7 +59,7 @@ async def test_full_rag_pipeline():
     # 4. RAG 체인 호출 및 검증 (Mock LLM)
     test_query = "복수전공의 정의가 뭐야?"
 
-    with patch("src.models.factory.LLMFactory.create_llm") as mock_factory:
+    with patch("src.models.factory.LLMFactory().get_model") as mock_factory:
         mock_llm_inst = MagicMock()
         mock_model = MagicMock()
         mock_model.model_name = "test-model"

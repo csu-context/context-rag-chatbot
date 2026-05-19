@@ -5,8 +5,8 @@ import pytest
 from dotenv import load_dotenv
 
 from src.models.factory import LLMFactory
-# 실재하는 파일 구조와 클래스명(AnthropicModel)으로 매핑을 올바르게 수정함
-from src.models.llm_anthropic import AnthropicModel
+# 실제 구현체인 AnthropicModel을 불러오되, ClaudeModel이라는 이름으로 별칭(alias)을 붙여줌
+from src.models.llm_anthropic import AnthropicModel as ClaudeModel
 
 # 테스트 실행 전 환경 변수 로드
 load_dotenv()
@@ -15,17 +15,17 @@ load_dotenv()
 @pytest.mark.skipif(not os.getenv("ANTHROPIC_API_KEY"), reason="ANTHROPIC_API_KEY가 설정되지 않았습니다.")
 def test_claude_factory_creation():
     """LLMFactory를 통한 Claude 모델 생성 테스트"""
-    # 실제 구현된 메서드인 get_model을 사용하도록 수정함
     factory = LLMFactory()
     llm = factory.get_model(model_type="anthropic", model_name="claude-sonnet-4-6")
-    assert isinstance(llm, AnthropicModel)
+
+    # ClaudeModel(실제로는 AnthropicModel)로 확인
+    assert isinstance(llm, ClaudeModel)
     assert llm.model_name == "claude-sonnet-4-6"
 
 
 @pytest.mark.skipif(not os.getenv("ANTHROPIC_API_KEY"), reason="ANTHROPIC_API_KEY가 설정되지 않았습니다.")
 def test_claude_invoke():
     """Claude 모델 호출 테스트 (Mock)"""
-    # ChatAnthropic 클래스 경로와 중첩된 with 문을 ruff 규칙에 맞게 한 줄로 정렬함
     with patch("src.models.llm_anthropic.ChatAnthropic") as mock_class:
         mock_inst = MagicMock()
         mock_res = MagicMock()

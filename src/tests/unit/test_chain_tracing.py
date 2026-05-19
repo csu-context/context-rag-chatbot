@@ -37,7 +37,7 @@ async def test_rerank_rank_change_logging(tmp_path):
                 mock_get_reranker.return_value = mock_reranker
 
                 # Mock LLM
-                with patch("src.models.factory.LLMFactory.create_llm") as mock_factory:
+                with patch("src.models.factory.LLMFactory().get_model") as mock_factory:
                     mock_llm_inst = MagicMock()
                     mock_model = MagicMock()
                     mock_model.ainvoke = AsyncMock()

@@ -43,7 +43,7 @@ GENERATION_PROMPT = """
 class GoldenDatasetGenerator:
     def __init__(self, model_type: str = "claude", model_name: str = "claude-haiku-4-5"):
         # 비용 효율을 위해 Haiku 모델 사용 (기존: claude-sonnet-4-6)
-        self.llm_instance = LLMFactory.create_llm(model_type=model_type, model_name=model_name, temperature=0.3)
+        self.llm_instance = LLMFactory().get_model(model_type=model_type, model_name=model_name, temperature=0.3)
         self.prompt = ChatPromptTemplate.from_template(GENERATION_PROMPT)
         # LLMFactory 인스턴스에서 LangChain 모델 객체 추출
         self.llm = self.llm_instance.get_model()

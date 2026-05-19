@@ -31,7 +31,7 @@ async def test_rag_normal_response():
     ]
     retriever = MockRetriever(docs)
 
-    with patch("src.models.factory.LLMFactory.create_llm") as mock_factory:
+    with patch("src.models.factory.LLMFactory().get_model") as mock_factory:
         mock_llm_inst = MagicMock()
         mock_model = MagicMock()
 
@@ -77,7 +77,7 @@ async def test_rag_hallucination_prevention():
     ]
     retriever = MockRetriever(docs)
 
-    with patch("src.models.factory.LLMFactory.create_llm") as mock_factory:
+    with patch("src.models.factory.LLMFactory().get_model") as mock_factory:
         mock_llm_inst = MagicMock()
         mock_model = MagicMock()
 

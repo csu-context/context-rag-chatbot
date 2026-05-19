@@ -23,7 +23,6 @@ class LLMResponse(BaseModel):
         """모델별 단가를 기반으로 비용을 계산합니다."""
         from src.common.constants import LLMPricing
 
-        # 모델 명에서 버전 정보 등 제외하고 매칭 시도 (예: claude-haiku-4-5-2025... -> claude-haiku-4-5)
         matched_model = ""
         for known_model in LLMPricing.PRICING:
             if self.model_name.startswith(known_model):
@@ -37,7 +36,6 @@ class LLMResponse(BaseModel):
         input_tokens = self.usage.get("input_tokens", 0)
         output_tokens = self.usage.get("output_tokens", 0)
 
-        # 1M 토큰 당 단가 적용
         cost = (input_tokens * pricing["input"] / 1_000_000) + (output_tokens * pricing["output"] / 1_000_000)
         return cost
 
@@ -46,6 +44,7 @@ class BaseLLM(ABC):
     """모든 LLM 모델 구현체가 상속받아야 하는 추상 베이스 클래스"""
 
     def __init__(self, model_name: str):
+        # setter를 사용하지 않고 바로 할당할 수 있도록 private 변수로 관리하지 않고 직접 속성 할당
         self.model_name = model_name
 
     @abstractmethod
