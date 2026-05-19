@@ -19,7 +19,7 @@ def main():
     """RAG 챗봇 데이터 구축(Ingestion) CLI 도구."""
     setup_global_logging()
     logger.info("=" * 50)
-    logger.info("RAG 데이터 구축 시스템 (Orchestrator)을 시작합니다.")
+    logger.info("RAG 데이터 구축 시스템(Orchestrator)을 시작합니다.")
     logger.info("=" * 50)
 
     try:
@@ -48,7 +48,7 @@ def main():
         logger.error(f"데이터 구축 중 오류 발생: {e}", exc_info=True)
         sys.exit(1)
 
-    logger.info("시스템 업데이트 완료. 이제 'streamlit run src/app.py'를 실행하세요.")
+    logger.info("시스템이 최신 데이터로 업데이트되었습니다. 이제 'streamlit run src/app.py'를 실행하세요.")
 
 
 if __name__ == "__main__":

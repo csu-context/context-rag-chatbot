@@ -16,8 +16,8 @@ logger = logging.getLogger(__name__)
 
 class ManualParser:
     def __init__(self, file_name: str, parser_type: str | None = None):
-        """
-        사내 매뉴얼 파서 초기화 (PDF, MD 지원)
+        """사내 매뉴얼 파서 초기화 (PDF, MD 지원)
+
         :param file_name: 파일명 (예: 'sample.pdf' 또는 'manual.md')
         :param parser_type: 현재 설정된 파서 전략 타입 (해시 생성용)
         """
@@ -47,7 +47,8 @@ class ManualParser:
         else:
             raise ValueError(f"지원하지 않는 파일 형식입니다: {self.extension}")
 
-    def _clean_text(self, text: str) -> str:
+    @staticmethod
+    def _clean_text(text: str) -> str:
         """데이터 정제: 불필요한 공백 제거 및 규정 특화 정규화"""
         # 1. 중복 공백 제거
         text = re.sub(r"\s+", " ", text).strip()
@@ -62,12 +63,12 @@ class ManualParser:
         return text
 
     def _add_chunk(
-        self,
-        data_list: list[dict[str, Any]],
-        chapter: str,
-        article: str,
-        content: list[str],
-        page: int,
+            self,
+            data_list: list[dict[str, Any]],
+            chapter: str,
+            article: str,
+            content: list[str],
+            page: int,
     ):
         """구조화된 청크 데이터 생성 및 리스트 추가 (표준 규격 준수)"""
         cleaned_content = self._clean_text(" ".join(content))
@@ -89,7 +90,8 @@ class ManualParser:
             }
         )
 
-    def _extract_block_info(self, block: dict) -> tuple[str, float]:
+    @staticmethod
+    def _extract_block_info(block: dict) -> tuple[str, float]:
         """블록 내 텍스트와 최대 폰트 크기를 추출"""
         if "lines" not in block:
             return "", 0.0
@@ -154,12 +156,12 @@ class ManualParser:
         return structured_data
 
     def _process_pdf_block(
-        self,
-        block: dict,
-        page_num: int,
-        base_font_size: float,
-        state: dict,
-        structured_data: list,
+            self,
+            block: dict,
+            page_num: int,
+            base_font_size: float,
+            state: dict,
+            structured_data: list,
     ):
         """단일 PDF 블록을 분석하여 상태 업데이트 및 청크 추가"""
         block_text, max_size = self._extract_block_info(block)
@@ -207,7 +209,8 @@ class ManualParser:
         else:
             state["content"].append(block_text)
 
-    def _calculate_base_font_size(self, doc) -> float:
+    @staticmethod
+    def _calculate_base_font_size(doc) -> float:
         """문서 전체에서 가장 많이 사용된 본문 폰트 크기 계산"""
         font_sizes = []
         sample_pages = min(len(doc), 10)
@@ -261,26 +264,27 @@ if __name__ == "__main__":
 
     from src.utils.logger import setup_global_logging
 
-    if __name__ == "__main__":
-        # 단독 실행 시 테스트 로직
-        setup_global_logging()
+    # 단독 실행 시 테스트 로직
+    setup_global_logging()
 
-        # data/raw 디렉토리에서 테스트할 첫 번째 파일 자동 검색
-        supported_files = []
-        for ext in [".pdf", ".md", ".markdown"]:
-            supported_files.extend(list(RAW_DATA_DIR.glob(f"*{ext}")))
+    # data/raw 디렉토리에서 테스트할 첫 번째 파일 자동 검색
+    supported_files = []
+    for ext in [".pdf", ".md", ".markdown"]:
+        supported_files.extend(list(RAW_DATA_DIR.glob(f"*{ext}")))
 
-        if supported_files:
-            test_file = supported_files[0].name
-            logger.info(f"테스트 파일이 탐지되었습니다.: {test_file}")
-            try:
-                parser = ManualParser(test_file)
-                parsed_data = parser.parse()
-                logger.info(f"파싱 성공: {len(parsed_data)} 청크가 추출 되었습니다.")
+    if supported_files:
+        test_file = supported_files[0].name
+        logger.info(f"테스트 파일 탐지됨: {test_file}")
+        try:
+            parser = ManualParser(test_file)
+            parsed_data = parser.parse()
+            logger.info(f"파싱 성공: {len(parsed_data)} 청크 추출됨")
 
-                # 샘플 출력
-                if parsed_data:
-                    logger.info("\n[첫 번째 청크 샘플]")
-                    print(json.dumps(parsed_data[0], ensure_ascii=False, indent=2))
-            except Exception as e:
-                logger.error(f"파싱 중 에러 발생: {e}")
+            # 샘플 출력
+            if parsed_data:
+                logger.info("\n[첫 번째 청크 샘플]")
+                print(json.dumps(parsed_data[0], ensure_ascii=False, indent=2))
+        except Exception as e:
+            logger.error(f"파싱 중 에러 발생: {e}")
+    else:
+        logger.warning(f"테스트를 위한 지원 파일이 {RAW_DATA_DIR} 에 없습니다.")

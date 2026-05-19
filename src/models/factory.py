@@ -5,12 +5,13 @@ from src.common.config import settings
 from src.common.constants import LLMDefaults
 from src.models.base import BaseLLM
 from src.models.llm_anthropic import AnthropicModel
+from src.models.llm_gemini import GeminiModel
 from src.models.llm_ollama import OllamaModel
 
 logger = logging.getLogger(__name__)
 
 
-class LLMFactory:
+class ModelFactory:
     """환경 변수 및 설정에 따라 모델 인스턴스를 생성하는 팩토리 클래스"""
 
     @staticmethod
@@ -18,7 +19,7 @@ class LLMFactory:
         """설정된 타입에 따라 모델 인스턴스를 반환합니다.
 
         Args:
-            model_type: 모델 제공자 타입 (anthropic, ollama 등)
+            model_type: 모델 제공자 타입 (anthropic, gemini, ollama 등)
             model_name: 구체적인 모델 식별자
             **kwargs: 모델 생성을 위한 추가 파라미터
         """
@@ -28,7 +29,12 @@ class LLMFactory:
 
         logger.info(f"LLM 인스턴스 초기화 수행: Provider={type_}, Model={name_}")
 
-        if type_ == "anthropic" or type_ == "claude":
+        if type_ == "gemini":
+            target_name = name_ or LLMDefaults.GEMINI_DEFAULT
+            api_key = settings.GEMINI_API_KEY or settings.GOOGLE_API_KEY
+            return GeminiModel(model_name=target_name, api_key=api_key, temperature=temp_)
+
+        elif type_ in ["anthropic", "claude"]:
             target_name = name_ or LLMDefaults.CLAUDE_DEFAULT
             return AnthropicModel(model_name=target_name, temperature=temp_, **kwargs)
 
@@ -41,3 +47,8 @@ class LLMFactory:
             default_model = LLMDefaults.CLAUDE_DEFAULT
             logger.warning(f"지원하지 않는 타입 '{type_}'이 감지되어 Anthropic 모델로 전환합니다.")
             return AnthropicModel(model_name=default_model, temperature=temp_, **kwargs)
+
+    @staticmethod
+    def create_llm(model_type: str | None = None, model_name: str | None = None, **kwargs: Any) -> BaseLLM:
+        """기존 코드 호환성을 위한 래퍼 메서드"""
+        return ModelFactory.get_model(model_type, model_name, **kwargs)

@@ -1,7 +1,9 @@
 from unittest.mock import MagicMock, patch
 
 from src.models.base import LLMResponse
-from src.models.factory import LLMFactory
+from src.models.factory import ModelFactory
+from src.models.llm_anthropic import AnthropicModel
+from src.models.llm_ollama import OllamaModel
 
 
 def test_llm_response_structure():
@@ -14,14 +16,13 @@ def test_llm_response_structure():
 def test_factory_anthropic_model():
     """팩토리가 AnthropicModel 인스턴스를 올바르게 생성하는지 확인"""
     with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"}):
-        # ChatAnthropic의 인스턴스 생성을 모킹합니다.
         with patch("src.models.llm_anthropic.ChatAnthropic") as mock_chat:
             mock_instance = MagicMock()
             mock_chat.return_value = mock_instance
 
-            factory = LLMFactory()
-            model = factory.get_model("anthropic", model_name="claude-3-opus")
+            model = ModelFactory.get_model("anthropic", model_name="claude-3-opus")
 
+            assert isinstance(model, AnthropicModel)
             assert model.model_type == "anthropic"
             assert model.model_name == "claude-3-opus"
 
@@ -29,13 +30,12 @@ def test_factory_anthropic_model():
 def test_factory_ollama_model():
     """팩토리가 OllamaModel 인스턴스를 올바르게 생성하는지 확인"""
     with patch.dict("os.environ", {"OLLAMA_BASE_URL": "http://localhost:11434"}):
-        # ChatOllama의 인스턴스 생성을 모킹합니다.
         with patch("src.models.llm_ollama.ChatOllama") as mock_chat:
             mock_instance = MagicMock()
             mock_chat.return_value = mock_instance
 
-            factory = LLMFactory()
-            model = factory.get_model("ollama", model_name="gemma2")
+            model = ModelFactory.get_model("ollama", model_name="gemma2")
 
+            assert isinstance(model, OllamaModel)
             assert model.model_type == "ollama"
             assert model.model_name == "gemma2"
