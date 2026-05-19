@@ -1,4 +1,5 @@
 import time
+
 import streamlit as st
 
 # --- 1. 페이지 설정 (가장 상단에 위치) ---
@@ -81,13 +82,16 @@ if prompt := st.chat_input("궁금한 점을 입력해 주세요."):
     st.session_state.messages.append({"role": "user", "content": prompt})
 
     # 5-3. 챗봇의 답변을 생성하는 로직 (추후 백엔드 엔진 연동)
-    with st.chat_message("assistant"):
-        with st.spinner("생각 중..."):
-            time.sleep(1)  # RAG 연동 전 가짜 대기 시간
+    with st.chat_message("assistant"), st.spinner("생각 중..."):
+        time.sleep(1)  # RAG 연동 전 가짜 대기 시간
 
-            # 답변 예시
-            response = f"'{prompt}'에 대한 답변입니다. (추후 RAG 백엔드와 연동되어 실제 매뉴얼 내용을 기반으로 답변합니다.)\n\n**인용 출처:** [운영매뉴얼.pdf, 12p]"
-            st.markdown(response)
+        # 가로 길이 120자를 넘지 않도록 괄호를 활용해 문자열을 분리해 줬어
+        response = (
+            f"'{prompt}'에 대한 답변입니다. (추후 RAG 백엔드와 연동되어 "
+            "실제 매뉴얼 내용을 기반으로 답변합니다.)\n\n"
+            "**인용 출처:** [운영매뉴얼.pdf, 12p]"
+        )
+        st.markdown(response)
 
     # 5-4. 챗봇의 답변을 세션 상태(히스토리)에 저장
     st.session_state.messages.append({"role": "assistant", "content": response})
