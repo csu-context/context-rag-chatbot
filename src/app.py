@@ -31,6 +31,10 @@ ensure_directories()
 # --- 2. 세션 상태 초기화 ---
 if "admin_active" not in st.session_state:
     st.session_state.admin_active = False
+if "dialog_doc_to_show" not in st.session_state:
+    st.session_state.dialog_doc_to_show = None
+if "is_generating" not in st.session_state:
+    st.session_state.is_generating = False
 
 
 # --- 3. 팝업 다이얼로그 정의 ---
@@ -38,11 +42,18 @@ if "admin_active" not in st.session_state:
 
 # [문서 원문 보기]
 @st.dialog("문서 원문 보기")
-def show_document_dialog(source: str, page: str, score: float, content: str):
+def show_document_dialog(doc: dict):
+    source = doc.get("metadata", {}).get(MetadataFields.SRC_NAME, "알 수 없음")
+    page = doc.get("metadata", {}).get(MetadataFields.PG_NUM, "-")
+    score = doc.get("score", 0.0)
+    content = doc.get("content", "")
+
     st.markdown(f"**출처:** {source}")
     st.markdown(f"**페이지:** {page}")
     st.markdown(f"**관련도 점수:** {score:.4f}")
     st.text_area("원문 내용", content, height=300)
+    if st.button("닫기"):
+        st.rerun()
 
 
 # [데이터 관리 시스템 (Admin)]
@@ -62,13 +73,16 @@ def show_admin_dialog():  # noqa: C901
     st.divider()
 
     # 공통 동기화 로직 함수
-    def trigger_sync():
+    def trigger_sync(force=False):
         with st.status("데이터베이스 동기화 중...", expanded=True) as status:
+            # 싱글톤 인스턴스 사용 (불필요한 모델 로드 방지)
             orchestrator = PipelineOrchestrator()
-            orchestrator.run_ingestion()
+            orchestrator.run_ingestion(force=force)
             status.update(label="동기화 완료", state="complete", expanded=False)
         st.success("DB 동기화 완료")
         time.sleep(0.5)
+        # 상태 새로고침을 위해 rerun
+        st.rerun()
 
     # 상단 영역: 업로드 및 동기화
     col1, col2 = st.columns([1, 1])
@@ -92,10 +106,10 @@ def show_admin_dialog():  # noqa: C901
                     st.success(f"{len(uploaded_files)}개 파일 업로드 완료")
 
                     if auto_sync:
-                        trigger_sync()
-                    else:
-                        time.sleep(1)
-                    st.rerun()
+                        trigger_sync(force=False)
+                    # else:
+                    #    time.sleep(1)
+                    # st.rerun() # trigger_sync에서 rerun하므로 중복 제거
             else:
                 st.warning("선택된 파일이 없습니다.")
 
@@ -103,8 +117,8 @@ def show_admin_dialog():  # noqa: C901
         st.subheader("수동 동기화")
         st.info("자동 동기화를 껐거나, 강제 업데이트가 필요한 경우 사용하세요.")
         if st.button("데이터 파이프라인 가동 (Sync)", key="dialog_sync_btn", use_container_width=True):
-            trigger_sync()
-            st.rerun()
+            trigger_sync(force=True)
+            # st.rerun() # trigger_sync에서 rerun하므로 중복 제거
 
     st.divider()
 
@@ -155,7 +169,7 @@ def show_admin_dialog():  # noqa: C901
                 f.unlink()
                 st.toast(f"파일 삭제됨: {f.name}")
                 if auto_sync:
-                    trigger_sync()
+                    trigger_sync(force=False)
                 else:
                     time.sleep(0.5)
                 st.rerun()
@@ -228,33 +242,39 @@ with st.sidebar:
     st.title("설정 및 관리")
 
     st.subheader("검색 설정")
-    k_value = st.slider("초벌 검색 개수 (K)", 1, 20, 10, 1)
-    final_k_value = st.slider("최종 선별 개수", 1, 10, 5, 1)
+    k_value = st.slider("초벌 검색 개수 (K)", 1, 20, 10, 1, disabled=st.session_state.is_generating)
+    final_k_value = st.slider("최종 선별 개수", 1, 10, 5, 1, disabled=st.session_state.is_generating)
 
     st.divider()
     st.subheader("데이터베이스 상태")
     count = db_manager.get_count()
     st.write(f"현재 저장된 청크 수: **{count}**")
 
-    if st.button("상태 새로고침", use_container_width=True):
+    if st.button("상태 새로고침", use_container_width=True, disabled=st.session_state.is_generating):
         st.rerun()
 
     st.divider()
-    show_expert_mode = st.toggle("상세 추론 과정 보기", False)
+    show_expert_mode = st.toggle(
+        "상세 추론 과정 보기",
+        value=st.session_state.get("show_expert_mode", False),
+        disabled=st.session_state.is_generating,
+    )
+    st.session_state.show_expert_mode = show_expert_mode
 
     st.sidebar.markdown("<br>" * 5, unsafe_allow_html=True)
-    if st.button("데이터 관리 시스템 실행", use_container_width=True):
+    if st.button("데이터 관리 시스템 실행", use_container_width=True, disabled=st.session_state.is_generating):
         st.session_state.admin_active = True
         st.rerun()
 
 # --- 6. 다이얼로그 활성화 제어 ---
-if st.session_state.admin_active:
+if st.session_state.get("admin_active", False):
     show_admin_dialog()
 
 
 # --- UI 스트리밍 핸들러 ---
 class StreamUIHandler:
     def __init__(self):
+        self.cache_msg = st.empty()
         self.retrieval_msg = st.empty()
         self.reranking_msg = st.empty()
         self.generation_msg = st.empty()
@@ -263,9 +283,11 @@ class StreamUIHandler:
         self.docs = []
         self.final_docs = []
         self.stage_handlers = {
+            "cache": self._handle_cache,
             "retrieval": self._handle_retrieval,
             "reranking": self._handle_reranking,
             "generation": self._handle_generation,
+            "citation": self._handle_citation,
         }
 
     def process_step(self, step: dict):
@@ -274,29 +296,57 @@ class StreamUIHandler:
         if handler:
             handler(state, step)
 
+    def _handle_cache(self, state, step):
+        if state == "running" and st.session_state.show_expert_mode:
+            self.cache_msg.info("캐시 검색 중...")
+        elif state == "hit" and st.session_state.show_expert_mode:
+            self.cache_msg.success("캐시 Hit")
+        elif state == "miss" or not st.session_state.show_expert_mode:
+            self.cache_msg.empty()
+
     def _handle_retrieval(self, state, step):
-        if state == "running":
+        if state == "running" and st.session_state.show_expert_mode:
             self.retrieval_msg.info("관련 문서를 찾는 중...")
-        elif state == "complete":
+        elif state == "complete" and st.session_state.show_expert_mode:
             self.docs = step.get("output", [])
             self.retrieval_msg.success(f"{len(self.docs)}개 문서 검색 완료")
 
     def _handle_reranking(self, state, step):
-        if state == "running":
+        if state == "running" and st.session_state.show_expert_mode:
             self.reranking_msg.info("핵심 문서 선별 중...")
-        elif state == "complete":
+        elif state == "complete" and st.session_state.show_expert_mode:
             self.final_docs = step.get("output", [])
             self.reranking_msg.success(f"상위 {len(self.final_docs)}개 선별 완료")
 
     def _handle_generation(self, state, step):
-        if state == "running":
+        if state == "running" and st.session_state.show_expert_mode:
             self.generation_msg.info("답변 생성 중...")
         elif state == "streaming":
             self.full_response += step.get("output", "")
             self.response_container.markdown(self.full_response + "▌")
         elif state == "complete":
-            self.generation_msg.success("답변 생성 완료")
+            if st.session_state.show_expert_mode:
+                self.generation_msg.success("답변 생성 완료")
             self.response_container.markdown(self.full_response)
+
+    def _handle_citation(self, state, step):
+        if state == "complete":
+            docs = step.get("source_documents", [])
+            # Format to match expected dictionary structure in UI if they are Document objects
+            self.final_docs = []
+            if not docs:
+                return
+            for doc in docs:
+                if hasattr(doc, "page_content"):  # Document 객체인 경우
+                    self.final_docs.append(
+                        {
+                            "content": doc.page_content,
+                            "metadata": doc.metadata,
+                            "score": doc.metadata.get("rerank_score", doc.metadata.get("score", 0.0)),
+                        }
+                    )
+                elif isinstance(doc, dict):  # 이미 dict인 경우 (캐시 등)
+                    self.final_docs.append(doc)
 
     def handle_error(self, error):
         if self.full_response:
@@ -312,40 +362,75 @@ st.info("사내 규정 및 매뉴얼에 대해 질문하면 인용 출처와 함
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-for msg in st.session_state.messages:
+for msg_idx, msg in enumerate(st.session_state.messages):
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
         if msg.get("citations"):
             cols = st.columns(len(msg["citations"]))
             for i, doc in enumerate(msg["citations"]):
-                source = doc["metadata"].get(MetadataFields.SRC_NAME, "알 수 없음")
-                page = doc["metadata"].get(MetadataFields.PG_NUM, "-")
-                score = doc.get("score", 0.0)
-                if cols[i].button(f"📄 {source} (p.{page})", key=f"cite_{msg['content'][:10]}_{i}"):
-                    show_document_dialog(source, str(page), score, doc["content"])
+                # 방어 로직
+                if not isinstance(doc, dict):
+                    continue
+                metadata = doc.get("metadata", {})
+                source = metadata.get(MetadataFields.SRC_NAME, "알 수 없음")
+                page = metadata.get(MetadataFields.PG_NUM, "-")
 
-if prompt := st.chat_input("규정에 대해 궁금한 점을 물어보세요."):
+                if cols[i].button(
+                    f"📄 {source} (p.{page})", key=f"cite_{msg_idx}_{i}", disabled=st.session_state.is_generating
+                ):
+                    st.session_state.dialog_doc_to_show = doc
+                    st.rerun()
+
+# 다이얼로그 상태 확인 및 호출 (루프 밖에서 단 한번만 실행)
+if st.session_state.dialog_doc_to_show:
+    show_document_dialog(st.session_state.dialog_doc_to_show)
+    st.session_state.dialog_doc_to_show = None  # 다이얼로그 렌더링 후 상태 초기화
+
+
+# 채팅 입력 콜백: 입력을 제출하는 순간 (스크립트 상단 실행 전) 상태를 정리합니다.
+def on_chat_submit():
+    if st.session_state.get("admin_active"):
+        st.session_state.admin_active = False
+    st.session_state.is_generating = True
+
+
+if prompt := st.chat_input(
+    "규정에 대해 궁금한 점을 물어보세요.", on_submit=on_chat_submit, disabled=st.session_state.is_generating
+):
     with st.chat_message("user"):
         st.markdown(prompt)
     st.session_state.messages.append({"role": "user", "content": prompt})
 
     with st.chat_message("assistant"):
+        start_time = time.time()
         ui_handler = StreamUIHandler()
         try:
-            with st.status("답변 생성 엔진 가동 중...", expanded=True) as status:
+            # Use status only if expert mode is on
+            if st.session_state.show_expert_mode:
+                with st.status("답변 생성 엔진 가동 중...", expanded=True) as status:
+                    for step in rag_chain.stream({"question": prompt, "k": k_value, "final_k": final_k_value}):
+                        ui_handler.process_step(step)
+                    status.update(label="답변 생성 완료", state="complete", expanded=False)
+            else:
                 for step in rag_chain.stream({"question": prompt, "k": k_value, "final_k": final_k_value}):
                     ui_handler.process_step(step)
-                status.update(label="답변 생성 완료", state="complete", expanded=False)
+
+            duration = time.time() - start_time
             st.session_state.messages.append(
                 {"role": "assistant", "content": ui_handler.full_response, "citations": ui_handler.final_docs}
             )
-            perf_logger.log_inference(prompt, ui_handler.full_response, "success", prompt[:30])
+            info = f"Query: {prompt[:30]}..., Status: success"
+            perf_logger.log(log_type="inference", duration=duration, info=info)
+            st.session_state.is_generating = False
             st.rerun()
 
         except Exception as e:
+            duration = time.time() - start_time
             logger.error(f"채팅 중 오류 발생: {e}", exc_info=True)
             st.session_state.messages.append(
                 {"role": "assistant", "content": ui_handler.handle_error(e), "citations": ui_handler.final_docs}
             )
-            perf_logger.log_inference(prompt, str(e), "error", prompt[:30])
+            info = f"Query: {prompt[:30]}..., Status: error, Detail: {e!s}"
+            perf_logger.log(log_type="inference", duration=duration, info=info)
+            st.session_state.is_generating = False
             st.rerun()

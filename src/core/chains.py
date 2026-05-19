@@ -7,6 +7,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda
 
 from src.common.constants import MetadataFields
+from src.core.cache import SemanticCache
 from src.core.prompts import RAG_SYSTEM_PROMPT
 from src.core.reranker import RerankerFactory
 from src.models.factory import LLMFactory
@@ -127,6 +128,7 @@ def _stream_generation(query: str, final_docs: list[Document], llm: Any, session
             yield content
 
         step.update({"answer_length": len(full_answer)})
+        session.data["final_answer"] = full_answer
 
 
 def get_rag_chain(retriever_or_db):
@@ -137,6 +139,7 @@ def get_rag_chain(retriever_or_db):
     llm_instance = LLMFactory.create_llm()
     llm = llm_instance.get_model()
     tracing_logger = TracingLogger()
+    cache = SemanticCache()
 
     def run_streaming_pipeline(input_dict: dict[str, Any]) -> Iterator[dict[str, Any]]:
         query = input_dict.get("question", "")
@@ -144,29 +147,65 @@ def get_rag_chain(retriever_or_db):
         final_k = input_dict.get("final_k", 5)
 
         with tracing_logger.start_session(query=query) as session:
-            # 1. Retrieval
+            # 1. Semantic Cache Check
+            yield {"stage": "cache", "status": "running"}
+            cached_result = cache.get(query)
+            if cached_result:
+                session.data["cache_hit"] = True
+                yield {"stage": "cache", "status": "hit"}
+
+                # Stream cached answer
+                answer = cached_result["answer"]
+                for char in answer:
+                    yield {"stage": "generation", "status": "streaming", "output": char}
+                yield {"stage": "generation", "status": "complete"}
+
+                # Yield cached sources for citation
+                sources = cached_result["sources"]
+                yield {"stage": "citation", "status": "complete", "output": "from cache", "source_documents": sources}
+                return
+
+            yield {"stage": "cache", "status": "miss"}
+            session.data["cache_hit"] = False
+
+            # 2. Retrieval
             yield {"stage": "retrieval", "status": "running"}
             docs = _do_retrieval(retriever_or_db, query, retrieval_k, session)
             yield {"stage": "retrieval", "status": "complete", "output": docs}
 
-            # 2. Reranking
+            # 3. Reranking
             yield {"stage": "reranking", "status": "running"}
             final_docs, scores = _do_reranking(query, docs, final_k, session)
-            # 스코어를 메타데이터에 추가
             for doc, score in zip(final_docs, scores, strict=False):
                 doc.metadata["rerank_score"] = score
             yield {"stage": "reranking", "status": "complete", "output": final_docs}
 
-            # 3. Generation
+            # 4. Generation
             yield {"stage": "generation", "status": "running"}
             answer_stream = _stream_generation(query, final_docs, llm, session)
+            full_answer = ""
             for token in answer_stream:
+                full_answer += token
                 yield {"stage": "generation", "status": "streaming", "output": token}
             yield {"stage": "generation", "status": "complete"}
 
-            # 4. Final Formatting (Citation)
+            # 5. Final Formatting (Citation) & Caching
             yield {"stage": "citation", "status": "running"}
-            citations = format_citations(final_docs)
-            yield {"stage": "citation", "status": "complete", "output": citations, "source_documents": final_docs}
+            citations_str = format_citations(final_docs)
+
+            # Cache the actual document data, not the formatted string
+            docs_for_cache = []
+            for doc in final_docs:
+                docs_for_cache.append(
+                    {
+                        "content": doc.page_content,
+                        "metadata": doc.metadata,
+                        "score": doc.metadata.get("rerank_score", doc.metadata.get("score", 0.0)),
+                    }
+                )
+
+            cache.add(query, full_answer, docs_for_cache)
+
+            yield {"stage": "citation", "status": "complete", "output": citations_str, "source_documents": final_docs}
 
     return RunnableLambda(run_streaming_pipeline)
