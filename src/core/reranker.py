@@ -330,18 +330,21 @@ class RerankerFactory:
     @staticmethod
     def create(top_k: int = 5) -> BaseReranker:
         reranker_type = settings.RERANKER_TYPE.lower()
-        # 보안 가드레일: 외부 API 리랭커 사용 허용 여부 체크
-        allow_external = settings.ALLOW_EXTERNAL_RERANKER
+        # 보안 가드레일: 외부 API 및 전체 외부 호출 허용 여부 체크
+        allow_external = settings.ALLOW_EXTERNAL_RERANKER and settings.ALLOW_EXTERNAL_API
 
         if reranker_type in ["cohere", "jina"]:
             if not allow_external:
                 logger.warning(
                     f"보안 정책: 외부 리랭커 '{reranker_type}' 사용이 차단되었습니다. "
-                    ".env 파일에서 ALLOW_EXTERNAL_RERANKER=true 설정을 확인하십시오. 로컬 모델로 전환합니다."
+                    "ALLOW_EXTERNAL_API 또는 ALLOW_EXTERNAL_RERANKER 설정을 확인하십시오. 로컬 모델로 전환합니다."
                 )
                 reranker_type = "local"
             else:
-                logger.info(f"보안 정책에 따라 외부 리랭커 '{reranker_type}' 사용이 허용되었습니다.")
+                logger.warning(
+                    f"보안 경고: 외부 리랭커 '{reranker_type}' 사용이 허용되어 있습니다 "
+                    "(ALLOW_EXTERNAL_API=True 및 ALLOW_EXTERNAL_RERANKER=True)."
+                )
 
         if reranker_type == "cohere":
             logger.info("Cohere 리랭커를 사용합니다.")

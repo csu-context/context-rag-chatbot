@@ -1,8 +1,11 @@
+import logging
 from pathlib import Path
 from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
 
 # 프로젝트 루트 경로 계산
 ROOT_DIR = Path(__file__).resolve().parent.parent.parent
@@ -28,6 +31,7 @@ class Settings(BaseSettings):
     RETRIEVER_TYPE: Literal["vector", "hybrid"] = Field(default="hybrid")
     RERANKER_TYPE: Literal["local", "cohere", "jina"] = Field(default="local")
     ALLOW_EXTERNAL_RERANKER: bool = Field(default=False)
+    ALLOW_EXTERNAL_API: bool = Field(default=True)
     CHROMA_SERVER_HOST: str | None = None
     CHROMA_SERVER_PORT: str = "8000"
     RRF_K: int = 60
@@ -59,3 +63,9 @@ class Settings(BaseSettings):
 
 # 전역 설정 객체 생성
 settings = Settings()
+
+if settings.ALLOW_EXTERNAL_API:
+    logger.warning(
+        "보안 경고: 외부 API 호출이 허용되어 있습니다 (ALLOW_EXTERNAL_API=True). "
+        "폐쇄망(On-premise) 환경에서는 ALLOW_EXTERNAL_API=False 설정을 권장합니다."
+    )
