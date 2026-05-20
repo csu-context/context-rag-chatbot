@@ -44,6 +44,8 @@ async def test_rerank_rank_change_logging(tmp_path):
 
                     mock_model.get_model.return_value.model_name = "test-model"
 
+                    mock_model.get_model.return_value.temperature = 0.5
+
                     mock_response = AIMessage(content="answer")
                     # 파라미터 무시를 위해 lambda 활용
                     mock_model.stream = lambda *_, **__: [mock_response]
