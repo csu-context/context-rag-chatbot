@@ -40,7 +40,7 @@ class LLMFactory:
                 "현재 외부 API 호출이 허용되어 있습니다 (ALLOW_EXTERNAL_API=True)."
             )
 
-        logger.info(f"LLM 인스턴스 생성 시도 (Type: {type_}, Name: {name_})")
+        logger.info(f"LLM 인스턴스 생성 시도 (타입: {type_}, 이름: {name_})")
 
         if type_ == "gemini":
             name_ = name_ or LLMDefaults.GEMINI_DEFAULT
