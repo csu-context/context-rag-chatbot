@@ -35,9 +35,7 @@ class BGEEmbedder:
 
         # 2. 모델 로드 및 장치 할당
         self.model = SentenceTransformer(
-            model_name,
-            cache_folder=str(MODELS_DIR),
-            local_files_only=not settings.ALLOW_EXTERNAL_API
+            model_name, cache_folder=str(MODELS_DIR), local_files_only=not settings.ALLOW_EXTERNAL_API
         )
         self.model.to(self.device)
         print(f"모델이 다음 장치에 로드되었습니다: {self.device}")

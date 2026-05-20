@@ -32,14 +32,14 @@ from typing import Any
 from src.utils.paths import LOGS_DIR
 
 # 민감 정보 필터링을 위한 정규표현식 정의
-EMAIL_REGEX = re.compile(r'\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b')
-PHONE_REGEX = re.compile(r'\b(?:\+82[-.\s]?)?\(?0[1-9]\d{0,2}\)?[-.\s]?\d{3,4}[-.\s]?\d{4}\b')
-RRN_REGEX = re.compile(r'\b\d{6}[-.\s]?[1-48]\d{6}\b')
+EMAIL_REGEX = re.compile(r"\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b")
+PHONE_REGEX = re.compile(r"\b(?:\+82[-.\s]?)?\(?0[1-9]\d{0,2}\)?[-.\s]?\d{3,4}[-.\s]?\d{4}\b")
+RRN_REGEX = re.compile(r"\b\d{6}[-.\s]?[1-48]\d{6}\b")
 API_KEY_REGEX = re.compile(
-    r'\b(?:AIzaSy[a-zA-Z0-9_\-]{33}|'
-    r'sk-ant-sid\d+-[a-zA-Z0-9_\-]{40,}|'
-    r'sk-ant-[a-zA-Z0-9_\-]{40,}|'
-    r'sk-[a-zA-Z0-9_\-]{32,})\b'
+    r"\b(?:AIzaSy[a-zA-Z0-9_\-]{33}|"
+    r"sk-ant-sid\d+-[a-zA-Z0-9_\-]{40,}|"
+    r"sk-ant-[a-zA-Z0-9_\-]{40,}|"
+    r"sk-[a-zA-Z0-9_\-]{32,})\b"
 )
 
 

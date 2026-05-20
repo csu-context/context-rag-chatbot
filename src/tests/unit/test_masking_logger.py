@@ -20,7 +20,7 @@ def test_tracing_logger_masking(tmp_path):
             "embedded_vals": (
                 "Here is a key: sk-abcdefghijklmnopqrstuvwxyz1234567890. "
                 "And another: AIzaSyAz1234567890123456789012345678901"
-            )
+            ),
         }
 
         with logger.start_session(**test_data) as session, session.trace_step("step1") as step:

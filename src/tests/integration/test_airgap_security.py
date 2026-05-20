@@ -12,7 +12,7 @@ def test_llm_factory_airgap():
     with (
         patch.object(settings, "ALLOW_EXTERNAL_API", False),
         patch.object(settings, "MODEL_TYPE", "gemini"),
-        patch.object(settings, "MODEL_NAME", "gemini-1.5-flash")
+        patch.object(settings, "MODEL_NAME", "gemini-1.5-flash"),
     ):
         llm = LLMFactory.create_llm()
         assert isinstance(llm, OllamaModel)
@@ -23,7 +23,7 @@ def test_llm_factory_airgap():
         patch.object(settings, "ALLOW_EXTERNAL_API", True),
         patch.object(settings, "MODEL_TYPE", "gemini"),
         patch.object(settings, "MODEL_NAME", "gemini-1.5-flash"),
-        patch.object(settings, "GEMINI_API_KEY", "dummy-key")
+        patch.object(settings, "GEMINI_API_KEY", "dummy-key"),
     ):
         llm = LLMFactory.create_llm()
         assert isinstance(llm, GeminiModel)
@@ -57,7 +57,7 @@ def test_reranker_factory_airgap():
     with (
         patch.object(settings, "ALLOW_EXTERNAL_API", False),
         patch.object(settings, "RERANKER_TYPE", "cohere"),
-        patch.object(settings, "ALLOW_EXTERNAL_RERANKER", True)
+        patch.object(settings, "ALLOW_EXTERNAL_RERANKER", True),
     ):
         # ALLOW_EXTERNAL_RERANKER가 True이더라도 ALLOW_EXTERNAL_API가 False이므로,
         # 반드시 로컬 리랭커(CrossEncoderReranker)로 Fallback 해야 함
@@ -70,7 +70,7 @@ def test_reranker_factory_airgap():
         patch.object(settings, "ALLOW_EXTERNAL_API", True),
         patch.object(settings, "RERANKER_TYPE", "cohere"),
         patch.object(settings, "ALLOW_EXTERNAL_RERANKER", True),
-        patch.dict("os.environ", {"COHERE_API_KEY": "dummy-key"})
+        patch.dict("os.environ", {"COHERE_API_KEY": "dummy-key"}),
     ):
         reranker = RerankerFactory.create()
         assert isinstance(reranker, CohereReranker)
