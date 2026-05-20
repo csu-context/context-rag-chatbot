@@ -25,12 +25,7 @@ class GeminiModel(BaseLLM):
         if not api_key:
             raise ValueError("Gemini API Key가 누락되었습니다.")
 
-        self.llm = ChatGoogleGenerativeAI(
-            model=model_name,
-            google_api_key=api_key,
-            temperature=temperature,
-            **kwargs
-        )
+        self.llm = ChatGoogleGenerativeAI(model=model_name, google_api_key=api_key, temperature=temperature, **kwargs)
 
     def invoke(self, prompt: str, **kwargs: Any) -> LLMResponse:
         """동기 방식으로 Gemini 모델에 입력을 전달하고 LLMResponse를 반환합니다."""

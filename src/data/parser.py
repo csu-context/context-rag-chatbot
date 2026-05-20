@@ -64,12 +64,12 @@ class ManualParser:
         return text
 
     def _add_chunk(
-            self,
-            data_list: list[dict[str, Any]],
-            chapter: str,
-            article: str,
-            content: list[str],
-            page: int,
+        self,
+        data_list: list[dict[str, Any]],
+        chapter: str,
+        article: str,
+        content: list[str],
+        page: int,
     ):
         """구조화된 청크 데이터 생성 및 리스트 추가 (표준 규격 준수)"""
         cleaned_content = self._clean_text(" ".join(content))
@@ -157,12 +157,12 @@ class ManualParser:
         return structured_data
 
     def _process_pdf_block(
-            self,
-            block: dict,
-            page_num: int,
-            base_font_size: float,
-            state: dict,
-            structured_data: list,
+        self,
+        block: dict,
+        page_num: int,
+        base_font_size: float,
+        state: dict,
+        structured_data: list,
     ):
         """단일 PDF 블록을 분석하여 상태 업데이트 및 청크 추가"""
         block_text, max_size = self._extract_block_info(block)

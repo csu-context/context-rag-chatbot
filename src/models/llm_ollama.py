@@ -30,12 +30,7 @@ class OllamaModel(BaseLLM):
         temperature = kwargs.pop("temperature", 0.1)
 
         # 랭체인 Ollama 인스턴스명을 하나로 통일 (self.llm)
-        self.llm = ChatOllama(
-            model=model_name,
-            base_url=self.base_url,
-            temperature=temperature,
-            **kwargs
-        )
+        self.llm = ChatOllama(model=model_name, base_url=self.base_url, temperature=temperature, **kwargs)
 
     def invoke(self, prompt: str, **kwargs: Any) -> LLMResponse:
         """동기 방식으로 Ollama 모델에 입력을 전달하고 LLMResponse를 반환합니다."""

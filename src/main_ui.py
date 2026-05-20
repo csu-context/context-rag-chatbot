@@ -6,7 +6,7 @@ import streamlit as st
 st.set_page_config(
     page_title="기업 매뉴얼 챗봇",
     page_icon="🤖",
-    layout="wide"  # 넓은 화면 레이아웃 사용
+    layout="wide",  # 넓은 화면 레이아웃 사용
 )
 
 # --- 2. 초기 세션 상태 설정 (대화 기록 유지용) ---
@@ -19,11 +19,7 @@ with st.sidebar:
 
     # [목표 1] 모델 설정
     st.subheader("모델 설정")
-    selected_model = st.selectbox(
-        "사용할 LLM 모델 선택",
-        ["claude-3-5-sonnet-20240620", "gemma2"],
-        index=0
-    )
+    selected_model = st.selectbox("사용할 LLM 모델 선택", ["claude-3-5-sonnet-20240620", "gemma2"], index=0)
 
     # [목표 1] 검색 결과 개수(K) 조절 슬라이더
     st.subheader("검색 설정")
@@ -32,15 +28,13 @@ with st.sidebar:
         min_value=1,
         max_value=10,
         value=4,  # 기본값
-        step=1
+        step=1,
     )
 
     # [목표 3] 파일 업로더 구현 (전처리 파이프라인 연동용)
     st.subheader("문서 관리")
     uploaded_files = st.file_uploader(
-        "매뉴얼 파일 업로드 (PDF, DOCX)",
-        type=["pdf", "docx"],
-        accept_multiple_files=True
+        "매뉴얼 파일 업로드 (PDF, DOCX)", type=["pdf", "docx"], accept_multiple_files=True
     )
 
     if uploaded_files:
