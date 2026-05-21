@@ -20,6 +20,7 @@
 import json
 import logging
 import os
+import re
 import threading
 import time
 from collections.abc import Generator
@@ -29,6 +30,17 @@ from pathlib import Path
 from typing import Any
 
 from src.utils.paths import LOGS_DIR
+
+# 민감 정보 필터링을 위한 정규표현식 정의
+EMAIL_REGEX = re.compile(r"\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b")
+PHONE_REGEX = re.compile(r"\b(?:\+82[-.\s]?)?\(?0[1-9]\d{0,2}\)?[-.\s]?\d{3,4}[-.\s]?\d{4}\b")
+RRN_REGEX = re.compile(r"\b\d{6}[-.\s]?[1-48]\d{6}\b")
+API_KEY_REGEX = re.compile(
+    r"\b(?:AIzaSy[a-zA-Z0-9_\-]{33}|"
+    r"sk-ant-sid\d+-[a-zA-Z0-9_\-]{40,}|"
+    r"sk-ant-[a-zA-Z0-9_\-]{40,}|"
+    r"sk-[a-zA-Z0-9_\-]{32,})\b"
+)
 
 
 class PerformanceLogger:
@@ -173,9 +185,8 @@ class TracingLogger:
             f.write(json.dumps(filtered_entry, ensure_ascii=False) + "\n")
 
     def _filter_sensitive_data(self, data: Any) -> Any:
-        """API 키 등 민감 정보가 포함된 필드를 필터링합니다."""
+        """API 키 등 민감 정보가 포함된 필드와 문자열 데이터를 마스킹 처리합니다."""
         if isinstance(data, dict):
-            # 키 이름에 'key', 'token', 'secret' 등이 포함되면 값을 마스킹
             filtered = {}
             for k, v in data.items():
                 if any(secret in k.lower() for secret in ["key", "token", "secret", "auth"]):
@@ -185,6 +196,12 @@ class TracingLogger:
             return filtered
         if isinstance(data, list):
             return [self._filter_sensitive_data(i) for i in data]
+        if isinstance(data, str):
+            data = EMAIL_REGEX.sub("[EMAIL_MASKED]", data)
+            data = PHONE_REGEX.sub("[PHONE_MASKED]", data)
+            data = RRN_REGEX.sub("[RRN_MASKED]", data)
+            data = API_KEY_REGEX.sub("[API_KEY_MASKED]", data)
+            return data
         return data
 
 

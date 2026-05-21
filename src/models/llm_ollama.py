@@ -29,6 +29,24 @@ class OllamaModel(BaseLLM):
             base_url=self.base_url,
             temperature=temperature,
         )
+        # 헬스 체크 연동 경고 로그
+        if not self.check_health():
+            logger.warning(
+                f"Ollama 서비스 헬스체크 실패 ({self.base_url}). "
+                "로컬 sLLM(Ollama)이 구동 중인지 확인해 주세요. "
+                "Ollama가 실행되지 않으면 RAG 응답을 생성할 수 없습니다."
+            )
+
+    def check_health(self) -> bool:
+        """Ollama 서비스 구동 상태를 확인합니다."""
+        import urllib.request
+
+        try:
+            url = self.base_url.rstrip("/") + "/api/tags"
+            with urllib.request.urlopen(url, timeout=2.0) as response:
+                return response.status == 200
+        except Exception:
+            return False
 
     def invoke(self, prompt: Any, **kwargs: Any) -> LLMResponse:
         start_time = time.time()
@@ -57,6 +75,13 @@ class OllamaModel(BaseLLM):
             )
 
         except Exception as e:
+            if not self.check_health():
+                msg = (
+                    f"Ollama 서비스({self.base_url})에 연결할 수 없습니다. "
+                    "Ollama 서버가 활성화되어 있고 로컬 모델이 다운로드되어 있는지 확인하십시오."
+                )
+                logger.error(msg)
+                raise ConnectionError(msg) from e
             logger.error(f"Ollama({self.model_name}) 호출 중 오류 발생: {e}")
             raise e
 
