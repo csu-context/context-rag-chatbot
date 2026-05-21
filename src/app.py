@@ -295,7 +295,7 @@ with st.sidebar:
         st.rerun()
 
     st.divider()
-    st.toggle("상세 추론 과정 보기", key="show_expert_mode")
+    st.toggle("상세 추론 과정 보기", key="show_expert_mode", disabled=st.session_state.generating)
 
     st.sidebar.markdown("<br>" * 5, unsafe_allow_html=True)
     if st.button("데이터 관리 시스템 실행", use_container_width=True, disabled=st.session_state.generating):
