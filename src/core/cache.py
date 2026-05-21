@@ -2,16 +2,18 @@ import json
 import logging
 import uuid
 
+from src.common.config import settings
 from src.vector_db.chroma_manager import ChromaDBManager
 
 logger = logging.getLogger(__name__)
 
 
 class SemanticCache:
-    def __init__(self, collection_name="semantic_cache", threshold=0.90):
-        self.db_manager = ChromaDBManager(collection_name=collection_name)
+    def __init__(self):
+        self.collection_name = settings.SEMANTIC_CACHE_COLLECTION_NAME
+        self.threshold = settings.SEMANTIC_CACHE_THRESHOLD
+        self.db_manager = ChromaDBManager(collection_name=self.collection_name)
         self.collection = self.db_manager.collection
-        self.threshold = threshold
 
     def _get_valid_collection(self):
         """
@@ -24,7 +26,7 @@ class SemanticCache:
         except Exception:
             logger.info("캐시 컬렉션이 만료되었거나 존재하지 않아 새로 생성합니다.")
             self.collection = self.db_manager.client.get_or_create_collection(
-                name=self.db_manager.collection_name,
+                name=self.collection_name,
                 embedding_function=self.db_manager.embedding_fn,
                 metadata={"hnsw:space": "cosine"},
             )
@@ -43,7 +45,7 @@ class SemanticCache:
             distance = results["distances"][0][0]
             score = max(0.0, 1.0 - distance)
 
-            logger.info(f"Cache similarity score for '{query_text}': {score:.4f} (Threshold: {self.threshold})")
+            logger.info(f"캐시 유사도 점수: {score:.4f} (임계값: {self.threshold})")
 
             if score >= self.threshold:
                 metadata = results["metadatas"][0][0]
@@ -51,11 +53,11 @@ class SemanticCache:
                 if sources:
                     sources = json.loads(sources)
 
-                logger.info(f"Cache HIT for query: '{query_text}'")
+                logger.info(f"시맨틱 캐시 적중 (Query: '{query_text}')")
                 return {"answer": metadata.get("answer"), "sources": sources}
-            logger.info(f"Cache MISS for query: '{query_text}' (score {score:.4f} < {self.threshold})")
+            logger.info(f"시맨틱 캐시 미스 (Query: '{query_text}', Score: {score:.4f})")
         except Exception as e:
-            logger.error(f"Error accessing semantic cache: {e}")
+            logger.error(f"시맨틱 캐시 조회 중 오류 발생: {e}")
         return None
 
     def add(self, query_text, answer, sources):
@@ -70,19 +72,19 @@ class SemanticCache:
                 metadatas=[{"answer": answer, "sources": sources_json}],
                 ids=[cache_id],
             )
-            logger.info(f"Added to semantic cache: '{query_text}'")
+            logger.info(f"시맨틱 캐시에 추가됨: '{query_text}'")
         except Exception as e:
-            logger.error(f"Error adding to semantic cache: {e}")
+            logger.error(f"시맨틱 캐시 추가 중 오류 발생: {e}")
 
     def flush(self):
         try:
-            self.db_manager.client.delete_collection(name=self.db_manager.collection_name)
+            self.db_manager.client.delete_collection(name=self.collection_name)
             self.collection = self.db_manager.client.get_or_create_collection(
-                name=self.db_manager.collection_name,
+                name=self.collection_name,
                 embedding_function=self.db_manager.embedding_fn,
                 metadata={"hnsw:space": "cosine"},
             )
             self.db_manager.collection = self.collection
-            logger.info("Semantic cache flushed successfully.")
+            logger.info("시맨틱 캐시가 성공적으로 초기화되었습니다.")
         except Exception as e:
-            logger.error(f"Error flushing semantic cache: {e}")
+            logger.error(f"시맨틱 캐시 초기화 중 오류 발생: {e}")

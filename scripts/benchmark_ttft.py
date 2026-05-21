@@ -65,7 +65,6 @@ def run_ttft_benchmark():
     # 2. 테스트 시작 전 캐시 초기화
     logger.info("\n--- 🧼 1. 시맨틱 캐시 초기화 ---")
     orchestrator.cache.flush()
-    logger.info("캐시가 성공적으로 초기화되었습니다.")
 
     # 3. 테스트 질문 정의
     test_question = "졸업 학점은 얼마나 되나요?"
@@ -73,29 +72,29 @@ def run_ttft_benchmark():
     similar_question = "졸업 학점은 얼마인지 알려주세요."
 
     # 4. Cache Miss 테스트
-    logger.info(f"\n--- 🧪 2. Cache Miss 테스트 (질문: '{test_question}') ---")
+    logger.info(f"\n--- 🧪 2. 캐시 미스(Miss) 테스트 (질문: '{test_question}') ---")
     miss_iterator = rag_chain.stream({"question": test_question})
     # 이 단계에서는 스트림을 모두 소비하여 캐시에 저장되도록 합니다.
     miss_ttft = measure_ttft_and_consume(miss_iterator)
-    logger.info(f"✅ TTFT (Cache Miss): {miss_ttft:.4f} 초")
+    logger.info(f"✅ TTFT (캐시 미스): {miss_ttft:.4f} 초")
 
     # 5. Cache Hit 테스트 (동일 질문)
-    logger.info(f"\n--- 🧪 3. Cache Hit 테스트 (동일 질문: '{identical_question}') ---")
+    logger.info(f"\n--- 🧪 3. 캐시 적중(Hit) 테스트 (동일 질문: '{identical_question}') ---")
     hit_iterator = rag_chain.stream({"question": identical_question})
     hit_ttft = measure_ttft_and_consume(hit_iterator)
-    logger.info(f"✅ TTFT (Cache Hit - 동일 질문): {hit_ttft:.4f} 초")
+    logger.info(f"✅ TTFT (캐시 적중 - 동일 질문): {hit_ttft:.4f} 초")
 
     # 6. Cache Hit 테스트 (유사 질문)
-    logger.info(f"\n--- 🧪 4. Cache Hit 테스트 (유사 질문: '{similar_question}') ---")
+    logger.info(f"\n--- 🧪 4. 캐시 적중(Hit) 테스트 (유사 질문: '{similar_question}') ---")
     similar_hit_iterator = rag_chain.stream({"question": similar_question})
     similar_hit_ttft = measure_ttft_and_consume(similar_hit_iterator)
-    logger.info(f"✅ TTFT (Cache Hit - 유사 질문): {similar_hit_ttft:.4f} 초")
+    logger.info(f"✅ TTFT (캐시 적중 - 유사 질문): {similar_hit_ttft:.4f} 초")
 
     logger.info("\n" + "=" * 50)
     logger.info("📊 벤치마크 결과 요약 📊")
-    logger.info(f"  - 첫 질문 (Cache Miss):      {miss_ttft:.4f} 초")
-    logger.info(f"  - 반복 질문 (Cache Hit):      {hit_ttft:.4f} 초")
-    logger.info(f"  - 유사 질문 (Cache Hit):      {similar_hit_ttft:.4f} 초")
+    logger.info(f"  - 첫 질문 (캐시 미스):      {miss_ttft:.4f} 초")
+    logger.info(f"  - 반복 질문 (캐시 적중):      {hit_ttft:.4f} 초")
+    logger.info(f"  - 유사 질문 (캐시 적중):      {similar_hit_ttft:.4f} 초")
     logger.info("=" * 50)
 
 
