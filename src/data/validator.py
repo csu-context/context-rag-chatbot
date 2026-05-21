@@ -19,12 +19,7 @@ class ParsingValidator:
         json_files = list(self.processed_dir.glob("*.json"))
         return [f for f in json_files if f.name != "manifest.json"]
 
-    def analyze(self):
-        processed_files = self.get_processed_files()
-        if not processed_files:
-            logger.error("분석할 결과 파일을 찾을 수 없습니다. 먼저 pipeline.py 또는 main.py를 실행하세요.")
-            return
-
+    def _load_data(self, processed_files: list[Path]) -> list[dict]:
         all_data = []
         for file_path in processed_files:
             try:
@@ -36,7 +31,15 @@ class ParsingValidator:
                         logger.warning(f"올바르지 않은 형식의 파일 건너뜀: {file_path.name}")
             except Exception as e:
                 logger.error(f"파일 로드 실패 ({file_path.name}): {e}")
+        return all_data
 
+    def analyze(self):
+        processed_files = self.get_processed_files()
+        if not processed_files:
+            logger.error("분석할 결과 파일을 찾을 수 없습니다. 먼저 pipeline.py 또는 main.py를 실행하세요.")
+            return
+
+        all_data = self._load_data(processed_files)
         if not all_data:
             logger.error("유효한 전처리 데이터가 없습니다.")
             return
