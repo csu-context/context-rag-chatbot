@@ -59,22 +59,19 @@ class PerformanceLogger:
     def _setup(self):
         # 디렉토리가 없으면 생성
         LOGS_DIR.mkdir(parents=True, exist_ok=True)
-        self.log_file = LOGS_DIR / "performance.log"
-        # 파일이 없으면 헤더 생성
+        self.log_file = LOGS_DIR / "performance.jsonl"
+        # 파일이 없으면 생성
         if not self.log_file.exists():
-            with open(self.log_file, "w", encoding="utf-8") as f:
-                f.write("Timestamp,Type,Duration,Info\n")
+            self.log_file.touch()
 
-    def log(self, log_type: str, duration: float, info: str = ""):
-        """한 줄의 성능 로그를 파일에 직접 기록합니다."""
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        # 콤마나 개행 문자 제거하여 CSV 형식 유지
-        info = info.replace(",", " ").replace("\n", " ").strip()
-        log_entry = f"{timestamp},{log_type},{duration:.2f},{info}\n"
+    def log(self, **kwargs):
+        """성능 로그를 JSONL 형식으로 파일에 기록합니다."""
+        timestamp = datetime.now().isoformat()
+        log_entry = {"timestamp": timestamp, **kwargs}
 
         # Thread-safe하게 파일 쓰기
         with self._lock, open(self.log_file, "a", encoding="utf-8") as f:
-            f.write(log_entry)
+            f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
 
 
 class TraceSession:

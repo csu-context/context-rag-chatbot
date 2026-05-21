@@ -10,6 +10,7 @@ from src.common.constants import MetadataFields
 from src.core.chains import get_rag_chain
 from src.pipeline import PipelineOrchestrator
 from src.utils.logger import PerformanceLogger, setup_global_logging
+from src.utils.monitoring import get_system_stats
 from src.utils.paths import RAW_DATA_DIR, ensure_directories
 from src.vector_db.chroma_manager import ChromaDBManager
 
@@ -107,9 +108,6 @@ def show_admin_dialog():  # noqa: C901
 
                     if auto_sync:
                         trigger_sync(force=False)
-                    # else:
-                    #    time.sleep(1)
-                    # st.rerun() # trigger_sync에서 rerun하므로 중복 제거
             else:
                 st.warning("선택된 파일이 없습니다.")
 
@@ -118,7 +116,6 @@ def show_admin_dialog():  # noqa: C901
         st.info("자동 동기화를 껐거나, 강제 업데이트가 필요한 경우 사용하세요.")
         if st.button("데이터 파이프라인 가동 (Sync)", key="dialog_sync_btn", use_container_width=True):
             trigger_sync(force=True)
-            # st.rerun() # trigger_sync에서 rerun하므로 중복 제거
 
     st.divider()
 
@@ -142,7 +139,6 @@ def show_admin_dialog():  # noqa: C901
     if not current_files:
         st.info("현재 등록된 문서가 없습니다.")
     else:
-        # 커스텀 헤더 (비중 조정: 청크 컬럼 추가)
         h_col1, h_col2, h_col3, h_col4, h_col5 = st.columns([0.2, 3.0, 0.8, 0.6, 0.6])
         h_col1.write("**No**")
         h_col2.write("**파일명**")
@@ -154,17 +150,13 @@ def show_admin_dialog():  # noqa: C901
             unsafe_allow_html=True,
         )
 
-        # 각 파일별 행 렌더링
         for i, f in enumerate(current_files):
             r_col1, r_col2, r_col3, r_col4, r_col5 = st.columns([0.2, 3.0, 0.8, 0.6, 0.6])
             r_col1.write(f"{i + 1}")
             r_col2.text(f.name)
             r_col3.write(format_size(f.stat().st_size))
-
-            # DB에서 해당 파일의 청크 수 조회
             chunk_count = db_manager.get_source_count(f.name)
             r_col4.write(f"{chunk_count}")
-
             if r_col5.button("🗑️", key=f"del_btn_{i}", help=f"'{f.name}' 삭제") and f.exists():
                 f.unlink()
                 st.toast(f"파일 삭제됨: {f.name}")
@@ -225,7 +217,6 @@ st.markdown(
     background-color: rgba(151, 166, 195, 0.25);
     border-color: rgba(151, 166, 195, 0.4);
 }
-/* 스트림릿 텍스트 줄바꿈 방지 */
 div[data-testid="column"] > div > div > div > div > p {
     white-space: nowrap;
     overflow: hidden;
@@ -261,7 +252,24 @@ with st.sidebar:
     )
     st.session_state.show_expert_mode = show_expert_mode
 
-    st.sidebar.markdown("<br>" * 5, unsafe_allow_html=True)
+    st.divider()
+    st.subheader("실시간 자원 모니터링")
+    stats = get_system_stats()
+
+    st.write("CPU 사용량")
+    st.progress(int(stats["cpu"]), text=f"{stats['cpu']:.1f}%")
+
+    st.write("RAM 사용량")
+    st.progress(int(stats["memory"]), text=f"{stats['memory']:.1f}%")
+
+    if stats["gpu_vram"] is not None:
+        st.write("GPU VRAM 사용량")
+        st.progress(int(stats["gpu_vram"]), text=f"{stats['gpu_vram']:.1f}%")
+    else:
+        st.write("GPU VRAM 사용량")
+        st.info("현재 환경에서 GPU를 사용할 수 없습니다.")
+
+    st.sidebar.markdown("<br>" * 2, unsafe_allow_html=True)
     if st.button("데이터 관리 시스템 실행", use_container_width=True, disabled=st.session_state.is_generating):
         st.session_state.admin_active = True
         st.rerun()
@@ -274,85 +282,68 @@ if st.session_state.get("admin_active", False):
 # --- UI 스트리밍 핸들러 ---
 class StreamUIHandler:
     def __init__(self):
-        self.cache_msg = st.empty()
-        self.retrieval_msg = st.empty()
-        self.reranking_msg = st.empty()
-        self.generation_msg = st.empty()
         self.response_container = st.empty()
+        self.latency_placeholder = st.empty()
         self.full_response = ""
-        self.docs = []
         self.final_docs = []
-        self.stage_handlers = {
-            "cache": self._handle_cache,
-            "retrieval": self._handle_retrieval,
-            "reranking": self._handle_reranking,
-            "generation": self._handle_generation,
-            "citation": self._handle_citation,
-        }
+        self.stage_latencies = {}
+        self.start_time = time.time()
 
     def process_step(self, step: dict):
-        stage, state = step.get("stage"), step.get("status")
-        handler = self.stage_handlers.get(stage)
-        if handler:
-            handler(state, step)
+        stage, status = step.get("stage"), step.get("status")
 
-    def _handle_cache(self, state, step):
-        if state == "running" and st.session_state.show_expert_mode:
-            self.cache_msg.info("캐시 검색 중...")
-        elif state == "hit" and st.session_state.show_expert_mode:
-            self.cache_msg.success("캐시 Hit")
-        elif state == "miss" or not st.session_state.show_expert_mode:
-            self.cache_msg.empty()
+        if status == "running":
+            self.stage_latencies[stage] = {"start": time.time()}
+        elif status in ["complete", "hit", "miss"] and stage in self.stage_latencies:
+            self.stage_latencies[stage]["end"] = time.time()
 
-    def _handle_retrieval(self, state, step):
-        if state == "running" and st.session_state.show_expert_mode:
-            self.retrieval_msg.info("관련 문서를 찾는 중...")
-        elif state == "complete" and st.session_state.show_expert_mode:
-            self.docs = step.get("output", [])
-            self.retrieval_msg.success(f"{len(self.docs)}개 문서 검색 완료")
-
-    def _handle_reranking(self, state, step):
-        if state == "running" and st.session_state.show_expert_mode:
-            self.reranking_msg.info("핵심 문서 선별 중...")
-        elif state == "complete" and st.session_state.show_expert_mode:
-            self.final_docs = step.get("output", [])
-            self.reranking_msg.success(f"상위 {len(self.final_docs)}개 선별 완료")
-
-    def _handle_generation(self, state, step):
-        if state == "running" and st.session_state.show_expert_mode:
-            self.generation_msg.info("답변 생성 중...")
-        elif state == "streaming":
+        if stage == "generation" and status == "streaming":
             self.full_response += step.get("output", "")
             self.response_container.markdown(self.full_response + "▌")
-        elif state == "complete":
-            if st.session_state.show_expert_mode:
-                self.generation_msg.success("답변 생성 완료")
+        elif stage == "generation" and status == "complete":
             self.response_container.markdown(self.full_response)
+        elif stage == "citation" and status == "complete":
+            self.final_docs = self._format_docs(step.get("source_documents", []))
 
-    def _handle_citation(self, state, step):
-        if state == "complete":
-            docs = step.get("source_documents", [])
-            # Format to match expected dictionary structure in UI if they are Document objects
-            self.final_docs = []
-            if not docs:
-                return
-            for doc in docs:
-                if hasattr(doc, "page_content"):  # Document 객체인 경우
-                    self.final_docs.append(
-                        {
-                            "content": doc.page_content,
-                            "metadata": doc.metadata,
-                            "score": doc.metadata.get("rerank_score", doc.metadata.get("score", 0.0)),
-                        }
-                    )
-                elif isinstance(doc, dict):  # 이미 dict인 경우 (캐시 등)
-                    self.final_docs.append(doc)
+        if st.session_state.show_expert_mode:
+            self.display_latencies()
+
+    def _format_docs(self, docs):
+        formatted = []
+        if not docs:
+            return formatted
+        for doc in docs:
+            if hasattr(doc, "page_content"):
+                formatted.append(
+                    {
+                        "content": doc.page_content,
+                        "metadata": doc.metadata,
+                        "score": doc.metadata.get("rerank_score", doc.metadata.get("score", 0.0)),
+                    }
+                )
+            elif isinstance(doc, dict):
+                formatted.append(doc)
+        return formatted
+
+    def display_latencies(self):
+        total_latency = time.time() - self.start_time
+        latency_messages = [f"**총 소요시간: {total_latency:.2f}초**"]
+        if total_latency > 5.0:
+            latency_messages[0] = f"⚠️ {latency_messages[0]} (5초 초과)"
+
+        for stage, times in self.stage_latencies.items():
+            if "end" in times:
+                duration = times["end"] - times["start"]
+                latency_messages.append(f"- {stage}: {duration:.2f}초")
+
+        self.latency_placeholder.info("\n".join(latency_messages))
 
     def handle_error(self, error):
         if self.full_response:
             msg = "\n\n[안내] 통신 오류로 답변이 불완전할 수 있습니다."
             self.response_container.markdown(self.full_response + msg)
             return self.full_response + msg
+        return f"오류가 발생했습니다: {error}"
 
 
 # --- 메인 채팅 화면 ---
@@ -366,28 +357,27 @@ for msg_idx, msg in enumerate(st.session_state.messages):
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
         if msg.get("citations"):
-            cols = st.columns(len(msg["citations"]))
             for i, doc in enumerate(msg["citations"]):
-                # 방어 로직
                 if not isinstance(doc, dict):
                     continue
                 metadata = doc.get("metadata", {})
                 source = metadata.get(MetadataFields.SRC_NAME, "알 수 없음")
                 page = metadata.get(MetadataFields.PG_NUM, "-")
+                score = doc.get("score", 0.0)
 
-                if cols[i].button(
-                    f"📄 {source} (p.{page})", key=f"cite_{msg_idx}_{i}", disabled=st.session_state.is_generating
-                ):
+                button_label = f"📄 {source} (p.{page}) - 신뢰도: {score:.2f}"
+                if score < 0.5:
+                    button_label += " (낮음)"
+
+                if st.button(button_label, key=f"cite_{msg_idx}_{i}", disabled=st.session_state.is_generating):
                     st.session_state.dialog_doc_to_show = doc
                     st.rerun()
 
-# 다이얼로그 상태 확인 및 호출 (루프 밖에서 단 한번만 실행)
 if st.session_state.dialog_doc_to_show:
     show_document_dialog(st.session_state.dialog_doc_to_show)
-    st.session_state.dialog_doc_to_show = None  # 다이얼로그 렌더링 후 상태 초기화
+    st.session_state.dialog_doc_to_show = None
 
 
-# 채팅 입력 콜백: 입력을 제출하는 순간 (스크립트 상단 실행 전) 상태를 정리합니다.
 def on_chat_submit():
     if st.session_state.get("admin_active"):
         st.session_state.admin_active = False
@@ -397,40 +387,55 @@ def on_chat_submit():
 if prompt := st.chat_input(
     "규정에 대해 궁금한 점을 물어보세요.", on_submit=on_chat_submit, disabled=st.session_state.is_generating
 ):
+    st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
-    st.session_state.messages.append({"role": "user", "content": prompt})
 
     with st.chat_message("assistant"):
-        start_time = time.time()
         ui_handler = StreamUIHandler()
         try:
-            # Use status only if expert mode is on
-            if st.session_state.show_expert_mode:
-                with st.status("답변 생성 엔진 가동 중...", expanded=True) as status:
-                    for step in rag_chain.stream({"question": prompt, "k": k_value, "final_k": final_k_value}):
-                        ui_handler.process_step(step)
-                    status.update(label="답변 생성 완료", state="complete", expanded=False)
-            else:
-                for step in rag_chain.stream({"question": prompt, "k": k_value, "final_k": final_k_value}):
-                    ui_handler.process_step(step)
+            stream = rag_chain.stream({"question": prompt, "k": k_value, "final_k": final_k_value})
+            for step in stream:
+                ui_handler.process_step(step)
 
-            duration = time.time() - start_time
+            duration = time.time() - ui_handler.start_time
             st.session_state.messages.append(
                 {"role": "assistant", "content": ui_handler.full_response, "citations": ui_handler.final_docs}
             )
-            info = f"Query: {prompt[:30]}..., Status: success"
-            perf_logger.log(log_type="inference", duration=duration, info=info)
+
+            # 로깅 데이터 준비
+            log_data = {
+                "query": prompt,
+                "answer": ui_handler.full_response,
+                "total_latency": duration,
+                "latencies_per_stage": {
+                    s: v["end"] - v["start"] for s, v in ui_handler.stage_latencies.items() if "end" in v
+                },
+                "confidence_scores": [doc.get("score", 0.0) for doc in ui_handler.final_docs],
+                "system_stats": get_system_stats(),
+                "status": "success",
+            }
+            perf_logger.log(**log_data)
+
             st.session_state.is_generating = False
             st.rerun()
 
         except Exception as e:
-            duration = time.time() - start_time
+            duration = time.time() - ui_handler.start_time
             logger.error(f"채팅 중 오류 발생: {e}", exc_info=True)
+            error_content = ui_handler.handle_error(e)
             st.session_state.messages.append(
-                {"role": "assistant", "content": ui_handler.handle_error(e), "citations": ui_handler.final_docs}
+                {"role": "assistant", "content": error_content, "citations": ui_handler.final_docs}
             )
-            info = f"Query: {prompt[:30]}..., Status: error, Detail: {e!s}"
-            perf_logger.log(log_type="inference", duration=duration, info=info)
+
+            log_data = {
+                "query": prompt,
+                "error": str(e),
+                "total_latency": duration,
+                "system_stats": get_system_stats(),
+                "status": "error",
+            }
+            perf_logger.log(**log_data)
+
             st.session_state.is_generating = False
             st.rerun()
