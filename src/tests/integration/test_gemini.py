@@ -14,6 +14,8 @@ def test_gemini_integration():
     api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
     if not api_key:
         pytest.skip("GEMINI_API_KEY 또는 GOOGLE_API_KEY가 설정되지 않아 통합 테스트를 건너뜁니다.")
+    if os.getenv("CI") == "true":
+        pytest.skip("CI 환경에서는 실제 Gemini API 연동 테스트를 실행하지 않습니다.")
 
     # 1. 사용 가능한 모델 탐색 (gemini-2.0-flash 우선)
     genai.configure(api_key=api_key)
