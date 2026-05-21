@@ -11,9 +11,9 @@ from src.models.llm_gemini import GeminiModel
 @pytest.mark.integration
 def test_gemini_integration():
     """Gemini API 실제 연동 테스트"""
-    api_key = os.getenv("GEMINI_API_KEY")
+    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
     if not api_key:
-        pytest.skip("GEMINI_API_KEY가 설정되지 않아 통합 테스트를 건너뜁니다.")
+        pytest.skip("GEMINI_API_KEY 또는 GOOGLE_API_KEY가 설정되지 않아 통합 테스트를 건너뜁니다.")
 
     # 1. 사용 가능한 모델 탐색 (gemini-2.0-flash 우선)
     genai.configure(api_key=api_key)
@@ -37,7 +37,7 @@ def test_gemini_integration():
             else default
         )
 
-        llm_instance = LLMFactory.create_llm()
+        llm_instance = LLMFactory.create_llm(model_type="gemini", model_name=target_model)
         assert isinstance(llm_instance, GeminiModel)
         assert llm_instance.model_name == target_model
 
