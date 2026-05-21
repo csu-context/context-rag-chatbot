@@ -28,8 +28,16 @@ class BGEChromaEmbeddingFunction(EmbeddingFunction):
     """
 
     def __init__(self, model_name: str | None = None):
-        # 중앙 설정(settings)의 임베딩 모델 사용
-        self.embedder = BGEEmbedder(model_name=model_name or settings.EMBEDDING_MODEL_NAME)
+        # 모델명만 미리 저장하고, 임베더 인스턴스는 실제 임베딩 요청 시 생성 (Lazy Loading)
+        self.model_name = model_name or settings.EMBEDDING_MODEL_NAME
+        self._embedder = None
+
+    @property
+    def embedder(self) -> BGEEmbedder:
+        if self._embedder is None:
+            logger.info("Initializing BGEEmbedder (Lazy Loading)...")
+            self._embedder = BGEEmbedder(model_name=self.model_name)
+        return self._embedder
 
     def __call__(self, input: Documents) -> Embeddings:
         embeddings = self.embedder.encode(input)

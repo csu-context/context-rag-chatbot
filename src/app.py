@@ -19,6 +19,30 @@ setup_global_logging()
 perf_logger = PerformanceLogger()  # 전용 로거 인스턴스 생성
 logger = logging.getLogger(__name__)
 
+
+def get_doc_field(doc, field, default=None):
+    """dict 형태와 LangChain Document 형태 모두 지원하는 메타데이터/내용 조회 헬퍼"""
+    if hasattr(doc, "metadata"):  # LangChain Document 객체인 경우
+        if field == "content":
+            return getattr(doc, "page_content", default)
+        return doc.metadata.get(field, default)
+    elif isinstance(doc, dict):  # 일반 dict 객체인 경우
+        if field == "content":
+            return doc.get("content", doc.get("page_content", default))
+        meta = doc.get("metadata", {})
+        if isinstance(meta, dict):
+            return meta.get(field, default)
+    return default
+
+
+def get_doc_score(doc, default=0.0):
+    if hasattr(doc, "metadata"):
+        return doc.metadata.get("score", getattr(doc, "score", default))
+    elif isinstance(doc, dict):
+        return doc.get("score", default)
+    return default
+
+
 # --- 1. 페이지 설정 ---
 st.set_page_config(
     page_title="기업 매뉴얼 챗봇 (관리 시스템 통합)",
@@ -31,6 +55,26 @@ ensure_directories()
 # --- 2. 세션 상태 초기화 ---
 if "admin_active" not in st.session_state:
     st.session_state.admin_active = False
+if "generating" not in st.session_state:
+    st.session_state.generating = False
+if "stop_generation" not in st.session_state:
+    st.session_state.stop_generation = False
+if "current_prompt" not in st.session_state:
+    st.session_state.current_prompt = ""
+if "stream_iter" not in st.session_state:
+    st.session_state.stream_iter = None
+if "stream_steps" not in st.session_state:
+    st.session_state.stream_steps = []
+if "full_response" not in st.session_state:
+    st.session_state.full_response = ""
+if "docs" not in st.session_state:
+    st.session_state.docs = []
+if "final_docs" not in st.session_state:
+    st.session_state.final_docs = []
+if "start_time" not in st.session_state:
+    st.session_state.start_time = None
+if "show_expert_mode" not in st.session_state:
+    st.session_state.show_expert_mode = False
 
 
 # --- 3. 팝업 다이얼로그 정의 ---
@@ -45,9 +89,13 @@ def show_document_dialog(source: str, page: str, score: float, content: str):
     st.text_area("원문 내용", content, height=300)
 
 
+def reset_admin_active():
+    st.session_state.admin_active = False
+
+
 # [데이터 관리 시스템 (Admin)]
-@st.dialog("데이터 관리 시스템", width="large")
-def show_admin_dialog():  # noqa: C901
+@st.dialog("데이터 관리 시스템", width="large", on_dismiss=reset_admin_active)
+def show_admin_dialog(db_manager):  # noqa: C901
     st.markdown("지식 베이스(RAW_DATA) 관리 및 데이터베이스 동기화를 수행합니다.")
 
     # 상단 옵션 영역
@@ -111,7 +159,7 @@ def show_admin_dialog():  # noqa: C901
     # 하단 영역: 문서 목록 및 행 단위 삭제
     st.subheader("등록된 문서 목록 및 삭제")
     if not auto_sync:
-        st.caption("⚠️ 주의: 자동 동기화가 꺼져 있습니다. 삭제 후 반드시 'Sync'를 실행해야 DB에서 제거됩니다.")
+        st.caption("주의: 자동 동기화가 꺼져 있습니다. 삭제 후 반드시 'Sync'를 실행해야 DB에서 제거됩니다.")
 
     def format_size(size_bytes):
         if size_bytes == 0:
@@ -151,7 +199,7 @@ def show_admin_dialog():  # noqa: C901
             chunk_count = db_manager.get_source_count(f.name)
             r_col4.write(f"{chunk_count}")
 
-            if r_col5.button("🗑️", key=f"del_btn_{i}", help=f"'{f.name}' 삭제") and f.exists():
+            if r_col5.button("삭제", key=f"del_btn_{i}", help=f"'{f.name}' 삭제") and f.exists():
                 f.unlink()
                 st.toast(f"파일 삭제됨: {f.name}")
                 if auto_sync:
@@ -217,6 +265,13 @@ div[data-testid="column"] > div > div > div > div > p {
     overflow: hidden;
     text-overflow: ellipsis;
 }
+/* 채팅 메시지 내부 스피너 아바타 높이 맞춤 */
+div[data-testid="stChatMessage"] div[data-testid="stSpinner"] > div {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: -0.25rem;
+}
 </style>
 """,
     unsafe_allow_html=True,
@@ -228,85 +283,56 @@ with st.sidebar:
     st.title("설정 및 관리")
 
     st.subheader("검색 설정")
-    k_value = st.slider("초벌 검색 개수 (K)", 1, 20, 10, 1)
-    final_k_value = st.slider("최종 선별 개수", 1, 10, 5, 1)
+    k_value = st.slider("초벌 검색 개수 (K)", 1, 20, 10, 1, disabled=st.session_state.generating)
+    final_k_value = st.slider("최종 선별 개수", 1, 10, 5, 1, disabled=st.session_state.generating)
 
     st.divider()
     st.subheader("데이터베이스 상태")
     count = db_manager.get_count()
     st.write(f"현재 저장된 청크 수: **{count}**")
 
-    if st.button("상태 새로고침", use_container_width=True):
+    if st.button("상태 새로고침", use_container_width=True, disabled=st.session_state.generating):
         st.rerun()
 
     st.divider()
-    show_expert_mode = st.toggle("상세 추론 과정 보기", False)
+    st.toggle("상세 추론 과정 보기", key="show_expert_mode")
 
     st.sidebar.markdown("<br>" * 5, unsafe_allow_html=True)
-    if st.button("데이터 관리 시스템 실행", use_container_width=True):
+    if st.button("데이터 관리 시스템 실행", use_container_width=True, disabled=st.session_state.generating):
         st.session_state.admin_active = True
         st.rerun()
 
 # --- 6. 다이얼로그 활성화 제어 ---
 if st.session_state.admin_active:
-    show_admin_dialog()
+    show_admin_dialog(db_manager)
 
 
 # --- UI 스트리밍 핸들러 ---
-class StreamUIHandler:
-    def __init__(self):
-        self.retrieval_msg = st.empty()
-        self.reranking_msg = st.empty()
-        self.generation_msg = st.empty()
-        self.response_container = st.empty()
-        self.full_response = ""
-        self.docs = []
-        self.final_docs = []
-        self.stage_handlers = {
-            "retrieval": self._handle_retrieval,
-            "reranking": self._handle_reranking,
-            "generation": self._handle_generation,
-        }
+def check_repetition(full_response: str) -> tuple[bool, str]:
+    """동일 라인이 15자 이상이고 3회 이상 반복되면 True와 해당 라인을 반환"""
+    lines = full_response.split("\n")
+    line_counts: dict[str, int] = {}
+    for line in lines:
+        line_trimmed = line.strip()
+        if len(line_trimmed) >= 15:
+            line_counts[line_trimmed] = line_counts.get(line_trimmed, 0) + 1
+            if line_counts[line_trimmed] >= 3:
+                return True, line_trimmed
+    return False, ""
 
-    def process_step(self, step: dict):
-        stage, state = step.get("stage"), step.get("status")
-        handler = self.stage_handlers.get(stage)
-        if handler:
-            handler(state, step)
 
-    def _handle_retrieval(self, state, step):
-        if state == "running":
-            self.retrieval_msg.info("관련 문서를 찾는 중...")
-        elif state == "complete":
-            self.docs = step.get("output", [])
-            self.retrieval_msg.success(f"{len(self.docs)}개 문서 검색 완료")
-
-    def _handle_reranking(self, state, step):
-        if state == "running":
-            self.reranking_msg.info("핵심 문서 선별 중...")
-        elif state == "complete":
-            self.final_docs = step.get("output", [])
-            self.reranking_msg.success(f"상위 {len(self.final_docs)}개 선별 완료")
-
-    def _handle_generation(self, state, step):
-        if state == "running":
-            self.generation_msg.info("답변 생성 중...")
-        elif state == "streaming":
-            self.full_response += step.get("output", "")
-            self.response_container.markdown(self.full_response + "▌")
-        elif state == "complete":
-            self.generation_msg.success("답변 생성 완료")
-            self.response_container.markdown(self.full_response)
-
-    def handle_error(self, error):
-        if self.full_response:
-            msg = "\n\n[안내] 통신 오류로 답변이 불완전할 수 있습니다."
-            self.response_container.markdown(self.full_response + msg)
-            return self.full_response + msg
+def format_doc_status(docs_list):
+    if not docs_list:
+        return "0개 문서 (0개 청크)"
+    unique_files = set()
+    for d in docs_list:
+        src_name = get_doc_field(d, MetadataFields.SRC_NAME, "알 수 없음")
+        unique_files.add(src_name)
+    return f"{len(unique_files)}개 문서 ({len(docs_list)}개 청크)"
 
 
 # --- 메인 채팅 화면 ---
-st.title("📖 기업 매뉴얼 Q&A 서비스")
+st.title("기업 매뉴얼 Q&A 서비스")
 st.info("사내 규정 및 매뉴얼에 대해 질문하면 인용 출처와 함께 답변해 드립니다.")
 
 if "messages" not in st.session_state:
@@ -315,37 +341,221 @@ if "messages" not in st.session_state:
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
+
+        # 답변 소요 시간 캡션 표시
+        if msg["role"] == "assistant" and msg.get("latency") is not None:
+            st.caption(f"답변 소요 시간: {msg['latency']:.2f}초")
+
         if msg.get("citations"):
-            cols = st.columns(len(msg["citations"]))
+            citations_count = len(msg["citations"])
+            cols = st.columns(citations_count) if citations_count > 0 else []
             for i, doc in enumerate(msg["citations"]):
-                source = doc["metadata"].get(MetadataFields.SRC_NAME, "알 수 없음")
-                page = doc["metadata"].get(MetadataFields.PG_NUM, "-")
-                score = doc.get("score", 0.0)
-                if cols[i].button(f"📄 {source} (p.{page})", key=f"cite_{msg['content'][:10]}_{i}"):
-                    show_document_dialog(source, str(page), score, doc["content"])
+                source = get_doc_field(doc, MetadataFields.SRC_NAME, "알 수 없음")
+                page = get_doc_field(doc, MetadataFields.PG_NUM, "-")
+                score = get_doc_score(doc, 0.0)
+                content = get_doc_field(doc, "content", "")
 
-if prompt := st.chat_input("규정에 대해 궁금한 점을 물어보세요."):
-    with st.chat_message("user"):
-        st.markdown(prompt)
-    st.session_state.messages.append({"role": "user", "content": prompt})
+                button_key = f"cite_{i}_{len(msg['content'])}"
+                if cols[i].button(f"{source} (p.{page})", key=button_key):
+                    show_document_dialog(source, str(page), score, content)
 
+# active generation UI
+if st.session_state.generating:
+    show_expert_mode = st.session_state.show_expert_mode
     with st.chat_message("assistant"):
-        ui_handler = StreamUIHandler()
-        try:
-            with st.status("답변 생성 엔진 가동 중...", expanded=True) as status:
-                for step in rag_chain.stream({"question": prompt, "k": k_value, "final_k": final_k_value}):
-                    ui_handler.process_step(step)
-                status.update(label="답변 생성 완료", state="complete", expanded=False)
-            st.session_state.messages.append(
-                {"role": "assistant", "content": ui_handler.full_response, "citations": ui_handler.final_docs}
-            )
-            perf_logger.log_inference(prompt, ui_handler.full_response, "success", prompt[:30])
+        # Placeholders
+        retrieval_placeholder = st.empty()
+        reranking_placeholder = st.empty()
+        generation_placeholder = st.empty()
+        response_placeholder = st.empty()
+
+        # Re-render accumulated steps
+        for step in st.session_state.stream_steps:
+            stage = step.get("stage")
+            status = step.get("status")
+            output = step.get("output")
+
+            if show_expert_mode:
+                if stage == "retrieval":
+                    if status == "running":
+                        retrieval_placeholder.info("관련 문서를 찾는 중...")
+                    elif status == "complete":
+                        retrieval_placeholder.success(f"{format_doc_status(st.session_state.docs)} 검색 완료")
+                elif stage == "reranking":
+                    if status == "running":
+                        reranking_placeholder.info("핵심 문서 선별 중...")
+                    elif status == "complete":
+                        reranking_placeholder.success(
+                            f"상위 {format_doc_status(st.session_state.final_docs)} 선별 완료"
+                        )
+                elif stage == "generation":
+                    if status == "running":
+                        generation_placeholder.info("답변 생성 중...")
+                    elif status == "complete":
+                        generation_placeholder.success("답변 생성 완료")
+
+        if st.session_state.full_response:
+            response_placeholder.markdown(st.session_state.full_response + "▌")
+
+        if st.button("Stop", key="stop_generation_btn"):
+            if st.session_state.stream_iter:
+                try:
+                    st.session_state.stream_iter.close()
+                except Exception as e:
+                    logger.warning(f"Error closing stream iterator: {e}")
+                st.session_state.stop_generation = True
+            else:
+                st.session_state.generating = False
+                st.session_state.stop_generation = False
             st.rerun()
 
-        except Exception as e:
-            logger.error(f"채팅 중 오류 발생: {e}", exc_info=True)
-            st.session_state.messages.append(
-                {"role": "assistant", "content": ui_handler.handle_error(e), "citations": ui_handler.final_docs}
-            )
-            perf_logger.log_inference(prompt, str(e), "error", prompt[:30])
-            st.rerun()
+        # Consume the stream iterator
+        if st.session_state.stream_iter:
+            try:
+                import contextlib
+
+                spinner_ctx = (
+                    st.spinner("답변을 생성하고 있습니다...") if not show_expert_mode else contextlib.nullcontext()
+                )
+                with spinner_ctx:
+                    for step in st.session_state.stream_iter:
+                        if st.session_state.stop_generation:
+                            break
+
+                        st.session_state.stream_steps.append(step)
+                        stage = step.get("stage")
+                        status = step.get("status")
+                        output = step.get("output")
+
+                        if stage == "retrieval":
+                            if status == "running" and show_expert_mode:
+                                retrieval_placeholder.info("관련 문서를 찾는 중...")
+                            elif status == "complete":
+                                st.session_state.docs = output
+                                if show_expert_mode:
+                                    retrieval_placeholder.success(
+                                        f"{format_doc_status(st.session_state.docs)} 검색 완료"
+                                    )
+                        elif stage == "reranking":
+                            if status == "running" and show_expert_mode:
+                                reranking_placeholder.info("핵심 문서 선별 중...")
+                            elif status == "complete":
+                                st.session_state.final_docs = output
+                                if show_expert_mode:
+                                    reranking_placeholder.success(
+                                        f"상위 {format_doc_status(st.session_state.final_docs)} 선별 완료"
+                                    )
+                        elif stage == "generation":
+                            if status == "running" and show_expert_mode:
+                                generation_placeholder.info("답변 생성 중...")
+                            elif status == "streaming":
+                                st.session_state.full_response += output
+                                has_repetition, repeated_line = check_repetition(st.session_state.full_response)
+                                if has_repetition:
+                                    logger.warning(f"동일 라인 반복 감지으로 답변 생성 중단: '{repeated_line}'")
+                                    st.session_state.full_response += (
+                                        "\n\n[안내] 동일한 문장/라인이 반복되어 답변 생성이 안전하게 중단되었습니다."
+                                    )
+                                    st.session_state.generating = False
+                                    st.session_state.stop_generation = True
+                                    break
+                                response_placeholder.markdown(st.session_state.full_response + "▌")
+                            elif status == "complete":
+                                if show_expert_mode:
+                                    generation_placeholder.success("답변 생성 완료")
+                                response_placeholder.markdown(st.session_state.full_response)
+
+                if not st.session_state.stop_generation:
+                    st.session_state.generating = False
+                    response_placeholder.markdown(st.session_state.full_response)
+                    if show_expert_mode:
+                        generation_placeholder.success("답변 생성 완료")
+
+                    latency = time.time() - st.session_state.start_time
+                    st.session_state.messages.append(
+                        {
+                            "role": "assistant",
+                            "content": st.session_state.full_response,
+                            "citations": st.session_state.final_docs,
+                            "latency": latency,
+                        }
+                    )
+                    perf_logger.log_inference(
+                        st.session_state.current_prompt,
+                        st.session_state.full_response,
+                        "success",
+                        st.session_state.current_prompt[:30],
+                        duration=latency,
+                    )
+                    st.session_state.stream_iter = None
+                    st.session_state.current_prompt = ""
+                    st.rerun()
+                else:
+                    st.session_state.generating = False
+                    response_placeholder.markdown(st.session_state.full_response)
+                    if show_expert_mode:
+                        generation_placeholder.warning("답변 생성 중단됨")
+
+                    latency = time.time() - st.session_state.start_time
+                    st.session_state.messages.append(
+                        {
+                            "role": "assistant",
+                            "content": st.session_state.full_response,
+                            "citations": st.session_state.final_docs,
+                            "latency": latency,
+                        }
+                    )
+                    perf_logger.log_inference(
+                        st.session_state.current_prompt,
+                        st.session_state.full_response,
+                        "interrupted",
+                        st.session_state.current_prompt[:30],
+                        duration=latency,
+                    )
+                    st.session_state.stream_iter = None
+                    st.session_state.current_prompt = ""
+                    st.session_state.stop_generation = False
+                    st.rerun()
+
+            except Exception as e:
+                st.session_state.generating = False
+                logger.error(f"채팅 중 오류 발생: {e}", exc_info=True)
+
+                error_msg = f"\n\n[오류] 답변 생성 중 문제가 발생했습니다: {e}"
+                st.session_state.full_response += error_msg
+                response_placeholder.markdown(st.session_state.full_response)
+
+                latency = time.time() - st.session_state.start_time
+                st.session_state.messages.append(
+                    {
+                        "role": "assistant",
+                        "content": st.session_state.full_response,
+                        "citations": st.session_state.final_docs,
+                        "latency": latency,
+                    }
+                )
+                perf_logger.log_inference(
+                    st.session_state.current_prompt,
+                    str(e),
+                    "error",
+                    st.session_state.current_prompt[:30],
+                    duration=latency,
+                )
+                st.session_state.stream_iter = None
+                st.session_state.current_prompt = ""
+                st.rerun()
+
+if prompt := st.chat_input("규정에 대해 궁금한 점을 물어보세요.", disabled=st.session_state.generating):
+    st.session_state.generating = True
+    st.session_state.stop_generation = False
+    st.session_state.current_prompt = prompt
+    st.session_state.stream_steps = []
+    st.session_state.full_response = ""
+    st.session_state.docs = []
+    st.session_state.final_docs = []
+    st.session_state.start_time = time.time()
+
+    st.session_state.stream_iter = rag_chain.stream({"question": prompt, "k": k_value, "final_k": final_k_value})
+
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    st.rerun()
