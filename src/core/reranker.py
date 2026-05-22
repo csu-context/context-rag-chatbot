@@ -185,10 +185,32 @@ class CrossEncoderReranker(BaseReranker):
             )
 
         pairs = [(query, doc.page_content) for doc in documents]
-        model = self._load_model()
 
         start_time = time.time()
-        scores = model.predict(pairs).tolist()
+        try:
+            model = self._load_model()
+            scores_pred = model.predict(pairs)
+            scores = scores_pred.tolist() if hasattr(scores_pred, "tolist") else list(scores_pred)
+        except RuntimeError as e:
+            err_msg = str(e).lower()
+            # CUDA, MPS, OOM, Device 관련 에러가 발생한 경우 CPU로 폴백
+            if self.device != "cpu" and any(x in err_msg for x in ["cuda", "mps", "device", "out of memory", "oom"]):
+                logger.warning(
+                    f"[{self.name}] GPU/MPS error detected: {e}. Falling back to CPU mode..."
+                )
+                self.device = "cpu"
+                with self._singleton_lock:
+                    self._model = None  # 기존 GPU 모델 언로드 유도
+                try:
+                    model = self._load_model()
+                    scores_pred = model.predict(pairs)
+                    scores = scores_pred.tolist() if hasattr(scores_pred, "tolist") else list(scores_pred)
+                except Exception as cpu_err:
+                    logger.error(f"[{self.name}] Failed to run even on CPU fallback: {cpu_err}")
+                    raise cpu_err
+            else:
+                raise
+
         elapsed_time = time.time() - start_time
 
         scored_docs = sorted(zip(scores, documents, strict=True), key=lambda x: x[0], reverse=True)
