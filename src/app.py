@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from src.common.config import settings
 from src.common.constants import MetadataFields
 from src.core.chains import get_rag_chain
+from src.models.factory import LLMFactory
 from src.pipeline import PipelineOrchestrator
 from src.utils.logger import PerformanceLogger, setup_global_logging
 from src.utils.paths import RAW_DATA_DIR, ensure_directories
@@ -255,8 +256,6 @@ except Exception as e:
 
 
 # --- 모델 다운로드 및 준비 상태 사전 체크 ---
-from src.models.factory import LLMFactory
-
 model_ready = True
 is_ollama = (settings.MODEL_TYPE == "ollama")
 
@@ -492,18 +491,30 @@ def render_download_progress(llm):
         total = progress.get("total", 0)
         if total > 0:
             percentage = completed / total
-            st.warning(f"로컬 LLM 모델 '{settings.MODEL_NAME}'을 다운로드하고 있습니다. 다운로드가 완료될 때까지 질문을 입력할 수 없습니다.")
+            msg = (
+                f"로컬 LLM 모델 '{settings.MODEL_NAME}'을 다운로드하고 있습니다. "
+                "다운로드가 완료될 때까지 질문을 입력할 수 없습니다."
+            )
+            st.warning(msg)
             st.progress(percentage)
             completed_mb = completed / (1024 * 1024)
             total_mb = total / (1024 * 1024)
             st.text(f"다운로드 중: {percentage:.1%} ({completed_mb:.1f} MB / {total_mb:.1f} MB)")
         else:
-            st.warning(f"로컬 LLM 모델 '{settings.MODEL_NAME}'을 다운로드하고 있습니다. 다운로드가 완료될 때까지 질문을 입력할 수 없습니다.")
+            msg = (
+                f"로컬 LLM 모델 '{settings.MODEL_NAME}'을 다운로드하고 있습니다. "
+                "다운로드가 완료될 때까지 질문을 입력할 수 없습니다."
+            )
+            st.warning(msg)
             st.text(f"상태: {status}")
     elif status == "error":
         st.error(f"오류: {progress.get('message', '알 수 없는 오류')}")
     else:
-        st.warning(f"로컬 LLM 모델 '{settings.MODEL_NAME}'을 다운로드하고 있습니다. 다운로드가 완료될 때까지 질문을 입력할 수 없습니다.")
+        msg = (
+            f"로컬 LLM 모델 '{settings.MODEL_NAME}'을 다운로드하고 있습니다. "
+            "다운로드가 완료될 때까지 질문을 입력할 수 없습니다."
+        )
+        st.warning(msg)
         st.text(f"상태: {status}")
 
 

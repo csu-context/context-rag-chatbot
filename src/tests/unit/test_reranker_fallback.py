@@ -1,6 +1,7 @@
-import pytest
 from unittest.mock import MagicMock, patch
+
 from langchain_core.documents import Document
+
 from src.core.reranker import CrossEncoderReranker
 
 
@@ -28,7 +29,7 @@ def test_reranker_cpu_fallback_on_gpu_error():
     mock_model.predict = mock_predict
 
     # _load_model이 mock_model을 리턴하도록 패치
-    with patch.object(reranker, "_load_model", return_value=mock_model) as mock_load:
+    with patch.object(reranker, "_load_model", return_value=mock_model):
         docs = [
             Document(page_content="첫 번째 문서", metadata={"chunk_id": "1"}),
             Document(page_content="두 번째 문서", metadata={"chunk_id": "2"}),

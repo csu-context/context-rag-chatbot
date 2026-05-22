@@ -1,8 +1,9 @@
+import contextlib
 import logging
 import os
 import threading
 import time
-from typing import Any
+from typing import Any, ClassVar
 
 from langchain_ollama import ChatOllama
 
@@ -13,8 +14,8 @@ logger = logging.getLogger(__name__)
 
 class OllamaPullStatus:
     """Ollama 모델 다운로드의 백그라운드 진행 상태를 관리하는 스레드 안전 클래스"""
-    _lock = threading.Lock()
-    _instances = {}  # model_name: {status: str, completed: int, total: int, message: str, thread: Thread}
+    _lock: ClassVar[threading.Lock] = threading.Lock()
+    _instances: ClassVar[dict] = {}  # model_name -> status_info dict
 
     @classmethod
     def get_status(cls, model_name: str) -> dict | None:
@@ -28,6 +29,42 @@ class OllamaPullStatus:
                     "message": status_info["message"]
                 }
             return None
+
+    @classmethod
+    def _run_pull(cls, model: "OllamaModel", status_info: dict) -> None:
+        """백그라운드 다운로드 스레드 실행 본체."""
+        try:
+            if model.is_model_available():
+                with cls._lock:
+                    status_info["status"] = "success"
+                return
+
+            last_check_time = time.time()
+            for progress in model.pull_model_progress():
+                status = progress.get("status", "")
+                with cls._lock:
+                    status_info["status"] = status
+                    status_info["completed"] = progress.get("completed", 0)
+                    status_info["total"] = progress.get("total", 0)
+                    status_info["message"] = progress.get("message", "")
+                    if status in ("success", "error"):
+                        break
+
+                if time.time() - last_check_time > 5.0:
+                    if model.is_model_available():
+                        with cls._lock:
+                            status_info["status"] = "success"
+                        break
+                    last_check_time = time.time()
+        except Exception as e:
+            with cls._lock:
+                status_info["status"] = "error"
+                status_info["message"] = str(e)
+        finally:
+            with contextlib.suppress(Exception):
+                if model.is_model_available():
+                    with cls._lock:
+                        status_info["status"] = "success"
 
     @classmethod
     def start_pull(cls, model: "OllamaModel") -> None:
@@ -44,49 +81,11 @@ class OllamaPullStatus:
                 "completed": 0,
                 "total": 0,
                 "message": "",
-                "thread": None
+                "thread": None,
             }
             cls._instances[model_name] = status_info
 
-            def run_pull():
-                try:
-                    if model.is_model_available():
-                        with cls._lock:
-                            status_info["status"] = "success"
-                        return
-
-                    last_check_time = time.time()
-                    for progress in model.pull_model_progress():
-                        status = progress.get("status", "")
-                        with cls._lock:
-                            status_info["status"] = status
-                            status_info["completed"] = progress.get("completed", 0)
-                            status_info["total"] = progress.get("total", 0)
-                            status_info["message"] = progress.get("message", "")
-                            if status == "success":
-                                break
-                            elif status == "error":
-                                break
-
-                        if time.time() - last_check_time > 5.0:
-                            if model.is_model_available():
-                                with cls._lock:
-                                    status_info["status"] = "success"
-                                break
-                            last_check_time = time.time()
-                except Exception as e:
-                    with cls._lock:
-                        status_info["status"] = "error"
-                        status_info["message"] = str(e)
-                finally:
-                    try:
-                        if model.is_model_available():
-                            with cls._lock:
-                                status_info["status"] = "success"
-                    except Exception:
-                        pass
-
-            thread = threading.Thread(target=run_pull, daemon=True)
+            thread = threading.Thread(target=cls._run_pull, args=(model, status_info), daemon=True)
             status_info["thread"] = thread
             thread.start()
 
@@ -166,6 +165,7 @@ class OllamaModel(BaseLLM):
             dict: 진행 정보 딕셔너리
         """
         import json
+
         import requests
 
         url = self.base_url.rstrip("/") + "/api/pull"
@@ -178,12 +178,10 @@ class OllamaModel(BaseLLM):
             for line in response.iter_lines():
                 if line:
                     line_str = line.decode("utf-8").strip()
-                    try:
+                    with contextlib.suppress(json.JSONDecodeError):
                         yield json.loads(line_str)
-                    except json.JSONDecodeError:
-                        pass
         except requests.exceptions.RequestException as e:
-            yield {"status": "error", "message": f"Ollama 연결 실패: {str(e)}"}
+            yield {"status": "error", "message": f"Ollama 연결 실패: {e!s}"}
         except Exception as e:
             yield {"status": "error", "message": str(e)}
 
