@@ -39,7 +39,7 @@ class BaseReranker(ABC):
     MAX_INFER_TIME_SEC = 5  # API 타임아웃
     PERFORMANCE_THRESHOLD_SEC = 3.0  # 지연 기준 시간 (이 시간 초과 시 top_k 동적 조정)
 
-    def __init__(self, name: str, top_k: int = 5, threshold: float = 0.3):
+    def __init__(self, name: str, top_k: int = 5, threshold: float = 0.45):
         self.name = name
         self.top_k = top_k
         self.threshold = threshold
@@ -118,13 +118,15 @@ class CrossEncoderReranker(BaseReranker):
             self._set_model_defaults()
 
     def _set_model_defaults(self) -> None:
+        # sigmoid 정규화 후 [0, 1] 기준 임계값
+        # sigmoid(0) = 0.5 (중립), sigmoid(1) ≈ 0.73 (긍정적)
         model_lower = self.model_name.lower()
         if "bge" in model_lower:
-            self.threshold = 0.2
-        elif "skesarmom" in model_lower or "kor" in model_lower:
             self.threshold = 0.4
+        elif "skesarmom" in model_lower or "kor" in model_lower:
+            self.threshold = 0.5
         else:
-            self.threshold = 0.3
+            self.threshold = 0.45
 
     @classmethod
     def get_instance(
@@ -188,8 +190,10 @@ class CrossEncoderReranker(BaseReranker):
         model = self._load_model()
 
         start_time = time.time()
-        scores = model.predict(pairs).tolist()
+        raw_scores = model.predict(pairs)
         elapsed_time = time.time() - start_time
+        # raw logit을 [0, 1] 범위로 정규화 (sigmoid)
+        scores = torch.sigmoid(torch.tensor(raw_scores)).tolist()
 
         scored_docs = sorted(zip(scores, documents, strict=True), key=lambda x: x[0], reverse=True)
         filtered = [(s, d) for s, d in scored_docs if s >= effective_threshold]
