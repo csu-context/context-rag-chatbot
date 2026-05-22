@@ -228,10 +228,10 @@ def show_admin_dialog(db_manager):  # noqa: C901
 
     def trigger_hard_reset():
         with st.status("완전 초기화 중... (물리적 DB 삭제 및 재색인)", expanded=True) as status:
-            db_manager.close()
+            # 싱글톤 확보를 먼저 수행 (close() 이전에 초기화해야 연결 오류 방지)
             orchestrator = PipelineOrchestrator()
             try:
-                orchestrator.hard_reset()
+                orchestrator.hard_reset(app_db_manager=db_manager)
             except Exception as e:
                 status.update(label=f"완전 초기화 실패: {e}", state="error", expanded=True)
                 st.error(f"오류: {e}")

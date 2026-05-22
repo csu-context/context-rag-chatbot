@@ -477,22 +477,42 @@ class PipelineOrchestrator:
 
         logger.info("데이터 구축 파이프라인 작업이 완료되었습니다.")
 
-    def hard_reset(self):
+    def hard_reset(self, app_db_manager=None):
         """
         vector_db 디렉토리를 물리적으로 삭제하고 전체 재색인합니다.
         ID 기반 삭제와 달리 ChromaDB 세그먼트 파일까지 완전히 제거합니다.
+        물리적 삭제가 불가능한 경우(파일 잠금) ID 기반 삭제로 대체합니다.
         """
         logger.info("=== 완전 초기화 시작 ===")
 
-        # 1. ChromaDB 연결 종료 및 파일 핸들 해제
-        logger.info("ChromaDB 클라이언트 연결 종료 중...")
+        # 1. 모든 ChromaDB 클라이언트 참조 해제 (전역 시스템 캐시 포함)
+        # close()가 SharedSystemClient.clear_system_cache()를 호출하므로
+        # 이 프로세스 내 모든 ChromaDB 연결이 정리됩니다.
+        logger.info("ChromaDB 클라이언트 참조 해제 중...")
         self.ingestion_pipeline.db_manager.close()
+        if app_db_manager is not None:
+            app_db_manager.collection = None
+            app_db_manager.client = None
         gc.collect()
+        time.sleep(0.5)
 
-        # 2. vector_db 디렉토리 물리적 삭제
-        logger.info(f"vector_db 디렉토리 삭제 중: {VECTOR_DB_DIR}")
+        # 2. vector_db 물리적 삭제 (최대 3회 재시도, 실패 시 ID 기반 삭제로 대체)
+        physically_deleted = False
         if VECTOR_DB_DIR.exists():
-            shutil.rmtree(VECTOR_DB_DIR)
+            for attempt in range(3):
+                try:
+                    shutil.rmtree(VECTOR_DB_DIR)
+                    physically_deleted = True
+                    logger.info(f"vector_db 디렉토리 물리적 삭제 완료: {VECTOR_DB_DIR}")
+                    break
+                except PermissionError as e:
+                    if attempt < 2:
+                        wait = 0.5 * (attempt + 1)
+                        logger.warning(f"물리적 삭제 실패 (시도 {attempt + 1}/3): {e}. {wait:.1f}초 후 재시도...")
+                        gc.collect()
+                        time.sleep(wait)
+                    else:
+                        logger.warning("물리적 삭제 최종 실패 (파일 잠금). ID 기반 삭제로 대체합니다.")
 
         # 3. 가공 파일 및 파싱 캐시 삭제
         for f in self.ingestion_pipeline.processed_dir.glob("*.json"):
@@ -516,10 +536,15 @@ class PipelineOrchestrator:
         logger.info("ChromaDB 재초기화 중...")
         self.ingestion_pipeline.db_manager = ChromaDBManager(collection_name="rag_collection")
 
-        # 6. 시맨틱 캐시 초기화
+        # 6. 물리적 삭제 실패 시 ID 기반으로 기존 데이터 제거
+        if not physically_deleted:
+            logger.info("기존 컬렉션 데이터를 ID 기반으로 삭제합니다.")
+            self.ingestion_pipeline.db_manager.reset_collection()
+
+        # 7. 시맨틱 캐시 초기화
         self.cache.flush()
 
-        # 7. 전체 재색인
+        # 8. 전체 재색인
         all_files = self.ingestion_pipeline.scan_files()
         logger.info(f"전체 재색인 시작: {len(all_files)}개 파일")
 
@@ -527,8 +552,7 @@ class PipelineOrchestrator:
             with self.tracing_logger.start_session(type="hard_reset") as session:
                 self._process_changes(all_files, [], session)
                 new_manifest = {
-                    str(f.relative_to(RAW_DATA_DIR)): generate_file_hash(f, self.parser_type)
-                    for f in all_files
+                    str(f.relative_to(RAW_DATA_DIR)): generate_file_hash(f, self.parser_type) for f in all_files
                 }
                 with session.trace_step("update_manifest"):
                     self._save_manifest(new_manifest)

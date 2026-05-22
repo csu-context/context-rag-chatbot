@@ -263,16 +263,15 @@ class ChromaDBManager:
             raise
 
     def close(self):
-        """ChromaDB 클라이언트 연결을 종료하고 파일 핸들을 해제합니다."""
+        """ChromaDB 클라이언트 참조를 해제하고 전역 시스템 캐시를 정리합니다."""
+        self.collection = None
+        self.client = None
         try:
-            if hasattr(self, "client") and hasattr(self.client, "_system"):
-                self.client._system.stop()
-                logger.info("ChromaDB 클라이언트 연결 종료 완료.")
+            from chromadb.api.client import SharedSystemClient
+            SharedSystemClient.clear_system_cache()
+            logger.info("ChromaDB 시스템 캐시 정리 완료.")
         except Exception as e:
-            logger.warning(f"ChromaDB 클라이언트 종료 중 오류 (무시): {e}")
-        finally:
-            self.collection = None
-            self.client = None
+            logger.warning(f"ChromaDB 캐시 정리 중 오류 (무시): {e}")
 
 
 if __name__ == "__main__":
