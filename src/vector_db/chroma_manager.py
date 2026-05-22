@@ -189,25 +189,69 @@ class ChromaDBManager:
             )
             return len(results["ids"])
         except Exception as e:
-            logger.error(f"소스별 카운트 조회 중 오류 발생 ({source_name}): {e}")
-            return 0
+            if "does not exist" in str(e):
+                logger.warning(
+                    f"Collection '{self.collection_name}' not found during count. "
+                    f"It might have been reset. Attempting to refetch and retry."
+                )
+                try:
+                    # 컬렉션 객체를 다시 가져와서 재시도
+                    self.collection = self.client.get_or_create_collection(
+                        name=self.collection_name,
+                        embedding_function=self.embedding_fn,
+                        metadata={"hnsw:space": "cosine"},
+                    )
+                    results = self.collection.get(
+                        where={MetadataFields.SRC_NAME: source_name},
+                        include=[],
+                    )
+                    return len(results["ids"])
+                except Exception as retry_e:
+                    logger.error(f"소스별 카운트 조회 재시도 중 오류 발생 ({source_name}): {retry_e}")
+                    return 0
+            else:
+                logger.error(f"소스별 카운트 조회 중 오류 발생 ({source_name}): {e}")
+                return 0
 
     def delete_documents(self, where: dict[str, Any]):
-        """조건(where)에 맞는 도큐먼트들을 컬렉션에서 삭제합니다."""
+        """
+        조건(where)에 맞는 도큐먼트들을 컬렉션에서 삭제합니다.
+        where 필터로 ID를 먼저 조회한 후 ID 기반으로 삭제하여 신뢰성을 높입니다.
+        """
         if not where:
             logger.warning("삭제 조건이 없어 DB 삭제를 건너뜁니다.")
             return
+
         try:
-            count_before = self.collection.count()
-            self.collection.delete(where=where)
-            count_after = self.collection.count()
-            deleted_count = count_before - count_after
-            if deleted_count > 0:
-                logger.info(f"ChromaDB에서 {deleted_count}개 도큐먼트 삭제 완료 (조건: {where})")
-            else:
+            # 1. where 필터를 사용해 삭제 대상 문서들의 ID를 먼저 조회
+            results_to_delete = self.collection.get(where=where, include=[])
+            ids_to_delete = results_to_delete["ids"]
+
+            if not ids_to_delete:
                 logger.info(f"삭제할 도큐먼트가 없습니다 (조건: {where})")
+                return
+
+            # 2. 조회된 ID 리스트를 기반으로 명시적 삭제
+            logger.info(f"ChromaDB에서 {len(ids_to_delete)}개 도큐먼트 삭제 시도 (조건: {where})")
+            self.collection.delete(ids=ids_to_delete)
+            logger.info("삭제 작업 완료.")
+
         except Exception as e:
             logger.error(f"ChromaDB 도큐먼트 삭제 실패: {e}", exc_info=True)
+            raise
+
+    def reset_collection(self):
+        """컬렉션의 모든 문서를 삭제하여 초기화합니다."""
+        try:
+            # delete_collection() + create_collection() 방식은 Windows에서
+            # 다른 클라이언트가 세그먼트 파일을 열고 있을 때 WinError 32가 발생하므로,
+            # 문서 전체를 ID 기반으로 삭제하는 방식을 사용합니다.
+            all_ids = self.collection.get(include=[])["ids"]
+            if all_ids:
+                self.collection.delete(ids=all_ids)
+            logger.info(f"ChromaDB 컬렉션 '{self.collection_name}' 초기화 완료. ({len(all_ids)}개 문서 삭제)")
+        except Exception as e:
+            logger.error(f"ChromaDB 컬렉션 초기화 중 오류 발생: {e}")
             raise
 
 

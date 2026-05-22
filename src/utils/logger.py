@@ -136,7 +136,6 @@ class TracingLogger:
         self.trace_dir = LOGS_DIR / "trace"
         self.trace_dir.mkdir(parents=True, exist_ok=True)
         self.is_debug = os.getenv("DEBUG", "false").lower() == "true"
-        self._cleanup_old_logs()
 
     def _cleanup_old_logs(self, keep_days: int = 7):
         """설정된 기간보다 오래된 로그 파일을 삭제하여 디스크 공간을 관리합니다."""

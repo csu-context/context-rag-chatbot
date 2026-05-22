@@ -17,6 +17,8 @@ from src.vector_db.chroma_manager import ChromaDBManager
 # 환경 변수 및 로깅 설정
 load_dotenv()
 setup_global_logging()
+# Windows ProactorEventLoop에서 WebSocket 재연결 시 발생하는 알려진 무해한 오류 억제
+logging.getLogger("asyncio").setLevel(logging.CRITICAL)
 perf_logger = PerformanceLogger()  # 전용 로거 인스턴스 생성
 logger = logging.getLogger(__name__)
 
@@ -36,6 +38,8 @@ if "dialog_doc_to_show" not in st.session_state:
     st.session_state.dialog_doc_to_show = None
 if "is_generating" not in st.session_state:
     st.session_state.is_generating = False
+if "should_rerun_app" not in st.session_state:  # New flag for controlled rerun
+    st.session_state.should_rerun_app = False
 
 
 # --- 3. 팝업 다이얼로그 정의 ---
@@ -54,7 +58,9 @@ def show_document_dialog(doc: dict):
     st.markdown(f"**관련도 점수:** {score:.4f}")
     st.text_area("원문 내용", content, height=300)
     if st.button("닫기"):
-        st.rerun()
+        # Removed st.rerun() here. Dialog will close when dialog_doc_to_show is set to None
+        # and the main app reruns.
+        pass
 
 
 # [데이터 관리 시스템 (Admin)]
@@ -80,10 +86,11 @@ def show_admin_dialog():  # noqa: C901
             orchestrator = PipelineOrchestrator()
             orchestrator.run_ingestion(force=force)
             status.update(label="동기화 완료", state="complete", expanded=False)
+        # 캐시된 RAG 시스템(db_manager, rag_chain)을 재초기화하여 리셋된 컬렉션을 반영
+        initialize_rag_system.clear()
         st.success("DB 동기화 완료")
         time.sleep(0.5)
-        # 상태 새로고침을 위해 rerun
-        st.rerun()
+        st.session_state.should_rerun_app = True  # Set flag instead of direct rerun
 
     # 상단 영역: 업로드 및 동기화
     col1, col2 = st.columns([1, 1])
@@ -108,6 +115,8 @@ def show_admin_dialog():  # noqa: C901
 
                     if auto_sync:
                         trigger_sync(force=False)
+                    else:
+                        st.session_state.should_rerun_app = True  # Set flag for rerun even without auto-sync
             else:
                 st.warning("선택된 파일이 없습니다.")
 
@@ -164,12 +173,12 @@ def show_admin_dialog():  # noqa: C901
                     trigger_sync(force=False)
                 else:
                     time.sleep(0.5)
-                st.rerun()
+                    st.session_state.should_rerun_app = True  # Set flag instead of direct rerun
 
     st.divider()
     if st.button("관리 시스템 종료 (닫기)", use_container_width=True):
         st.session_state.admin_active = False
-        st.rerun()
+        st.session_state.should_rerun_app = True  # Set flag instead of direct rerun
 
 
 # --- 4. RAG 시스템 초기화 (캐싱) ---
@@ -242,7 +251,7 @@ with st.sidebar:
     st.write(f"현재 저장된 청크 수: **{count}**")
 
     if st.button("상태 새로고침", use_container_width=True, disabled=st.session_state.is_generating):
-        st.rerun()
+        st.session_state.should_rerun_app = True  # Set flag instead of direct rerun
 
     st.divider()
     show_expert_mode = st.toggle(
@@ -272,7 +281,7 @@ with st.sidebar:
     st.sidebar.markdown("<br>" * 2, unsafe_allow_html=True)
     if st.button("데이터 관리 시스템 실행", use_container_width=True, disabled=st.session_state.is_generating):
         st.session_state.admin_active = True
-        st.rerun()
+        st.session_state.should_rerun_app = True  # Set flag instead of direct rerun
 
 # --- 6. 다이얼로그 활성화 제어 ---
 if st.session_state.get("admin_active", False):
@@ -305,8 +314,7 @@ class StreamUIHandler:
         elif stage == "citation" and status == "complete":
             self.final_docs = self._format_docs(step.get("source_documents", []))
 
-        if st.session_state.show_expert_mode:
-            self.display_latencies()
+        self.display_latencies()
 
     def _format_docs(self, docs):
         formatted = []
@@ -327,16 +335,26 @@ class StreamUIHandler:
 
     def display_latencies(self):
         total_latency = time.time() - self.start_time
-        latency_messages = [f"**총 소요시간: {total_latency:.2f}초**"]
-        if total_latency > 5.0:
-            latency_messages[0] = f"⚠️ {latency_messages[0]} (5초 초과)"
+        over_limit = total_latency > 5.0
 
-        for stage, times in self.stage_latencies.items():
-            if "end" in times:
-                duration = times["end"] - times["start"]
-                latency_messages.append(f"- {stage}: {duration:.2f}초")
+        if st.session_state.show_expert_mode:
+            header = f"**총 소요시간: {total_latency:.2f}초**"
+            if over_limit:
+                header = f"⚠️ {header} (5초 초과)"
 
-        self.latency_placeholder.info("\n".join(latency_messages))
+            stage_durations = {s: v["end"] - v["start"] for s, v in self.stage_latencies.items() if "end" in v}
+            bottleneck = max(stage_durations, key=lambda s: stage_durations[s]) if stage_durations else None
+
+            lines = [header]
+            for stage, elapsed in stage_durations.items():
+                marker = " ← 병목" if over_limit and stage == bottleneck else ""
+                lines.append(f"- {stage}: {elapsed:.2f}초{marker}")
+
+            self.latency_placeholder.info("\n".join(lines))
+        elif over_limit:
+            self.latency_placeholder.warning(f"⚠️ 응답에 {total_latency:.2f}초가 소요되었습니다. (권장: 5초 이내)")
+        else:
+            self.latency_placeholder.empty()
 
     def handle_error(self, error):
         if self.full_response:
@@ -363,15 +381,20 @@ for msg_idx, msg in enumerate(st.session_state.messages):
                 metadata = doc.get("metadata", {})
                 source = metadata.get(MetadataFields.SRC_NAME, "알 수 없음")
                 page = metadata.get(MetadataFields.PG_NUM, "-")
-                score = doc.get("score", 0.0)
+                # rerank_score 우선, 없으면 vector score 사용
+                score = metadata.get("rerank_score", doc.get("score", 0.0))
+                is_low_confidence = score < 0.5
 
                 button_label = f"📄 {source} (p.{page}) - 신뢰도: {score:.2f}"
-                if score < 0.5:
-                    button_label += " (낮음)"
+                if is_low_confidence:
+                    button_label += " ⚠️"
 
                 if st.button(button_label, key=f"cite_{msg_idx}_{i}", disabled=st.session_state.is_generating):
                     st.session_state.dialog_doc_to_show = doc
-                    st.rerun()
+                    st.session_state.should_rerun_app = True  # Set flag instead of direct rerun
+
+                if is_low_confidence:
+                    st.caption("⚠️ 신뢰도가 낮아 환각 발생 가능성이 있습니다. 원문을 직접 확인하세요.")
 
 if st.session_state.dialog_doc_to_show:
     show_document_dialog(st.session_state.dialog_doc_to_show)
@@ -411,14 +434,16 @@ if prompt := st.chat_input(
                 "latencies_per_stage": {
                     s: v["end"] - v["start"] for s, v in ui_handler.stage_latencies.items() if "end" in v
                 },
-                "confidence_scores": [doc.get("score", 0.0) for doc in ui_handler.final_docs],
+                "confidence_scores": [
+                    doc.get("metadata", {}).get("rerank_score", doc.get("score", 0.0)) for doc in ui_handler.final_docs
+                ],
                 "system_stats": get_system_stats(),
                 "status": "success",
             }
             perf_logger.log(**log_data)
 
             st.session_state.is_generating = False
-            st.rerun()
+            st.session_state.should_rerun_app = True  # Set flag instead of direct rerun
 
         except Exception as e:
             duration = time.time() - ui_handler.start_time
@@ -438,4 +463,9 @@ if prompt := st.chat_input(
             perf_logger.log(**log_data)
 
             st.session_state.is_generating = False
-            st.rerun()
+            st.session_state.should_rerun_app = True  # Set flag instead of direct rerun
+
+# --- Controlled Rerun at the end of the script ---
+if st.session_state.should_rerun_app:
+    st.session_state.should_rerun_app = False  # Reset the flag
+    st.rerun()
