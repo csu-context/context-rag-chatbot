@@ -47,7 +47,14 @@ def test_gemini_integration():
 
         # 간단한 프롬프트로 실제 호출 (invoke 사용)
         prompt = "안녕? 짧게 대답해줘."
-        response = model.invoke(prompt)
+        try:
+            response = model.invoke(prompt)
+        except Exception as e:
+            # API 호출 한도 초과(429 RESOURCE_EXHAUSTED) 또는 기타 할당량 관련 예외 발생 시 테스트를 스킵합니다.
+            err_msg = str(e).lower()
+            if "resource_exhausted" in err_msg or "429" in err_msg or "quota" in err_msg:
+                pytest.skip(f"Gemini API 호출 한도 초과로 테스트를 건너뜁니다: {e}")
+            raise
 
         assert response is not None
         assert isinstance(response.content, str)

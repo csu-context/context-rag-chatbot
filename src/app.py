@@ -22,6 +22,30 @@ logging.getLogger("asyncio").setLevel(logging.CRITICAL)
 perf_logger = PerformanceLogger()  # 전용 로거 인스턴스 생성
 logger = logging.getLogger(__name__)
 
+
+def get_doc_field(doc, field, default=None):
+    """dict 형태와 LangChain Document 형태 모두 지원하는 메타데이터/내용 조회 헬퍼"""
+    if hasattr(doc, "metadata"):  # LangChain Document 객체인 경우
+        if field == "content":
+            return getattr(doc, "page_content", default)
+        return doc.metadata.get(field, default)
+    elif isinstance(doc, dict):  # 일반 dict 객체인 경우
+        if field == "content":
+            return doc.get("content", doc.get("page_content", default))
+        meta = doc.get("metadata", {})
+        if isinstance(meta, dict):
+            return meta.get(field, default)
+    return default
+
+
+def get_doc_score(doc, default=0.0):
+    if hasattr(doc, "metadata"):
+        return doc.metadata.get("score", getattr(doc, "score", default))
+    elif isinstance(doc, dict):
+        return doc.get("score", default)
+    return default
+
+
 # --- 1. 페이지 설정 ---
 st.set_page_config(
     page_title="기업 매뉴얼 챗봇 (관리 시스템 통합)",
@@ -38,8 +62,26 @@ if "dialog_doc_to_show" not in st.session_state:
     st.session_state.dialog_doc_to_show = None
 if "is_generating" not in st.session_state:
     st.session_state.is_generating = False
-if "should_rerun_app" not in st.session_state:  # New flag for controlled rerun
+if "should_rerun_app" not in st.session_state:
     st.session_state.should_rerun_app = False
+if "stop_generation" not in st.session_state:
+    st.session_state.stop_generation = False
+if "current_prompt" not in st.session_state:
+    st.session_state.current_prompt = ""
+if "stream_iter" not in st.session_state:
+    st.session_state.stream_iter = None
+if "stream_steps" not in st.session_state:
+    st.session_state.stream_steps = []
+if "full_response" not in st.session_state:
+    st.session_state.full_response = ""
+if "docs" not in st.session_state:
+    st.session_state.docs = []
+if "final_docs" not in st.session_state:
+    st.session_state.final_docs = []
+if "start_time" not in st.session_state:
+    st.session_state.start_time = None
+if "show_expert_mode" not in st.session_state:
+    st.session_state.show_expert_mode = False
 
 
 # --- 3. 팝업 다이얼로그 정의 ---
@@ -63,9 +105,13 @@ def show_document_dialog(doc: dict):
         pass
 
 
+def reset_admin_active():
+    st.session_state.admin_active = False
+
+
 # [데이터 관리 시스템 (Admin)]
-@st.dialog("데이터 관리 시스템", width="large")
-def show_admin_dialog():  # noqa: C901
+@st.dialog("데이터 관리 시스템", width="large", on_dismiss=reset_admin_active)
+def show_admin_dialog(db_manager):  # noqa: C901
     st.markdown("지식 베이스(RAW_DATA) 관리 및 데이터베이스 동기화를 수행합니다.")
 
     # 상단 옵션 영역
@@ -131,7 +177,7 @@ def show_admin_dialog():  # noqa: C901
     # 하단 영역: 문서 목록 및 행 단위 삭제
     st.subheader("등록된 문서 목록 및 삭제")
     if not auto_sync:
-        st.caption("⚠️ 주의: 자동 동기화가 꺼져 있습니다. 삭제 후 반드시 'Sync'를 실행해야 DB에서 제거됩니다.")
+        st.caption("주의: 자동 동기화가 꺼져 있습니다. 삭제 후 반드시 'Sync'를 실행해야 DB에서 제거됩니다.")
 
     def format_size(size_bytes):
         if size_bytes == 0:
@@ -231,6 +277,13 @@ div[data-testid="column"] > div > div > div > div > p {
     overflow: hidden;
     text-overflow: ellipsis;
 }
+/* 채팅 메시지 내부 스피너 아바타 높이 맞춤 */
+div[data-testid="stChatMessage"] div[data-testid="stSpinner"] > div {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: -0.25rem;
+}
 </style>
 """,
     unsafe_allow_html=True,
@@ -254,12 +307,7 @@ with st.sidebar:
         st.session_state.should_rerun_app = True  # Set flag instead of direct rerun
 
     st.divider()
-    show_expert_mode = st.toggle(
-        "상세 추론 과정 보기",
-        value=st.session_state.get("show_expert_mode", False),
-        disabled=st.session_state.is_generating,
-    )
-    st.session_state.show_expert_mode = show_expert_mode
+    st.toggle("상세 추론 과정 보기", key="show_expert_mode", disabled=st.session_state.is_generating)
 
     st.divider()
     st.subheader("실시간 자원 모니터링")
@@ -289,6 +337,29 @@ if st.session_state.get("admin_active", False):
 
 
 # --- UI 스트리밍 핸들러 ---
+def check_repetition(full_response: str) -> tuple[bool, str]:
+    """동일 라인이 15자 이상이고 3회 이상 반복되면 True와 해당 라인을 반환"""
+    lines = full_response.split("\n")
+    line_counts: dict[str, int] = {}
+    for line in lines:
+        line_trimmed = line.strip()
+        if len(line_trimmed) >= 15:
+            line_counts[line_trimmed] = line_counts.get(line_trimmed, 0) + 1
+            if line_counts[line_trimmed] >= 3:
+                return True, line_trimmed
+    return False, ""
+
+
+def format_doc_status(docs_list):
+    if not docs_list:
+        return "0개 문서 (0개 청크)"
+    unique_files = set()
+    for d in docs_list:
+        src_name = get_doc_field(d, MetadataFields.SRC_NAME, "알 수 없음")
+        unique_files.add(src_name)
+    return f"{len(unique_files)}개 문서 ({len(docs_list)}개 청크)"
+
+
 class StreamUIHandler:
     def __init__(self):
         self.response_container = st.empty()
@@ -365,7 +436,7 @@ class StreamUIHandler:
 
 
 # --- 메인 채팅 화면 ---
-st.title("📖 기업 매뉴얼 Q&A 서비스")
+st.title("기업 매뉴얼 Q&A 서비스")
 st.info("사내 규정 및 매뉴얼에 대해 질문하면 인용 출처와 함께 답변해 드립니다.")
 
 if "messages" not in st.session_state:
@@ -374,6 +445,11 @@ if "messages" not in st.session_state:
 for msg_idx, msg in enumerate(st.session_state.messages):
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
+
+        # 답변 소요 시간 캡션 표시
+        if msg["role"] == "assistant" and msg.get("latency") is not None:
+            st.caption(f"답변 소요 시간: {msg['latency']:.2f}초")
+
         if msg.get("citations"):
             for i, doc in enumerate(msg["citations"]):
                 if not isinstance(doc, dict):
@@ -381,7 +457,6 @@ for msg_idx, msg in enumerate(st.session_state.messages):
                 metadata = doc.get("metadata", {})
                 source = metadata.get(MetadataFields.SRC_NAME, "알 수 없음")
                 page = metadata.get(MetadataFields.PG_NUM, "-")
-                # rerank_score 우선, 없으면 vector score 사용
                 score = metadata.get("rerank_score", doc.get("score", 0.0))
                 is_low_confidence = score < 0.5
 
@@ -414,58 +489,154 @@ if prompt := st.chat_input(
     with st.chat_message("user"):
         st.markdown(prompt)
 
+    st.session_state.stop_generation = False
+    st.session_state.current_prompt = prompt
+    st.session_state.stream_steps = []
+    st.session_state.full_response = ""
+    st.session_state.docs = []
+    st.session_state.final_docs = []
+    st.session_state.start_time = time.time()
+
+    st.session_state.stream_iter = rag_chain.stream({"question": prompt, "k": k_value, "final_k": final_k_value})
+    st.rerun()
+
+
+# active generation UI
+if st.session_state.is_generating:
+    show_expert_mode = st.session_state.show_expert_mode
     with st.chat_message("assistant"):
         ui_handler = StreamUIHandler()
-        try:
-            stream = rag_chain.stream({"question": prompt, "k": k_value, "final_k": final_k_value})
-            for step in stream:
-                ui_handler.process_step(step)
 
-            duration = time.time() - ui_handler.start_time
-            st.session_state.messages.append(
-                {"role": "assistant", "content": ui_handler.full_response, "citations": ui_handler.final_docs}
-            )
+        # Re-render accumulated steps
+        for step in st.session_state.stream_steps:
+            ui_handler.process_step(step)
 
-            # 로깅 데이터 준비
-            log_data = {
-                "query": prompt,
-                "answer": ui_handler.full_response,
-                "total_latency": duration,
-                "latencies_per_stage": {
-                    s: v["end"] - v["start"] for s, v in ui_handler.stage_latencies.items() if "end" in v
-                },
-                "confidence_scores": [
-                    doc.get("metadata", {}).get("rerank_score", doc.get("score", 0.0)) for doc in ui_handler.final_docs
-                ],
-                "system_stats": get_system_stats(),
-                "status": "success",
-            }
-            perf_logger.log(**log_data)
+        if st.button("Stop", key="stop_generation_btn"):
+            if st.session_state.stream_iter:
+                try:
+                    st.session_state.stream_iter.close()
+                except Exception as e:
+                    logger.warning(f"Error closing stream iterator: {e}")
+                st.session_state.stop_generation = True
+            else:
+                st.session_state.is_generating = False
+                st.session_state.stop_generation = False
+            st.rerun()
 
-            st.session_state.is_generating = False
-            st.session_state.should_rerun_app = True  # Set flag instead of direct rerun
+        # Consume the stream iterator
+        if st.session_state.stream_iter:
+            try:
+                import contextlib
 
-        except Exception as e:
-            duration = time.time() - ui_handler.start_time
-            logger.error(f"채팅 중 오류 발생: {e}", exc_info=True)
-            error_content = ui_handler.handle_error(e)
-            st.session_state.messages.append(
-                {"role": "assistant", "content": error_content, "citations": ui_handler.final_docs}
-            )
+                spinner_ctx = (
+                    st.spinner("답변을 생성하고 있습니다...") if not show_expert_mode else contextlib.nullcontext()
+                )
+                with spinner_ctx:
+                    for step in st.session_state.stream_iter:
+                        if st.session_state.stop_generation:
+                            break
 
-            log_data = {
-                "query": prompt,
-                "error": str(e),
-                "total_latency": duration,
-                "system_stats": get_system_stats(),
-                "status": "error",
-            }
-            perf_logger.log(**log_data)
+                        st.session_state.stream_steps.append(step)
 
-            st.session_state.is_generating = False
-            st.session_state.should_rerun_app = True  # Set flag instead of direct rerun
+                        if step.get("stage") == "generation" and step.get("status") == "streaming":
+                            new_text = step.get("output", "")
+                            temp_response = ui_handler.full_response + new_text
+                            has_repetition, repeated_line = check_repetition(temp_response)
+                            if has_repetition:
+                                logger.warning(f"동일 라인 반복 감지로 답변 생성 중단: '{repeated_line}'")
+                                ui_handler.full_response += (
+                                    "\n\n[안내] 동일한 문장/라인이 반복되어 답변 생성이 안전하게 중단되었습니다."
+                                )
+                                ui_handler.response_container.markdown(ui_handler.full_response)
+                                st.session_state.is_generating = False
+                                st.session_state.stop_generation = True
+                                break
+
+                        ui_handler.process_step(step)
+
+                if not st.session_state.stop_generation:
+                    st.session_state.is_generating = False
+                    latency = time.time() - st.session_state.start_time
+                    st.session_state.messages.append(
+                        {
+                            "role": "assistant",
+                            "content": ui_handler.full_response,
+                            "citations": ui_handler.final_docs,
+                            "latency": latency,
+                        }
+                    )
+                    perf_logger.log(
+                        query=st.session_state.current_prompt,
+                        answer=ui_handler.full_response,
+                        total_latency=latency,
+                        latencies_per_stage={
+                            s: v["end"] - v["start"] for s, v in ui_handler.stage_latencies.items() if "end" in v
+                        },
+                        confidence_scores=[
+                            doc.get("metadata", {}).get("rerank_score", doc.get("score", 0.0))
+                            for doc in ui_handler.final_docs
+                        ],
+                        system_stats=get_system_stats(),
+                        status="success",
+                    )
+                    st.session_state.stream_iter = None
+                    st.session_state.current_prompt = ""
+                    st.rerun()
+                else:
+                    st.session_state.is_generating = False
+                    latency = time.time() - st.session_state.start_time
+                    st.session_state.messages.append(
+                        {
+                            "role": "assistant",
+                            "content": ui_handler.full_response,
+                            "citations": ui_handler.final_docs,
+                            "latency": latency,
+                        }
+                    )
+                    perf_logger.log(
+                        query=st.session_state.current_prompt,
+                        answer=ui_handler.full_response,
+                        total_latency=latency,
+                        latencies_per_stage={
+                            s: v["end"] - v["start"] for s, v in ui_handler.stage_latencies.items() if "end" in v
+                        },
+                        confidence_scores=[
+                            doc.get("metadata", {}).get("rerank_score", doc.get("score", 0.0))
+                            for doc in ui_handler.final_docs
+                        ],
+                        system_stats=get_system_stats(),
+                        status="interrupted",
+                    )
+                    st.session_state.stream_iter = None
+                    st.session_state.current_prompt = ""
+                    st.session_state.stop_generation = False
+                    st.rerun()
+
+            except Exception as e:
+                st.session_state.is_generating = False
+                logger.error(f"채팅 중 오류 발생: {e}", exc_info=True)
+                error_msg = ui_handler.handle_error(e) or f"\n\n[오류] 답변 생성 중 문제가 발생했습니다: {e}"
+                latency = time.time() - st.session_state.start_time
+                st.session_state.messages.append(
+                    {
+                        "role": "assistant",
+                        "content": error_msg,
+                        "citations": ui_handler.final_docs,
+                        "latency": latency,
+                    }
+                )
+                perf_logger.log(
+                    query=st.session_state.current_prompt,
+                    error=str(e),
+                    total_latency=latency,
+                    system_stats=get_system_stats(),
+                    status="error",
+                )
+                st.session_state.stream_iter = None
+                st.session_state.current_prompt = ""
+                st.rerun()
 
 # --- Controlled Rerun at the end of the script ---
 if st.session_state.should_rerun_app:
-    st.session_state.should_rerun_app = False  # Reset the flag
+    st.session_state.should_rerun_app = False
     st.rerun()

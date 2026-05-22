@@ -28,6 +28,8 @@ class OllamaModel(BaseLLM):
             model=model_name,
             base_url=self.base_url,
             temperature=temperature,
+            num_predict=512,
+            repeat_penalty=1.2,
         )
         # 헬스 체크 연동 경고 로그
         if not self.check_health():
