@@ -25,7 +25,13 @@ def test_ollama_model_initialization(mock_chat_ollama):
     model = OllamaModel(model_name="llama3", base_url="http://test:11434")
     assert model.model_name == "llama3"
     assert model.base_url == "http://test:11434"
-    mock_chat_ollama.assert_called_once_with(model="llama3", base_url="http://test:11434", temperature=0.1)
+    mock_chat_ollama.assert_called_once_with(
+        model="llama3",
+        base_url="http://test:11434",
+        temperature=0.1,
+        num_predict=512,
+        repeat_penalty=1.2,
+    )
 
 
 def test_ollama_model_invoke(mock_chat_ollama):

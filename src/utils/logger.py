@@ -76,6 +76,11 @@ class PerformanceLogger:
         with self._lock, open(self.log_file, "a", encoding="utf-8") as f:
             f.write(log_entry)
 
+    def log_inference(self, prompt: str, response: str, status: str, info: str = "", duration: float = 0.0):
+        """추론 성능과 관련된 요약 정보를 performance.log에 기록합니다."""
+        log_info = f"Status: {status} | Info: {info} | Prompt Len: {len(prompt)} | Resp Len: {len(response)}"
+        self.log(log_type="inference", duration=duration, info=log_info)
+
 
 class TraceSession:
     """트레이싱 세션을 관리하는 객체"""
