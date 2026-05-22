@@ -333,7 +333,7 @@ with st.sidebar:
 
 # --- 6. 다이얼로그 활성화 제어 ---
 if st.session_state.get("admin_active", False):
-    show_admin_dialog()
+    show_admin_dialog(db_manager)
 
 
 # --- UI 스트리밍 핸들러 ---
