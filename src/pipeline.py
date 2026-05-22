@@ -1,7 +1,9 @@
+import gc
 import json
 import logging
 import os
 import pickle
+import shutil
 import threading
 import time
 import uuid
@@ -19,7 +21,7 @@ from src.processing.chunking import HierarchicalChunker, create_parent_child_chu
 from src.processing.pdf_parser import DoclingPDFParser
 from src.utils.file_utils import generate_file_hash
 from src.utils.logger import TracingLogger, setup_global_logging
-from src.utils.paths import CACHE_DIR, PROCESSED_DATA_DIR, RAW_DATA_DIR, ensure_directories
+from src.utils.paths import CACHE_DIR, PROCESSED_DATA_DIR, RAW_DATA_DIR, VECTOR_DB_DIR, ensure_directories
 from src.vector_db.chroma_manager import ChromaDBManager
 
 # 로깅 설정
@@ -474,6 +476,64 @@ class PipelineOrchestrator:
                 self._save_manifest(new_manifest)
 
         logger.info("데이터 구축 파이프라인 작업이 완료되었습니다.")
+
+    def hard_reset(self):
+        """
+        vector_db 디렉토리를 물리적으로 삭제하고 전체 재색인합니다.
+        ID 기반 삭제와 달리 ChromaDB 세그먼트 파일까지 완전히 제거합니다.
+        """
+        logger.info("=== 완전 초기화 시작 ===")
+
+        # 1. ChromaDB 연결 종료 및 파일 핸들 해제
+        logger.info("ChromaDB 클라이언트 연결 종료 중...")
+        self.ingestion_pipeline.db_manager.close()
+        gc.collect()
+
+        # 2. vector_db 디렉토리 물리적 삭제
+        logger.info(f"vector_db 디렉토리 삭제 중: {VECTOR_DB_DIR}")
+        if VECTOR_DB_DIR.exists():
+            shutil.rmtree(VECTOR_DB_DIR)
+
+        # 3. 가공 파일 및 파싱 캐시 삭제
+        for f in self.ingestion_pipeline.processed_dir.glob("*.json"):
+            try:
+                f.unlink()
+            except Exception as e:
+                logger.error(f"JSON 파일 삭제 실패 {f}: {e}")
+
+        for f in CACHE_DIR.glob("*_parsed.pkl"):
+            try:
+                f.unlink()
+            except Exception as e:
+                logger.error(f"캐시 파일 삭제 실패 {f}: {e}")
+
+        # 4. manifest 삭제
+        if self.manifest_path.exists():
+            self.manifest_path.unlink()
+
+        # 5. 디렉토리 재생성 및 ChromaDB 재초기화
+        ensure_directories()
+        logger.info("ChromaDB 재초기화 중...")
+        self.ingestion_pipeline.db_manager = ChromaDBManager(collection_name="rag_collection")
+
+        # 6. 시맨틱 캐시 초기화
+        self.cache.flush()
+
+        # 7. 전체 재색인
+        all_files = self.ingestion_pipeline.scan_files()
+        logger.info(f"전체 재색인 시작: {len(all_files)}개 파일")
+
+        if all_files:
+            with self.tracing_logger.start_session(type="hard_reset") as session:
+                self._process_changes(all_files, [], session)
+                new_manifest = {
+                    str(f.relative_to(RAW_DATA_DIR)): generate_file_hash(f, self.parser_type)
+                    for f in all_files
+                }
+                with session.trace_step("update_manifest"):
+                    self._save_manifest(new_manifest)
+
+        logger.info("=== 완전 초기화 완료 ===")
 
 
 # 하위 호환성을 위한 기존 클래스 래핑

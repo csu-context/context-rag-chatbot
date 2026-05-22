@@ -262,6 +262,18 @@ class ChromaDBManager:
             logger.error(f"ChromaDB 컬렉션 초기화 중 오류 발생: {e}")
             raise
 
+    def close(self):
+        """ChromaDB 클라이언트 연결을 종료하고 파일 핸들을 해제합니다."""
+        try:
+            if hasattr(self, "client") and hasattr(self.client, "_system"):
+                self.client._system.stop()
+                logger.info("ChromaDB 클라이언트 연결 종료 완료.")
+        except Exception as e:
+            logger.warning(f"ChromaDB 클라이언트 종료 중 오류 (무시): {e}")
+        finally:
+            self.collection = None
+            self.client = None
+
 
 if __name__ == "__main__":
     # ==========================================
