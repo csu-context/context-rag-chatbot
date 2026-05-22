@@ -136,7 +136,7 @@ def show_admin_dialog(db_manager):  # noqa: C901
         initialize_rag_system.clear()
         st.success("DB 동기화 완료")
         time.sleep(0.5)
-        st.session_state.should_rerun_app = True  # Set flag instead of direct rerun
+        st.rerun()
 
     # 상단 영역: 업로드 및 동기화
     col1, col2 = st.columns([1, 1])
@@ -422,8 +422,6 @@ class StreamUIHandler:
                 lines.append(f"- {stage}: {elapsed:.2f}초{marker}")
 
             self.latency_placeholder.info("\n".join(lines))
-        elif over_limit:
-            self.latency_placeholder.warning("⚠️ 응답 생성에 시간이 걸렸습니다.")
         else:
             self.latency_placeholder.empty()
 
