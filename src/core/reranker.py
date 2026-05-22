@@ -195,9 +195,7 @@ class CrossEncoderReranker(BaseReranker):
             err_msg = str(e).lower()
             # CUDA, MPS, OOM, Device 관련 에러가 발생한 경우 CPU로 폴백
             if self.device != "cpu" and any(x in err_msg for x in ["cuda", "mps", "device", "out of memory", "oom"]):
-                logger.warning(
-                    f"[{self.name}] GPU/MPS error detected: {e}. Falling back to CPU mode..."
-                )
+                logger.warning(f"[{self.name}] GPU/MPS error detected: {e}. Falling back to CPU mode...")
                 self.device = "cpu"
                 with self._singleton_lock:
                     self._model = None  # 기존 GPU 모델 언로드 유도

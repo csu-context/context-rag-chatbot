@@ -76,7 +76,6 @@ def test_ollama_is_model_available_failure(mock_chat_ollama):
         assert model.is_model_available() is False
 
 
-
 def test_ollama_pull_model_progress(mock_chat_ollama):
     model = OllamaModel(model_name="gemma2:2b")
 
@@ -122,5 +121,3 @@ def test_ollama_pull_status_background(mock_chat_ollama):
             time.sleep(0.01)
 
         assert status["status"] == "success"
-
-

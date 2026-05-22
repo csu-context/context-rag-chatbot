@@ -257,7 +257,7 @@ except Exception as e:
 
 # --- 모델 다운로드 및 준비 상태 사전 체크 ---
 model_ready = True
-is_ollama = (settings.MODEL_TYPE == "ollama")
+is_ollama = settings.MODEL_TYPE == "ollama"
 
 if is_ollama:
     try:
@@ -267,7 +267,6 @@ if is_ollama:
     except Exception as e:
         model_ready = False
         logger.error(f"로컬 LLM 상태 진단 중 오류: {e}")
-
 
 
 # CSS 추가
@@ -458,6 +457,7 @@ class StreamUIHandler:
 # --- 메인 채팅 화면 ---
 st.title("기업 매뉴얼 Q&A 서비스")
 st.info("사내 규정 및 매뉴얼에 대해 질문하면 인용 출처와 함께 답변해 드립니다.")
+
 
 # --- 6.1. Ollama 모델 다운로드 실시간 상태 시각화 ---
 @st.fragment(run_every="1s")

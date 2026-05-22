@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 class OllamaPullStatus:
     """Ollama 모델 다운로드의 백그라운드 진행 상태를 관리하는 스레드 안전 클래스"""
+
     _lock: ClassVar[threading.Lock] = threading.Lock()
     _instances: ClassVar[dict] = {}  # model_name -> status_info dict
 
@@ -26,7 +27,7 @@ class OllamaPullStatus:
                     "status": status_info["status"],
                     "completed": status_info["completed"],
                     "total": status_info["total"],
-                    "message": status_info["message"]
+                    "message": status_info["message"],
                 }
             return None
 
