@@ -96,8 +96,9 @@ def test_ollama_pull_model_progress(mock_chat_ollama):
 
 
 def test_ollama_pull_status_background(mock_chat_ollama):
-    from src.models.llm_ollama import OllamaModel
     import time
+
+    from src.models.llm_ollama import OllamaModel
 
     model = OllamaModel(model_name="gemma2:2b")
 
