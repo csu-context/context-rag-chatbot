@@ -1,9 +1,7 @@
-import gc
 import json
 import logging
 import os
 import pickle
-import shutil
 import threading
 import time
 import uuid
@@ -21,7 +19,7 @@ from src.processing.chunking import HierarchicalChunker, create_parent_child_chu
 from src.processing.pdf_parser import DoclingPDFParser
 from src.utils.file_utils import generate_file_hash
 from src.utils.logger import TracingLogger, setup_global_logging
-from src.utils.paths import CACHE_DIR, PROCESSED_DATA_DIR, RAW_DATA_DIR, VECTOR_DB_DIR, ensure_directories
+from src.utils.paths import CACHE_DIR, PROCESSED_DATA_DIR, RAW_DATA_DIR, ensure_directories
 from src.vector_db.chroma_manager import ChromaDBManager
 
 # 로깅 설정
@@ -476,85 +474,6 @@ class PipelineOrchestrator:
                 self._save_manifest(new_manifest)
 
         logger.info("데이터 구축 파이프라인 작업이 완료되었습니다.")
-
-    def _release_chroma_clients(self, app_db_manager=None):
-        """모든 ChromaDB 클라이언트 참조를 해제하고 전역 시스템 캐시를 정리합니다."""
-        self.ingestion_pipeline.db_manager.close()
-        if app_db_manager is not None:
-            app_db_manager.collection = None
-            app_db_manager.client = None
-        gc.collect()
-        time.sleep(0.5)
-
-    def _try_physical_delete(self) -> bool:
-        """vector_db 디렉토리 물리적 삭제를 최대 3회 재시도합니다. 성공 여부를 반환합니다."""
-        if not VECTOR_DB_DIR.exists():
-            return True
-        for attempt in range(3):
-            try:
-                shutil.rmtree(VECTOR_DB_DIR)
-                logger.info(f"vector_db 디렉토리 물리적 삭제 완료: {VECTOR_DB_DIR}")
-                return True
-            except PermissionError as e:
-                if attempt < 2:
-                    wait = 0.5 * (attempt + 1)
-                    logger.warning(f"물리적 삭제 실패 (시도 {attempt + 1}/3): {e}. {wait:.1f}초 후 재시도...")
-                    gc.collect()
-                    time.sleep(wait)
-                else:
-                    logger.warning("물리적 삭제 최종 실패 (파일 잠금). ID 기반 삭제로 대체합니다.")
-        return False
-
-    def _delete_auxiliary_files(self):
-        """가공 파일, 파싱 캐시, manifest를 삭제합니다."""
-        for f in self.ingestion_pipeline.processed_dir.glob("*.json"):
-            try:
-                f.unlink()
-            except Exception as e:
-                logger.error(f"JSON 파일 삭제 실패 {f}: {e}")
-        for f in CACHE_DIR.glob("*_parsed.pkl"):
-            try:
-                f.unlink()
-            except Exception as e:
-                logger.error(f"캐시 파일 삭제 실패 {f}: {e}")
-        if self.manifest_path.exists():
-            self.manifest_path.unlink()
-
-    def hard_reset(self, app_db_manager=None):
-        """
-        vector_db 디렉토리를 물리적으로 삭제하고 전체 재색인합니다.
-        ID 기반 삭제와 달리 ChromaDB 세그먼트 파일까지 완전히 제거합니다.
-        물리적 삭제가 불가능한 경우(파일 잠금) ID 기반 삭제로 대체합니다.
-        """
-        logger.info("=== 완전 초기화 시작 ===")
-
-        self._release_chroma_clients(app_db_manager)
-        physically_deleted = self._try_physical_delete()
-        self._delete_auxiliary_files()
-
-        ensure_directories()
-        logger.info("ChromaDB 재초기화 중...")
-        self.ingestion_pipeline.db_manager = ChromaDBManager(collection_name="rag_collection")
-
-        if not physically_deleted:
-            logger.info("기존 컬렉션 데이터를 ID 기반으로 삭제합니다.")
-            self.ingestion_pipeline.db_manager.reset_collection()
-
-        self.cache.flush()
-
-        all_files = self.ingestion_pipeline.scan_files()
-        logger.info(f"전체 재색인 시작: {len(all_files)}개 파일")
-
-        if all_files:
-            with self.tracing_logger.start_session(type="hard_reset") as session:
-                self._process_changes(all_files, [], session)
-                new_manifest = {
-                    str(f.relative_to(RAW_DATA_DIR)): generate_file_hash(f, self.parser_type) for f in all_files
-                }
-                with session.trace_step("update_manifest"):
-                    self._save_manifest(new_manifest)
-
-        logger.info("=== 완전 초기화 완료 ===")
 
 
 # 하위 호환성을 위한 기존 클래스 래핑

@@ -262,16 +262,6 @@ class ChromaDBManager:
             logger.error(f"ChromaDB 컬렉션 초기화 중 오류 발생: {e}")
             raise
 
-    def close(self):
-        """ChromaDB 클라이언트 참조를 해제하고 전역 시스템 캐시를 정리합니다."""
-        self.collection = None
-        self.client = None
-        try:
-            from chromadb.api.client import SharedSystemClient
-            SharedSystemClient.clear_system_cache()
-            logger.info("ChromaDB 시스템 캐시 정리 완료.")
-        except Exception as e:
-            logger.warning(f"ChromaDB 캐시 정리 중 오류 (무시): {e}")
 
 
 if __name__ == "__main__":

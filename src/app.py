@@ -222,36 +222,6 @@ def show_admin_dialog(db_manager):  # noqa: C901
                     st.session_state.should_rerun_app = True  # Set flag instead of direct rerun
 
     st.divider()
-    st.subheader("완전 초기화")
-    st.warning("vector_db 디렉토리를 물리적으로 삭제하고 전체 재색인합니다. 되돌릴 수 없습니다.")
-    confirm_hard_reset = st.checkbox("위 내용을 이해하고 완전 초기화를 진행합니다.", key="confirm_hard_reset")
-
-    def trigger_hard_reset():
-        with st.status("완전 초기화 중... (물리적 DB 삭제 및 재색인)", expanded=True) as status:
-            # 싱글톤 확보를 먼저 수행 (close() 이전에 초기화해야 연결 오류 방지)
-            orchestrator = PipelineOrchestrator()
-            try:
-                orchestrator.hard_reset(app_db_manager=db_manager)
-            except Exception as e:
-                status.update(label=f"완전 초기화 실패: {e}", state="error", expanded=True)
-                st.error(f"오류: {e}")
-                return
-            status.update(label="완전 초기화 완료", state="complete", expanded=False)
-        initialize_rag_system.clear()
-        st.success("vector_db가 물리적으로 재생성되었습니다.")
-        time.sleep(0.5)
-        st.rerun()
-
-    if st.button(
-        "완전 초기화 실행",
-        key="hard_reset_btn",
-        use_container_width=True,
-        type="primary",
-        disabled=not confirm_hard_reset,
-    ):
-        trigger_hard_reset()
-
-    st.divider()
     if st.button("관리 시스템 종료 (닫기)", use_container_width=True):
         st.session_state.admin_active = False
         st.session_state.should_rerun_app = True  # Set flag instead of direct rerun
