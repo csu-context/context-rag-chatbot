@@ -192,8 +192,9 @@ class CrossEncoderReranker(BaseReranker):
         start_time = time.time()
         raw_scores = model.predict(pairs)
         elapsed_time = time.time() - start_time
-        # raw logit을 [0, 1] 범위로 정규화 (sigmoid)
-        scores = torch.sigmoid(torch.tensor(raw_scores)).tolist()
+        # ms-marco 등 raw logit(범위 -10~15)을 [0, 1]로 정규화
+        # temperature=5로 스케일링하여 sigmoid 포화 방지
+        scores = torch.sigmoid(torch.tensor(raw_scores) / 5.0).tolist()
 
         scored_docs = sorted(zip(scores, documents, strict=True), key=lambda x: x[0], reverse=True)
         filtered = [(s, d) for s, d in scored_docs if s >= effective_threshold]

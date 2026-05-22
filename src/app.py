@@ -423,7 +423,7 @@ class StreamUIHandler:
 
             self.latency_placeholder.info("\n".join(lines))
         elif over_limit:
-            self.latency_placeholder.warning(f"⚠️ 응답에 {total_latency:.2f}초가 소요되었습니다. (권장: 5초 이내)")
+            self.latency_placeholder.warning("⚠️ 응답 생성에 시간이 걸렸습니다.")
         else:
             self.latency_placeholder.empty()
 
