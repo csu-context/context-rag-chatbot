@@ -178,11 +178,12 @@ class RAGPipeline:
 
         # 대화 이력이 병합된 고유 캐시 쿼리 생성
         cache_query = self._build_cache_query(query, history)
+        use_cache = len(history) == 0
 
         with self.tracing_logger.start_session(query=query) as session:
             # 1. Semantic Cache Check
             yield {"stage": "cache", "status": "running"}
-            cached_result = self.cache.get(cache_query)
+            cached_result = self.cache.get(cache_query) if use_cache else None
             if cached_result:
                 session.data["cache_hit"] = True
                 yield {"stage": "cache", "status": "hit"}
@@ -236,7 +237,8 @@ class RAGPipeline:
                     }
                 )
 
-            self.cache.add(cache_query, full_answer, docs_for_cache)
+            if use_cache:
+                self.cache.add(cache_query, full_answer, docs_for_cache)
 
             yield {"stage": "citation", "status": "complete", "output": citations_str, "source_documents": final_docs}
 
