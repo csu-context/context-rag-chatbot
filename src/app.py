@@ -6,8 +6,10 @@ import time
 import streamlit as st
 from dotenv import load_dotenv
 
+from src.common.config import settings
 from src.common.constants import MetadataFields
 from src.core.chains import get_rag_chain
+from src.models.factory import LLMFactory
 from src.pipeline import PipelineOrchestrator
 from src.utils.logger import PerformanceLogger, setup_global_logging
 from src.utils.monitoring import get_system_stats
@@ -254,6 +256,20 @@ except Exception as e:
     st.stop()
 
 
+# --- 모델 다운로드 및 준비 상태 사전 체크 ---
+model_ready = True
+is_ollama = settings.MODEL_TYPE == "ollama"
+
+if is_ollama:
+    try:
+        llm_instance = LLMFactory.create_llm()
+        if not llm_instance.is_model_available():
+            model_ready = False
+    except Exception as e:
+        model_ready = False
+        logger.error(f"로컬 LLM 상태 진단 중 오류: {e}")
+
+
 # CSS 추가
 st.markdown(
     """
@@ -282,6 +298,9 @@ div[data-testid="stChatMessage"] div[data-testid="stSpinner"] > div {
     display: flex;
     align-items: center;
     gap: 0.5rem;
+}
+/* 채팅 메시지 내부 st.columns 컨테이너의 위쪽 여백을 조정해 왼쪽 아바타와 세로축 중앙 정렬 일치 */
+div[data-testid="stChatMessage"] div[data-testid="stHorizontalBlock"] {
     margin-top: -0.25rem;
 }
 </style>
@@ -294,19 +313,33 @@ div[data-testid="stChatMessage"] div[data-testid="stSpinner"] > div {
 with st.sidebar:
     st.title("설정 및 관리")
 
+    # 1. 시스템 정보 (콤팩트 텍스트 배치)
+    st.markdown(f"**LLM:** `{settings.MODEL_NAME}` ({settings.MODEL_TYPE.upper()})")
+    st.markdown(f"**임베딩:** `{settings.EMBEDDING_MODEL_NAME.split('/')[-1]}`")
+    st.divider()
+
+    # 2. 검색 설정
     st.subheader("검색 설정")
     k_value = st.slider("초벌 검색 개수 (K)", 1, 20, 10, 1, disabled=st.session_state.is_generating)
     final_k_value = st.slider("최종 선별 개수", 1, 10, 5, 1, disabled=st.session_state.is_generating)
-
     st.divider()
-    st.subheader("데이터베이스 상태")
+
+    # 3. 데이터베이스 상태 및 관리 (가로 버튼 배치로 통합)
+    st.subheader("데이터베이스 상태 및 관리")
     count = db_manager.get_count()
     st.write(f"현재 저장된 청크 수: **{count}**")
 
-    if st.button("상태 새로고침", use_container_width=True, disabled=st.session_state.is_generating):
-        st.session_state.should_rerun_app = True  # Set flag instead of direct rerun
-
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("상태 새로고침", use_container_width=True, disabled=st.session_state.is_generating):
+            st.session_state.should_rerun_app = True
+    with col2:
+        if st.button("데이터 관리", use_container_width=True, disabled=st.session_state.is_generating):
+            st.session_state.admin_active = True
+            st.session_state.should_rerun_app = True
     st.divider()
+
+    # 4. 기타 설정
     st.toggle("상세 추론 과정 보기", key="show_expert_mode", disabled=st.session_state.is_generating)
 
     st.divider()
@@ -325,11 +358,6 @@ with st.sidebar:
     else:
         st.write("GPU VRAM 사용량")
         st.info("현재 환경에서 GPU를 사용할 수 없습니다.")
-
-    st.sidebar.markdown("<br>" * 2, unsafe_allow_html=True)
-    if st.button("데이터 관리 시스템 실행", use_container_width=True, disabled=st.session_state.is_generating):
-        st.session_state.admin_active = True
-        st.session_state.should_rerun_app = True  # Set flag instead of direct rerun
 
 # --- 6. 다이얼로그 활성화 제어 ---
 if st.session_state.get("admin_active", False):
@@ -437,6 +465,74 @@ class StreamUIHandler:
 st.title("기업 매뉴얼 Q&A 서비스")
 st.info("사내 규정 및 매뉴얼에 대해 질문하면 인용 출처와 함께 답변해 드립니다.")
 
+
+# --- 6.1. Ollama 모델 다운로드 실시간 상태 시각화 ---
+@st.fragment(run_every="1s")
+def render_download_progress(llm):
+    # 백그라운드 다운로드 시작
+    llm.start_pull_background()
+
+    # 이중 안전 체크: 백그라운드 진행 상태와 무관하게 실제 모델 다운로드가 완료되었는지 검증
+    try:
+        if llm.is_model_available():
+            st.success("다운로드 완료. 잠시 후 서비스가 시작됩니다.")
+            time.sleep(1.0)
+            st.rerun()
+            return
+    except Exception as e:
+        logger.error(f"다운로드 상태 검증 중 오류: {e}")
+
+    # 현재 상태 조회
+    progress = llm.get_pull_status()
+    if not progress:
+        st.info("다운로드 준비 중...")
+        return
+
+    status = progress.get("status", "")
+    if status == "success":
+        st.success("다운로드 완료. 잠시 후 서비스가 시작됩니다.")
+        time.sleep(1.0)
+        st.rerun()
+    elif "downloading" in status or status.startswith("pulling"):
+        completed = progress.get("completed", 0)
+        total = progress.get("total", 0)
+        if total > 0:
+            percentage = completed / total
+            msg = (
+                f"로컬 LLM 모델 '{settings.MODEL_NAME}'을 다운로드하고 있습니다. "
+                "다운로드가 완료될 때까지 질문을 입력할 수 없습니다."
+            )
+            st.warning(msg)
+            st.progress(percentage)
+            completed_mb = completed / (1024 * 1024)
+            total_mb = total / (1024 * 1024)
+            st.text(f"다운로드 중: {percentage:.1%} ({completed_mb:.1f} MB / {total_mb:.1f} MB)")
+        else:
+            msg = (
+                f"로컬 LLM 모델 '{settings.MODEL_NAME}'을 다운로드하고 있습니다. "
+                "다운로드가 완료될 때까지 질문을 입력할 수 없습니다."
+            )
+            st.warning(msg)
+            st.text(f"상태: {status}")
+    elif status == "error":
+        st.error(f"오류: {progress.get('message', '알 수 없는 오류')}")
+    else:
+        msg = (
+            f"로컬 LLM 모델 '{settings.MODEL_NAME}'을 다운로드하고 있습니다. "
+            "다운로드가 완료될 때까지 질문을 입력할 수 없습니다."
+        )
+        st.warning(msg)
+        st.text(f"상태: {status}")
+
+
+if is_ollama and not model_ready:
+    try:
+        llm_instance = LLMFactory.create_llm()
+        render_download_progress(llm_instance)
+    except Exception as e:
+        st.error(f"로컬 LLM 상태 진단 중 오류가 발생했습니다: {e}")
+
+
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
@@ -481,7 +577,9 @@ def on_chat_submit():
 
 
 if prompt := st.chat_input(
-    "규정에 대해 궁금한 점을 물어보세요.", on_submit=on_chat_submit, disabled=st.session_state.is_generating
+    "규정에 대해 궁금한 점을 물어보세요.",
+    on_submit=on_chat_submit,
+    disabled=st.session_state.is_generating or not model_ready,
 ):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
@@ -509,130 +607,141 @@ if st.session_state.is_generating:
         for step in st.session_state.stream_steps:
             ui_handler.process_step(step)
 
-        if st.button("Stop", key="stop_generation_btn"):
-            if st.session_state.stream_iter:
-                try:
-                    st.session_state.stream_iter.close()
-                except Exception as e:
-                    logger.warning(f"Error closing stream iterator: {e}")
-                st.session_state.stop_generation = True
-            else:
-                st.session_state.is_generating = False
-                st.session_state.stop_generation = False
-            st.rerun()
+        # 가로 배치를 위한 컬럼 생성 (텍스트 밀림 방지 및 세련된 레이아웃 확보)
+        col_status, col_stop = st.columns([8, 2], vertical_alignment="center")
 
-        # Consume the stream iterator
-        if st.session_state.stream_iter:
-            try:
-                import contextlib
-
-                spinner_ctx = (
-                    st.spinner("답변을 생성하고 있습니다...") if not show_expert_mode else contextlib.nullcontext()
-                )
-                with spinner_ctx:
-                    for step in st.session_state.stream_iter:
-                        if st.session_state.stop_generation:
-                            break
-
-                        st.session_state.stream_steps.append(step)
-
-                        if step.get("stage") == "generation" and step.get("status") == "streaming":
-                            new_text = step.get("output", "")
-                            temp_response = ui_handler.full_response + new_text
-                            has_repetition, repeated_line = check_repetition(temp_response)
-                            if has_repetition:
-                                logger.warning(f"동일 라인 반복 감지로 답변 생성 중단: '{repeated_line}'")
-                                ui_handler.full_response += (
-                                    "\n\n[안내] 동일한 문장/라인이 반복되어 답변 생성이 안전하게 중단되었습니다."
-                                )
-                                ui_handler.response_container.markdown(ui_handler.full_response)
-                                st.session_state.is_generating = False
-                                st.session_state.stop_generation = True
-                                break
-
-                        ui_handler.process_step(step)
-
-                if not st.session_state.stop_generation:
-                    st.session_state.is_generating = False
-                    latency = time.time() - st.session_state.start_time
-                    st.session_state.messages.append(
-                        {
-                            "role": "assistant",
-                            "content": ui_handler.full_response,
-                            "citations": ui_handler.final_docs,
-                            "latency": latency,
-                        }
-                    )
-                    perf_logger.log(
-                        query=st.session_state.current_prompt,
-                        answer=ui_handler.full_response,
-                        total_latency=latency,
-                        latencies_per_stage={
-                            s: v["end"] - v["start"] for s, v in ui_handler.stage_latencies.items() if "end" in v
-                        },
-                        confidence_scores=[
-                            doc.get("metadata", {}).get("rerank_score", doc.get("score", 0.0))
-                            for doc in ui_handler.final_docs
-                        ],
-                        system_stats=get_system_stats(),
-                        status="success",
-                    )
-                    st.session_state.stream_iter = None
-                    st.session_state.current_prompt = ""
-                    st.rerun()
+        with col_stop:
+            if st.button("생성 중단", key="stop_generation_btn", use_container_width=True):
+                if st.session_state.stream_iter:
+                    try:
+                        st.session_state.stream_iter.close()
+                    except Exception as e:
+                        logger.warning(f"Error closing stream iterator: {e}")
+                    st.session_state.stop_generation = True
                 else:
                     st.session_state.is_generating = False
+                    st.session_state.stop_generation = False
+                st.rerun()
+
+        with col_status:
+            # Consume the stream iterator
+            if st.session_state.stream_iter:
+                try:
+                    import contextlib
+
+                    spinner_ctx = (
+                        st.spinner("답변을 생성하고 있습니다...") if not show_expert_mode else contextlib.nullcontext()
+                    )
+                    with spinner_ctx:
+                        for step in st.session_state.stream_iter:
+                            if st.session_state.stop_generation:
+                                break
+
+                            st.session_state.stream_steps.append(step)
+
+                            # 중복 생성 탐지 로직 (generation streaming 상태일 때 수행)
+                            if step.get("stage") == "generation" and step.get("status") == "streaming":
+                                new_text = step.get("output", "")
+                                # 임시 full_response 계산
+                                temp_response = ui_handler.full_response + new_text
+                                has_repetition, repeated_line = check_repetition(temp_response)
+                                if has_repetition:
+                                    logger.warning(f"동일 라인 반복 감지로 답변 생성 중단: '{repeated_line}'")
+                                    ui_handler.full_response += (
+                                        "\n\n[안내] 동일한 문장/라인이 반복되어 답변 생성이 안전하게 중단되었습니다."
+                                    )
+                                    ui_handler.response_container.markdown(ui_handler.full_response)
+                                    st.session_state.is_generating = False
+                                    st.session_state.stop_generation = True
+                                    break
+
+                            ui_handler.process_step(step)
+
+                    if not st.session_state.stop_generation:
+                        st.session_state.is_generating = False
+
+                        latency = time.time() - st.session_state.start_time
+                        st.session_state.messages.append(
+                            {
+                                "role": "assistant",
+                                "content": ui_handler.full_response,
+                                "citations": ui_handler.final_docs,
+                                "latency": latency,
+                            }
+                        )
+                        perf_logger.log(
+                            query=st.session_state.current_prompt,
+                            answer=ui_handler.full_response,
+                            total_latency=latency,
+                            latencies_per_stage={
+                                s: v["end"] - v["start"] for s, v in ui_handler.stage_latencies.items() if "end" in v
+                            },
+                            confidence_scores=[
+                                doc.get("metadata", {}).get("rerank_score", doc.get("score", 0.0))
+                                for doc in ui_handler.final_docs
+                            ],
+                            system_stats=get_system_stats(),
+                            status="success",
+                        )
+                        st.session_state.stream_iter = None
+                        st.session_state.current_prompt = ""
+                        st.rerun()
+                    else:
+                        st.session_state.is_generating = False
+
+                        latency = time.time() - st.session_state.start_time
+                        st.session_state.messages.append(
+                            {
+                                "role": "assistant",
+                                "content": ui_handler.full_response,
+                                "citations": ui_handler.final_docs,
+                                "latency": latency,
+                            }
+                        )
+                        perf_logger.log(
+                            query=st.session_state.current_prompt,
+                            answer=ui_handler.full_response,
+                            total_latency=latency,
+                            latencies_per_stage={
+                                s: v["end"] - v["start"] for s, v in ui_handler.stage_latencies.items() if "end" in v
+                            },
+                            confidence_scores=[
+                                doc.get("metadata", {}).get("rerank_score", doc.get("score", 0.0))
+                                for doc in ui_handler.final_docs
+                            ],
+                            system_stats=get_system_stats(),
+                            status="interrupted",
+                        )
+                        st.session_state.stream_iter = None
+                        st.session_state.current_prompt = ""
+                        st.session_state.stop_generation = False
+                        st.rerun()
+
+                except Exception as e:
+                    st.session_state.is_generating = False
+                    logger.error(f"채팅 중 오류 발생: {e}", exc_info=True)
+
+                    error_msg = ui_handler.handle_error(e) or f"\n\n[오류] 답변 생성 중 문제가 발생했습니다: {e}"
+
                     latency = time.time() - st.session_state.start_time
                     st.session_state.messages.append(
                         {
                             "role": "assistant",
-                            "content": ui_handler.full_response,
+                            "content": error_msg,
                             "citations": ui_handler.final_docs,
                             "latency": latency,
                         }
                     )
                     perf_logger.log(
                         query=st.session_state.current_prompt,
-                        answer=ui_handler.full_response,
+                        error=str(e),
                         total_latency=latency,
-                        latencies_per_stage={
-                            s: v["end"] - v["start"] for s, v in ui_handler.stage_latencies.items() if "end" in v
-                        },
-                        confidence_scores=[
-                            doc.get("metadata", {}).get("rerank_score", doc.get("score", 0.0))
-                            for doc in ui_handler.final_docs
-                        ],
                         system_stats=get_system_stats(),
-                        status="interrupted",
+                        status="error",
                     )
                     st.session_state.stream_iter = None
                     st.session_state.current_prompt = ""
-                    st.session_state.stop_generation = False
                     st.rerun()
-
-            except Exception as e:
-                st.session_state.is_generating = False
-                logger.error(f"채팅 중 오류 발생: {e}", exc_info=True)
-                error_msg = ui_handler.handle_error(e) or f"\n\n[오류] 답변 생성 중 문제가 발생했습니다: {e}"
-                latency = time.time() - st.session_state.start_time
-                st.session_state.messages.append(
-                    {
-                        "role": "assistant",
-                        "content": error_msg,
-                        "citations": ui_handler.final_docs,
-                        "latency": latency,
-                    }
-                )
-                perf_logger.log(
-                    query=st.session_state.current_prompt,
-                    error=str(e),
-                    total_latency=latency,
-                    system_stats=get_system_stats(),
-                    status="error",
-                )
-                st.session_state.stream_iter = None
-                st.session_state.current_prompt = ""
-                st.rerun()
 
 # --- Controlled Rerun at the end of the script ---
 if st.session_state.should_rerun_app:
