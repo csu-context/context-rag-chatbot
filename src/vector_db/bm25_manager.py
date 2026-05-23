@@ -60,11 +60,7 @@ class BM25Manager:
             return []
         text = self._apply_synonyms(text)
         # N: 명사, V: 용언(동사/형용사), S: 외국어/숫자 추출 및 1글자 노이즈 제거
-        return [
-            t.form
-            for t in self.kiwi.tokenize(text)
-            if t.tag.startswith(("N", "V", "S")) and len(t.form) > 1
-        ]
+        return [t.form for t in self.kiwi.tokenize(text) if t.tag.startswith(("N", "V", "S")) and len(t.form) > 1]
 
     def _get_all_json_files(self) -> list:
         return list(self.data_dir.glob("*.json"))
@@ -92,11 +88,7 @@ class BM25Manager:
             return flattened
 
         if isinstance(data, dict):
-            text_content = (
-                data.get(DataFields.TEXT)
-                or data.get(DataFields.CONTENT)
-                or data.get(DataFields.PARENT_TEXT)
-            )
+            text_content = data.get(DataFields.TEXT) or data.get(DataFields.CONTENT) or data.get(DataFields.PARENT_TEXT)
 
             if text_content:
                 node: dict = {
@@ -152,9 +144,7 @@ class BM25Manager:
                 logger.warning("유효한 텍스트 데이터가 없어 인덱스를 생성할 수 없습니다.")
                 return
 
-            tokenized_corpus = [
-                self._tokenizer(doc.get(DataFields.CONTENT, "")) for doc in self.corpus_data
-            ]
+            tokenized_corpus = [self._tokenizer(doc.get(DataFields.CONTENT, "")) for doc in self.corpus_data]
 
             valid_indices = [i for i, tokens in enumerate(tokenized_corpus) if tokens]
             if not valid_indices:

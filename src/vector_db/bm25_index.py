@@ -2,7 +2,7 @@
 Memory-efficient BM25Plus index using scipy sparse matrices.
 
 Replaces rank_bm25.BM25Plus:
-  - TF matrix  : scipy CSR sparse (n_docs × vocab_size)  — replaces list[dict] doc_freqs
+  - TF matrix  : scipy CSR sparse (n_docs * vocab_size)  — replaces list[dict] doc_freqs
   - IDF        : numpy float32 array (vocab_size,)        — replaces Python dict
   - doc_len    : numpy float32 array (n_docs,)            — replaces list[int]
   - vocab      : plain dict[str, int]                     — word → column index
@@ -12,6 +12,7 @@ Serialization uses numpy/scipy native binary formats instead of pickle:
   arrays.npz     — numpy savez_compressed (idf, doc_len, scalar params)
   vocab.json     — compact JSON (no whitespace)
 """
+
 import json
 import logging
 from pathlib import Path
@@ -84,9 +85,7 @@ class BM25PlusIndex:
                 vals.append(float(tf))
                 nd[wi] += 1
 
-        self.tf_matrix = csr_matrix(
-            (vals, (rows, cols)), shape=(n_docs, vocab_size), dtype=np.float32
-        )
+        self.tf_matrix = csr_matrix((vals, (rows, cols)), shape=(n_docs, vocab_size), dtype=np.float32)
 
         # --- IDF: log((N+1) / df) ---
         self.idf = np.log((n_docs + 1.0) / nd.astype(np.float32)).astype(np.float32)

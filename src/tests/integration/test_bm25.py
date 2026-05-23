@@ -6,7 +6,6 @@ import pytest
 from src.vector_db.bm25_index import BM25PlusIndex
 from src.vector_db.bm25_manager import BM25Manager
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
