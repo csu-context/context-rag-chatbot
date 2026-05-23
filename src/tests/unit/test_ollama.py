@@ -50,3 +50,74 @@ def test_factory_ollama_creation(mock_chat_ollama):
     model = LLMFactory.create_llm(model_type="ollama", model_name="solar")
     assert isinstance(model, OllamaModel)
     assert model.model_name == "solar"
+
+
+def test_ollama_is_model_available_success(mock_chat_ollama):
+    model = OllamaModel(model_name="gemma2:2b")
+
+    mock_response = MagicMock()
+    mock_response.__enter__.return_value = mock_response
+    mock_response.status = 200
+    mock_response.read.return_value = b'{"models": [{"name": "gemma2:2b"}]}'
+
+    with patch("urllib.request.urlopen", return_value=mock_response):
+        assert model.is_model_available() is True
+
+
+def test_ollama_is_model_available_failure(mock_chat_ollama):
+    model = OllamaModel(model_name="gemma2:2b")
+
+    mock_response = MagicMock()
+    mock_response.__enter__.return_value = mock_response
+    mock_response.status = 200
+    mock_response.read.return_value = b'{"models": [{"name": "llama3:latest"}]}'
+
+    with patch("urllib.request.urlopen", return_value=mock_response):
+        assert model.is_model_available() is False
+
+
+def test_ollama_pull_model_progress(mock_chat_ollama):
+    model = OllamaModel(model_name="gemma2:2b")
+
+    mock_response = MagicMock()
+    mock_response.iter_lines.return_value = [
+        b'{"status": "downloading", "completed": 50, "total": 100}\n',
+        b'{"status": "success"}\n',
+    ]
+
+    with patch("requests.post", return_value=mock_response):
+        progress_steps = list(model.pull_model_progress())
+        assert len(progress_steps) == 2
+        assert progress_steps[0]["status"] == "downloading"
+        assert progress_steps[0]["completed"] == 50
+        assert progress_steps[0]["total"] == 100
+        assert progress_steps[1]["status"] == "success"
+
+
+def test_ollama_pull_status_background(mock_chat_ollama):
+    import time
+
+    from src.models.llm_ollama import OllamaModel
+
+    model = OllamaModel(model_name="gemma2:2b")
+
+    def mock_pull_progress():
+        yield {"status": "downloading", "completed": 20, "total": 100}
+        time.sleep(0.05)
+        yield {"status": "success", "completed": 100, "total": 100}
+
+    with patch.object(model, "pull_model_progress", side_effect=mock_pull_progress):
+        model.start_pull_background()
+
+        time.sleep(0.01)
+        status = model.get_pull_status()
+        assert status is not None
+        assert status["status"] in ["downloading", "success", "pulling"]
+
+        for _ in range(15):
+            status = model.get_pull_status()
+            if status and status["status"] == "success":
+                break
+            time.sleep(0.01)
+
+        assert status["status"] == "success"
