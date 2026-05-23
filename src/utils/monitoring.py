@@ -15,7 +15,7 @@ except ImportError:
 
 def get_cpu_usage():
     """Returns CPU usage in percentage."""
-    return psutil.cpu_percent(interval=1)
+    return psutil.cpu_percent(interval=None)
 
 
 def get_memory_usage():
@@ -32,8 +32,7 @@ def get_gpu_vram_usage():
         if not torch.cuda.is_available():
             return None
 
-        # GPU 0의 메모리 정보 가져오기 (free_memory, total_memory)
-        free_memory, total_memory = torch.cuda.mem_get_info(0)
+        free_memory, total_memory = torch.cuda.mem_get_info(torch.cuda.current_device())
 
         if total_memory == 0:
             return None
