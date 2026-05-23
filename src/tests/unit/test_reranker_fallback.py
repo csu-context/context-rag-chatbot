@@ -1,8 +1,14 @@
+import math
 from unittest.mock import MagicMock, patch
 
+import pytest
 from langchain_core.documents import Document
 
 from src.core.reranker import CrossEncoderReranker
+
+
+def _sigmoid(x: float) -> float:
+    return 1.0 / (1.0 + math.exp(-x / 5.0))
 
 
 def test_reranker_cpu_fallback_on_gpu_error():
@@ -42,6 +48,6 @@ def test_reranker_cpu_fallback_on_gpu_error():
         assert reranker.device == "cpu"
         # 2. predict가 총 2번 호출되었는지 검증 (1차 실패, 2차 CPU 폴백 성공)
         assert call_count == 2
-        # 3. 결과 문서가 올바르게 재정렬되었는지 검증
+        # 3. 결과 문서가 올바르게 재정렬되었는지 검증 (sigmoid 정규화 적용 후 값)
         assert len(result.documents) == 2
-        assert result.scores[0] == 0.8
+        assert result.scores[0] == pytest.approx(_sigmoid(0.8))
