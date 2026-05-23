@@ -38,16 +38,17 @@ class TestCrossEncoderReranker:
         """리랭킹 정렬 검증: 모델 점수가 높은 순서대로 정렬되어야 함"""
         with patch.object(CrossEncoderReranker, "_load_model") as mock_load:
             mock_model = MagicMock()
-            # 0.8(Python), 0.2(JS), 0.5(Java) -> 정렬 시 Python(0.8) > Java(0.5) > JS(0.2)
-            mock_model.predict.return_value = MagicMock(tolist=lambda: [0.8, 0.2, 0.5])
+            # raw logit: Python=4.0, JS=-4.0, Java=1.0
+            # sigmoid/5 후: Python≈0.690, Java≈0.550, JS≈0.310
+            mock_model.predict.return_value = [4.0, -4.0, 1.0]
             mock_load.return_value = mock_model
 
             reranker = CrossEncoderReranker.get_instance(threshold=0.1)
             result = reranker.rerank("Python 특징", sample_docs)
 
             assert len(result.documents) == 3
-            assert result.scores[0] == pytest.approx(0.8)
-            assert result.scores[1] == pytest.approx(0.5)
+            assert result.scores[0] == pytest.approx(0.690, abs=1e-2)
+            assert result.scores[1] == pytest.approx(0.550, abs=1e-2)
             assert "Python" in result.documents[0].page_content
             assert "Java" in result.documents[1].page_content
 
@@ -55,11 +56,12 @@ class TestCrossEncoderReranker:
         """임계치 필터링 검증: threshold 미만인 문서는 결과에서 제거되어야 함"""
         with patch.object(CrossEncoderReranker, "_load_model") as mock_load:
             mock_model = MagicMock()
-            # 0.2, 0.5, 0.6 점수 부여
-            mock_model.predict.return_value = MagicMock(tolist=lambda: [0.2, 0.5, 0.6])
+            # raw logit: -5.0, 2.0, 4.0
+            # sigmoid/5 후: ≈0.269, 0.599, 0.690
+            # threshold=0.3 → 0.269인 문서는 필터링
+            mock_model.predict.return_value = [-5.0, 2.0, 4.0]
             mock_load.return_value = mock_model
 
-            # 임계치를 0.3으로 설정 -> 0.2인 문서는 필터링되어야 함
             reranker = CrossEncoderReranker.get_instance(threshold=0.3)
             result = reranker.rerank("검색어", sample_docs)
 
@@ -73,7 +75,8 @@ class TestCrossEncoderReranker:
         """
         with patch.object(CrossEncoderReranker, "_load_model") as mock_load:
             mock_model = MagicMock()
-            mock_model.predict.return_value = MagicMock(tolist=lambda: [0.1, 0.1, 0.1])
+            # raw logit 음수 → sigmoid/5 후 모두 0.5 미만
+            mock_model.predict.return_value = [-1.0, -2.0, -3.0]
             mock_load.return_value = mock_model
 
             # 임계치 0.5 설정
@@ -112,7 +115,7 @@ class TestCrossEncoderReranker:
         """추론 시간이 길어질 경우 차후 호출을 위해 top_k가 동적으로 감소해야 함"""
         with patch.object(CrossEncoderReranker, "_load_model") as mock_load:
             mock_model = MagicMock()
-            mock_model.predict.return_value = MagicMock(tolist=lambda: [0.8, 0.5, 0.2])
+            mock_model.predict.return_value = [4.0, 2.5, 1.0]
             mock_load.return_value = mock_model
 
             initial_top_k = 10
@@ -132,24 +135,25 @@ class TestCrossEncoderReranker:
                 assert result.elapsed_time_sec == pytest.approx(6.0)
 
     def test_model_defaults(self):
-        """모델명에 따라 임계치가 올바르게 자동 설정되는지 확인"""
-        # BGE 모델 (0.2)
+        """모델명에 따라 임계치가 올바르게 자동 설정되는지 확인 (sigmoid [0,1] 기준)"""
+        # BGE 모델 (0.4)
         bge = CrossEncoderReranker(model_name="bge-reranker-v2-m3")
-        assert bge.threshold == 0.2
+        assert bge.threshold == 0.4
 
-        # 한국어 모델 (0.4)
+        # 한국어 모델 (0.5)
         kor = CrossEncoderReranker(model_name="skesarmom/cross-encoder-kor")
-        assert kor.threshold == 0.4
+        assert kor.threshold == 0.5
 
-        # 기본 모델 (0.3)
+        # 기본 모델 (0.45)
         default = CrossEncoderReranker(model_name="cross-encoder/ms-marco-MiniLM-L-6-v2")
-        assert default.threshold == 0.3
+        assert default.threshold == 0.45
 
     def test_elapsed_time_tracking(self, sample_docs):
         """추론 소요 시간이 결과 객체에 정확히 기록되는지 확인"""
         with patch.object(CrossEncoderReranker, "_load_model") as mock_load:
             mock_model = MagicMock()
-            mock_model.predict.return_value = MagicMock(tolist=lambda: [0.8, 0.7, 0.6])
+            # sigmoid/5 후 모두 threshold(0.45) 초과
+            mock_model.predict.return_value = [2.0, 1.5, 1.0]
             mock_load.return_value = mock_model
 
             reranker = CrossEncoderReranker.get_instance()

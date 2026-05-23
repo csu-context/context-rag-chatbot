@@ -12,12 +12,15 @@ from src.core.chains import get_rag_chain
 from src.models.factory import LLMFactory
 from src.pipeline import PipelineOrchestrator
 from src.utils.logger import PerformanceLogger, setup_global_logging
+from src.utils.monitoring import get_system_stats
 from src.utils.paths import RAW_DATA_DIR, ensure_directories
 from src.vector_db.chroma_manager import ChromaDBManager
 
 # 환경 변수 및 로깅 설정
 load_dotenv()
 setup_global_logging()
+# Windows ProactorEventLoop에서 WebSocket 재연결 시 발생하는 알려진 무해한 오류 억제
+logging.getLogger("asyncio").setLevel(logging.CRITICAL)
 perf_logger = PerformanceLogger()  # 전용 로거 인스턴스 생성
 logger = logging.getLogger(__name__)
 
@@ -61,6 +64,8 @@ if "dialog_doc_to_show" not in st.session_state:
     st.session_state.dialog_doc_to_show = None
 if "is_generating" not in st.session_state:
     st.session_state.is_generating = False
+if "should_rerun_app" not in st.session_state:
+    st.session_state.should_rerun_app = False
 if "stop_generation" not in st.session_state:
     st.session_state.stop_generation = False
 if "current_prompt" not in st.session_state:
@@ -97,7 +102,9 @@ def show_document_dialog(doc: dict):
     st.markdown(f"**관련도 점수:** {score:.4f}")
     st.text_area("원문 내용", content, height=300)
     if st.button("닫기"):
-        st.rerun()
+        # Removed st.rerun() here. Dialog will close when dialog_doc_to_show is set to None
+        # and the main app reruns.
+        pass
 
 
 def reset_admin_active():
@@ -127,9 +134,10 @@ def show_admin_dialog(db_manager):  # noqa: C901
             orchestrator = PipelineOrchestrator()
             orchestrator.run_ingestion(force=force)
             status.update(label="동기화 완료", state="complete", expanded=False)
+        # 캐시된 RAG 시스템(db_manager, rag_chain)을 재초기화하여 리셋된 컬렉션을 반영
+        initialize_rag_system.clear()
         st.success("DB 동기화 완료")
         time.sleep(0.5)
-        # 상태 새로고침을 위해 rerun
         st.rerun()
 
     # 상단 영역: 업로드 및 동기화
@@ -155,9 +163,8 @@ def show_admin_dialog(db_manager):  # noqa: C901
 
                     if auto_sync:
                         trigger_sync(force=False)
-                    # else:
-                    #    time.sleep(1)
-                    # st.rerun() # trigger_sync에서 rerun하므로 중복 제거
+                    else:
+                        st.session_state.should_rerun_app = True  # Set flag for rerun even without auto-sync
             else:
                 st.warning("선택된 파일이 없습니다.")
 
@@ -166,7 +173,6 @@ def show_admin_dialog(db_manager):  # noqa: C901
         st.info("자동 동기화를 껐거나, 강제 업데이트가 필요한 경우 사용하세요.")
         if st.button("데이터 파이프라인 가동 (Sync)", key="dialog_sync_btn", use_container_width=True):
             trigger_sync(force=True)
-            # st.rerun() # trigger_sync에서 rerun하므로 중복 제거
 
     st.divider()
 
@@ -190,7 +196,6 @@ def show_admin_dialog(db_manager):  # noqa: C901
     if not current_files:
         st.info("현재 등록된 문서가 없습니다.")
     else:
-        # 커스텀 헤더 (비중 조정: 청크 컬럼 추가)
         h_col1, h_col2, h_col3, h_col4, h_col5 = st.columns([0.2, 3.0, 0.8, 0.6, 0.6])
         h_col1.write("**No**")
         h_col2.write("**파일명**")
@@ -202,30 +207,26 @@ def show_admin_dialog(db_manager):  # noqa: C901
             unsafe_allow_html=True,
         )
 
-        # 각 파일별 행 렌더링
         for i, f in enumerate(current_files):
             r_col1, r_col2, r_col3, r_col4, r_col5 = st.columns([0.2, 3.0, 0.8, 0.6, 0.6])
             r_col1.write(f"{i + 1}")
             r_col2.text(f.name)
             r_col3.write(format_size(f.stat().st_size))
-
-            # DB에서 해당 파일의 청크 수 조회
             chunk_count = db_manager.get_source_count(f.name)
             r_col4.write(f"{chunk_count}")
-
-            if r_col5.button("삭제", key=f"del_btn_{i}", help=f"'{f.name}' 삭제") and f.exists():
+            if r_col5.button("🗑️", key=f"del_btn_{i}", help=f"'{f.name}' 삭제") and f.exists():
                 f.unlink()
                 st.toast(f"파일 삭제됨: {f.name}")
                 if auto_sync:
                     trigger_sync(force=False)
                 else:
                     time.sleep(0.5)
-                st.rerun()
+                    st.session_state.should_rerun_app = True  # Set flag instead of direct rerun
 
     st.divider()
     if st.button("관리 시스템 종료 (닫기)", use_container_width=True):
         st.session_state.admin_active = False
-        st.rerun()
+        st.session_state.should_rerun_app = True  # Set flag instead of direct rerun
 
 
 # --- 4. RAG 시스템 초기화 (캐싱) ---
@@ -287,7 +288,6 @@ st.markdown(
     background-color: rgba(151, 166, 195, 0.25);
     border-color: rgba(151, 166, 195, 0.4);
 }
-/* 스트림릿 텍스트 줄바꿈 방지 */
 div[data-testid="column"] > div > div > div > div > p {
     white-space: nowrap;
     overflow: hidden;
@@ -332,15 +332,32 @@ with st.sidebar:
     col1, col2 = st.columns(2)
     with col1:
         if st.button("상태 새로고침", use_container_width=True, disabled=st.session_state.is_generating):
-            st.rerun()
+            st.session_state.should_rerun_app = True
     with col2:
         if st.button("데이터 관리", use_container_width=True, disabled=st.session_state.is_generating):
             st.session_state.admin_active = True
-            st.rerun()
+            st.session_state.should_rerun_app = True
     st.divider()
 
     # 4. 기타 설정
     st.toggle("상세 추론 과정 보기", key="show_expert_mode", disabled=st.session_state.is_generating)
+
+    st.divider()
+    st.subheader("실시간 자원 모니터링")
+    stats = get_system_stats()
+
+    st.write("CPU 사용량")
+    st.progress(int(stats["cpu"]), text=f"{stats['cpu']:.1f}%")
+
+    st.write("RAM 사용량")
+    st.progress(int(stats["memory"]), text=f"{stats['memory']:.1f}%")
+
+    if stats["gpu_vram"] is not None:
+        st.write("GPU VRAM 사용량")
+        st.progress(int(stats["gpu_vram"]), text=f"{stats['gpu_vram']:.1f}%")
+    else:
+        st.write("GPU VRAM 사용량")
+        st.info("현재 환경에서 GPU를 사용할 수 없습니다.")
 
 # --- 6. 다이얼로그 활성화 제어 ---
 if st.session_state.get("admin_active", False):
@@ -373,85 +390,75 @@ def format_doc_status(docs_list):
 
 class StreamUIHandler:
     def __init__(self):
-        self.cache_msg = st.empty()
-        self.retrieval_msg = st.empty()
-        self.reranking_msg = st.empty()
-        self.generation_msg = st.empty()
         self.response_container = st.empty()
+        self.latency_placeholder = st.empty()
         self.full_response = ""
-        self.docs = []
         self.final_docs = []
-        self.stage_handlers = {
-            "cache": self._handle_cache,
-            "retrieval": self._handle_retrieval,
-            "reranking": self._handle_reranking,
-            "generation": self._handle_generation,
-            "citation": self._handle_citation,
-        }
+        self.stage_latencies = {}
+        self.start_time = time.time()
 
     def process_step(self, step: dict):
-        stage, state = step.get("stage"), step.get("status")
-        handler = self.stage_handlers.get(stage)
-        if handler:
-            handler(state, step)
+        stage, status = step.get("stage"), step.get("status")
 
-    def _handle_cache(self, state, step):
-        if state == "running" and st.session_state.show_expert_mode:
-            self.cache_msg.info("캐시 검색 중...")
-        elif state == "hit" and st.session_state.show_expert_mode:
-            self.cache_msg.success("캐시 Hit")
-        elif state == "miss" or not st.session_state.show_expert_mode:
-            self.cache_msg.empty()
+        if status == "running":
+            self.stage_latencies[stage] = {"start": time.time()}
+        elif status in ["complete", "hit", "miss"] and stage in self.stage_latencies:
+            self.stage_latencies[stage]["end"] = time.time()
 
-    def _handle_retrieval(self, state, step):
-        if state == "running" and st.session_state.show_expert_mode:
-            self.retrieval_msg.info("관련 문서를 찾는 중...")
-        elif state == "complete" and st.session_state.show_expert_mode:
-            self.docs = step.get("output", [])
-            self.retrieval_msg.success(f"{format_doc_status(self.docs)} 검색 완료")
-
-    def _handle_reranking(self, state, step):
-        if state == "running" and st.session_state.show_expert_mode:
-            self.reranking_msg.info("핵심 문서 선별 중...")
-        elif state == "complete" and st.session_state.show_expert_mode:
-            self.final_docs = step.get("output", [])
-            self.reranking_msg.success(f"상위 {format_doc_status(self.final_docs)} 선별 완료")
-
-    def _handle_generation(self, state, step):
-        if state == "running" and st.session_state.show_expert_mode:
-            self.generation_msg.info("답변 생성 중...")
-        elif state == "streaming":
+        if stage == "generation" and status == "streaming":
             self.full_response += step.get("output", "")
             self.response_container.markdown(self.full_response + "▌")
-        elif state == "complete":
-            if st.session_state.show_expert_mode:
-                self.generation_msg.success("답변 생성 완료")
+        elif stage == "generation" and status == "complete":
             self.response_container.markdown(self.full_response)
+        elif stage == "citation" and status == "complete":
+            self.final_docs = self._format_docs(step.get("source_documents", []))
 
-    def _handle_citation(self, state, step):
-        if state == "complete":
-            docs = step.get("source_documents", [])
-            # Format to match expected dictionary structure in UI if they are Document objects
-            self.final_docs = []
-            if not docs:
-                return
-            for doc in docs:
-                if hasattr(doc, "page_content"):  # Document 객체인 경우
-                    self.final_docs.append(
-                        {
-                            "content": doc.page_content,
-                            "metadata": doc.metadata,
-                            "score": doc.metadata.get("rerank_score", doc.metadata.get("score", 0.0)),
-                        }
-                    )
-                elif isinstance(doc, dict):  # 이미 dict인 경우 (캐시 등)
-                    self.final_docs.append(doc)
+        self.display_latencies()
+
+    def _format_docs(self, docs):
+        formatted = []
+        if not docs:
+            return formatted
+        for doc in docs:
+            if hasattr(doc, "page_content"):
+                formatted.append(
+                    {
+                        "content": doc.page_content,
+                        "metadata": doc.metadata,
+                        "score": doc.metadata.get("rerank_score", doc.metadata.get("score", 0.0)),
+                    }
+                )
+            elif isinstance(doc, dict):
+                formatted.append(doc)
+        return formatted
+
+    def display_latencies(self):
+        total_latency = time.time() - self.start_time
+        over_limit = total_latency > 5.0
+
+        if st.session_state.show_expert_mode:
+            header = f"**총 소요시간: {total_latency:.2f}초**"
+            if over_limit:
+                header = f"⚠️ {header} (5초 초과)"
+
+            stage_durations = {s: v["end"] - v["start"] for s, v in self.stage_latencies.items() if "end" in v}
+            bottleneck = max(stage_durations, key=lambda s: stage_durations[s]) if stage_durations else None
+
+            lines = [header]
+            for stage, elapsed in stage_durations.items():
+                marker = " ← 병목" if over_limit and stage == bottleneck else ""
+                lines.append(f"- {stage}: {elapsed:.2f}초{marker}")
+
+            self.latency_placeholder.info("\n".join(lines))
+        else:
+            self.latency_placeholder.empty()
 
     def handle_error(self, error):
         if self.full_response:
             msg = "\n\n[안내] 통신 오류로 답변이 불완전할 수 있습니다."
             self.response_container.markdown(self.full_response + msg)
             return self.full_response + msg
+        return f"오류가 발생했습니다: {error}"
 
 
 # --- 메인 채팅 화면 ---
@@ -538,28 +545,31 @@ for msg_idx, msg in enumerate(st.session_state.messages):
             st.caption(f"답변 소요 시간: {msg['latency']:.2f}초")
 
         if msg.get("citations"):
-            citations_count = len(msg["citations"])
-            cols = st.columns(citations_count) if citations_count > 0 else []
             for i, doc in enumerate(msg["citations"]):
-                # 방어 로직
                 if not isinstance(doc, dict):
                     continue
-                source = get_doc_field(doc, MetadataFields.SRC_NAME, "알 수 없음")
-                page = get_doc_field(doc, MetadataFields.PG_NUM, "-")
+                metadata = doc.get("metadata", {})
+                source = metadata.get(MetadataFields.SRC_NAME, "알 수 없음")
+                page = metadata.get(MetadataFields.PG_NUM, "-")
+                score = metadata.get("rerank_score", doc.get("score", 0.0))
+                is_low_confidence = score < 0.5
 
-                if cols[i].button(
-                    f"{source} (p.{page})", key=f"cite_{msg_idx}_{i}", disabled=st.session_state.is_generating
-                ):
+                button_label = f"📄 {source} (p.{page}) - 신뢰도: {score:.2f}"
+                if is_low_confidence:
+                    button_label += " ⚠️"
+
+                if st.button(button_label, key=f"cite_{msg_idx}_{i}", disabled=st.session_state.is_generating):
                     st.session_state.dialog_doc_to_show = doc
-                    st.rerun()
+                    st.session_state.should_rerun_app = True  # Set flag instead of direct rerun
 
-# 다이얼로그 상태 확인 및 호출 (루프 밖에서 단 한번만 실행)
+                if is_low_confidence:
+                    st.caption("⚠️ 신뢰도가 낮아 환각 발생 가능성이 있습니다. 원문을 직접 확인하세요.")
+
 if st.session_state.dialog_doc_to_show:
     show_document_dialog(st.session_state.dialog_doc_to_show)
-    st.session_state.dialog_doc_to_show = None  # 다이얼로그 렌더링 후 상태 초기화
+    st.session_state.dialog_doc_to_show = None
 
 
-# 채팅 입력 콜백: 입력을 제출하는 순간 (스크립트 상단 실행 전) 상태를 정리합니다.
 def on_chat_submit():
     if st.session_state.get("admin_active"):
         st.session_state.admin_active = False
@@ -571,9 +581,9 @@ if prompt := st.chat_input(
     on_submit=on_chat_submit,
     disabled=st.session_state.is_generating or not model_ready,
 ):
+    st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
-    st.session_state.messages.append({"role": "user", "content": prompt})
 
     st.session_state.stop_generation = False
     st.session_state.current_prompt = prompt
@@ -659,20 +669,25 @@ if st.session_state.is_generating:
                                 "latency": latency,
                             }
                         )
-                        perf_logger.log_inference(
-                            st.session_state.current_prompt,
-                            ui_handler.full_response,
-                            "success",
-                            st.session_state.current_prompt[:30],
-                            duration=latency,
+                        perf_logger.log(
+                            query=st.session_state.current_prompt,
+                            answer=ui_handler.full_response,
+                            total_latency=latency,
+                            latencies_per_stage={
+                                s: v["end"] - v["start"] for s, v in ui_handler.stage_latencies.items() if "end" in v
+                            },
+                            confidence_scores=[
+                                doc.get("metadata", {}).get("rerank_score", doc.get("score", 0.0))
+                                for doc in ui_handler.final_docs
+                            ],
+                            system_stats=get_system_stats(),
+                            status="success",
                         )
                         st.session_state.stream_iter = None
                         st.session_state.current_prompt = ""
                         st.rerun()
                     else:
                         st.session_state.is_generating = False
-                        if show_expert_mode:
-                            ui_handler.generation_msg.warning("답변 생성 중단됨")
 
                         latency = time.time() - st.session_state.start_time
                         st.session_state.messages.append(
@@ -683,12 +698,19 @@ if st.session_state.is_generating:
                                 "latency": latency,
                             }
                         )
-                        perf_logger.log_inference(
-                            st.session_state.current_prompt,
-                            ui_handler.full_response,
-                            "interrupted",
-                            st.session_state.current_prompt[:30],
-                            duration=latency,
+                        perf_logger.log(
+                            query=st.session_state.current_prompt,
+                            answer=ui_handler.full_response,
+                            total_latency=latency,
+                            latencies_per_stage={
+                                s: v["end"] - v["start"] for s, v in ui_handler.stage_latencies.items() if "end" in v
+                            },
+                            confidence_scores=[
+                                doc.get("metadata", {}).get("rerank_score", doc.get("score", 0.0))
+                                for doc in ui_handler.final_docs
+                            ],
+                            system_stats=get_system_stats(),
+                            status="interrupted",
                         )
                         st.session_state.stream_iter = None
                         st.session_state.current_prompt = ""
@@ -710,13 +732,18 @@ if st.session_state.is_generating:
                             "latency": latency,
                         }
                     )
-                    perf_logger.log_inference(
-                        st.session_state.current_prompt,
-                        str(e),
-                        "error",
-                        st.session_state.current_prompt[:30],
-                        duration=latency,
+                    perf_logger.log(
+                        query=st.session_state.current_prompt,
+                        error=str(e),
+                        total_latency=latency,
+                        system_stats=get_system_stats(),
+                        status="error",
                     )
                     st.session_state.stream_iter = None
                     st.session_state.current_prompt = ""
                     st.rerun()
+
+# --- Controlled Rerun at the end of the script ---
+if st.session_state.should_rerun_app:
+    st.session_state.should_rerun_app = False
+    st.rerun()

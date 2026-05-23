@@ -85,8 +85,9 @@ def test_log_cleanup_logic(tmp_path):
 
     TracingLogger.reset_instance()
     with patch("src.utils.logger.LOGS_DIR", tmp_path):
-        # 초기화 시 cleanup 호출됨
-        TracingLogger()
+        logger = TracingLogger()
+        # cleanup은 자동 호출되지 않으므로 명시적으로 호출
+        logger._cleanup_old_logs(keep_days=7)
 
     assert today_log.exists()
     assert not old_log.exists()

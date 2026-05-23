@@ -39,7 +39,7 @@ class BaseReranker(ABC):
     MAX_INFER_TIME_SEC = 5  # API 타임아웃
     PERFORMANCE_THRESHOLD_SEC = 3.0  # 지연 기준 시간 (이 시간 초과 시 top_k 동적 조정)
 
-    def __init__(self, name: str, top_k: int = 5, threshold: float = 0.3):
+    def __init__(self, name: str, top_k: int = 5, threshold: float = 0.45):
         self.name = name
         self.top_k = top_k
         self.threshold = threshold
@@ -118,13 +118,15 @@ class CrossEncoderReranker(BaseReranker):
             self._set_model_defaults()
 
     def _set_model_defaults(self) -> None:
+        # sigmoid 정규화 후 [0, 1] 기준 임계값
+        # sigmoid(0) = 0.5 (중립), sigmoid(1) ≈ 0.73 (긍정적)
         model_lower = self.model_name.lower()
         if "bge" in model_lower:
-            self.threshold = 0.2
-        elif "skesarmom" in model_lower or "kor" in model_lower:
             self.threshold = 0.4
+        elif "skesarmom" in model_lower or "kor" in model_lower:
+            self.threshold = 0.5
         else:
-            self.threshold = 0.3
+            self.threshold = 0.45
 
     @classmethod
     def get_instance(
@@ -190,7 +192,7 @@ class CrossEncoderReranker(BaseReranker):
         try:
             model = self._load_model()
             scores_pred = model.predict(pairs)
-            scores = scores_pred.tolist() if hasattr(scores_pred, "tolist") else list(scores_pred)
+            raw_scores = scores_pred.tolist() if hasattr(scores_pred, "tolist") else list(scores_pred)
         except RuntimeError as e:
             err_msg = str(e).lower()
             # CUDA, MPS, OOM, Device 관련 에러가 발생한 경우 CPU로 폴백
@@ -202,7 +204,7 @@ class CrossEncoderReranker(BaseReranker):
                 try:
                     model = self._load_model()
                     scores_pred = model.predict(pairs)
-                    scores = scores_pred.tolist() if hasattr(scores_pred, "tolist") else list(scores_pred)
+                    raw_scores = scores_pred.tolist() if hasattr(scores_pred, "tolist") else list(scores_pred)
                 except Exception as cpu_err:
                     logger.error(f"[{self.name}] Failed to run even on CPU fallback: {cpu_err}")
                     raise cpu_err
@@ -210,6 +212,9 @@ class CrossEncoderReranker(BaseReranker):
                 raise
 
         elapsed_time = time.time() - start_time
+        # ms-marco 등 raw logit(범위 -10~15)을 [0, 1]로 정규화
+        # temperature=5로 스케일링하여 sigmoid 포화 방지
+        scores = torch.sigmoid(torch.tensor(raw_scores) / 5.0).tolist()
 
         scored_docs = sorted(zip(scores, documents, strict=True), key=lambda x: x[0], reverse=True)
         filtered = [(s, d) for s, d in scored_docs if s >= effective_threshold]

@@ -220,7 +220,7 @@ class IngestionPipeline:
     def save_processed_data(self, data: list[dict[str, Any]]) -> list[Path]:
         """
         전처리된 데이터를 source_id별 개별 JSON 파일로 저장합니다.
-        (BM25 인덱스와의 정합성 유지를 위해 개별 파일 관리가 필수적임)
+        (BM25 인덱스와 정합성 유지를 위해 개별 파일 관리가 필수적임)
         """
         saved_paths = []
         # 데이터를 source_id별로 그룹화
@@ -251,11 +251,8 @@ class IngestionPipeline:
         logger.info(f"데이터 정합성 검증: {len(source_ids_to_delete)}개 소스 ID에 대한 클린업을 수행합니다.")
 
         # 1. 벡터 DB 데이터 삭제
-        try:
-            self.db_manager.delete_documents(where={"source_id": {"$in": source_ids_to_delete}})
-            logger.info("   - ChromaDB 벡터 데이터 삭제 완료")
-        except Exception as e:
-            logger.error(f"   - ChromaDB 삭제 실패: {e}")
+        self.db_manager.delete_documents(where={"source_id": {"$in": source_ids_to_delete}})
+        logger.info("   - ChromaDB 벡터 데이터 삭제 완료")
 
         # 2. 물리적 캐시 및 JSON 파일 삭제 (강화된 클린업)
         deleted_count = 0
@@ -424,9 +421,28 @@ class PipelineOrchestrator:
                     return
 
                 if force:
-                    logger.info("강제 동기화가 요청되었습니다. 모든 기존 데이터를 삭제하고 전체 재색인을 수행합니다.")
+                    logger.info(
+                        "강제 동기화가 요청되었습니다. 모든 기존 데이터를 완전히 삭제하고 전체 재색인을 수행합니다."
+                    )
+
+                    # 강제 초기화 시 기존 데이터를 물리적으로 모두 정리 (vector DB 및 파싱 캐시 등)
+                    logger.info("ChromaDB 컬렉션 및 가공 파일 물리적 초기화 시작...")
+                    self.ingestion_pipeline.db_manager.reset_collection()
+
+                    for f in self.ingestion_pipeline.processed_dir.glob("*.json"):
+                        try:
+                            f.unlink()
+                        except Exception as e:
+                            logger.error(f"JSON 파일 삭제 실패 {f}: {e}")
+
+                    for f in CACHE_DIR.glob("*_parsed.pkl"):
+                        try:
+                            f.unlink()
+                        except Exception as e:
+                            logger.error(f"캐시 파일 삭제 실패 {f}: {e}")
+
                     files_to_process = all_files
-                    source_ids_to_delete = list(old_manifest.values())
+                    source_ids_to_delete = []  # 이미 물리적으로 모두 삭제했으므로 부분 삭제 프로세스는 건너뜀
                     new_manifest = {
                         str(f.relative_to(RAW_DATA_DIR)): generate_file_hash(f, self.parser_type) for f in all_files
                     }
@@ -447,6 +463,9 @@ class PipelineOrchestrator:
                 if not files_to_process and not source_ids_to_delete:
                     logger.info("변경 사항이 없으므로 데이터 구축 작업을 건너뜁니다.")
                     session.data["status"] = "no_changes"
+                    if force:
+                        # 강제 초기화 후 파일이 없는 경우에도 manifest를 갱신하여 일관성 유지
+                        self._save_manifest(new_manifest)
                     return
 
             self._process_changes(files_to_process, source_ids_to_delete, session)
