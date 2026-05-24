@@ -154,12 +154,12 @@ class BM25PlusIndex:
         obj = cls()
         obj.tf_matrix = load_npz(str(cache_dir / _TF_FILE))
 
-        arr = np.load(str(cache_dir / _ARRAYS_FILE))
-        obj.idf = arr["idf"]
-        obj.doc_len = arr["doc_len"]
-        p = arr["params"]
-        obj.k1, obj.b, obj.delta, obj.avgdl = float(p[0]), float(p[1]), float(p[2]), float(p[3])
-        obj.corpus_size = int(p[4])
+        with np.load(str(cache_dir / _ARRAYS_FILE)) as arr:
+            obj.idf = arr["idf"]
+            obj.doc_len = arr["doc_len"]
+            p = arr["params"]
+            obj.k1, obj.b, obj.delta, obj.avgdl = float(p[0]), float(p[1]), float(p[2]), float(p[3])
+            obj.corpus_size = int(p[4])
 
         with open(cache_dir / _VOCAB_FILE, encoding="utf-8") as f:
             obj.vocab = json.load(f)

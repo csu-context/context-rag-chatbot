@@ -1,7 +1,9 @@
 import json
 import logging
+import traceback
 from typing import Any
 
+import numpy as np
 from kiwipiepy import Kiwi
 
 from src.common.constants import DataFields, MetadataFields
@@ -20,7 +22,7 @@ class BM25Manager:
     가공된 JSON 데이터를 로드하여 인덱스를 빌드하고, 형태소 분석 기반의 키워드 검색을 수행함.
 
     인덱스 캐시 구조 (.cache/bm25_v2/):
-      tf_matrix.npz  — scipy sparse CSR TF 행렬
+      tf_matrix.npz  — scipy sparse CSC TF 행렬
       arrays.npz     — numpy: idf 배열, doc_len 배열, 스칼라 파라미터
       vocab.json     — 단어→열 인덱스 매핑
       corpus.json    — 슬림 코퍼스 (content + metadata + chunk_id만 보존)
@@ -169,8 +171,6 @@ class BM25Manager:
 
         except Exception as e:
             logger.error(f"인덱스 로드 중 오류 발생: {e}")
-            import traceback
-
             logger.error(traceback.format_exc())
             self.bm25 = None
             self.corpus_data = []
@@ -198,7 +198,12 @@ class BM25Manager:
         if not scores.any():
             return []
 
-        top_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:n]
+        n_docs = len(scores)
+        if n_docs <= n:
+            top_indices = np.argsort(scores)[::-1].tolist()
+        else:
+            top_k = np.argpartition(scores, -n)[-n:]
+            top_indices = top_k[np.argsort(scores[top_k])[::-1]].tolist()
         top_scores = [float(scores[i]) for i in top_indices]
 
         # 타 검색 엔진과의 결합을 위한 점수 정규화 (Min-Max Scaling)
