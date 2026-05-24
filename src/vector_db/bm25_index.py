@@ -2,13 +2,17 @@
 Memory-efficient BM25Plus index using scipy sparse matrices.
 
 Replaces rank_bm25.BM25Plus:
-  - TF matrix  : scipy CSR sparse (n_docs * vocab_size)  — replaces list[dict] doc_freqs
+  - TF matrix  : scipy CSC sparse (n_docs × vocab_size)  — replaces list[dict] doc_freqs
   - IDF        : numpy float32 array (vocab_size,)        — replaces Python dict
   - doc_len    : numpy float32 array (n_docs,)            — replaces list[int]
   - vocab      : plain dict[str, int]                     — word → column index
 
+CSC (Compressed Sparse Column) is chosen over CSR because get_scores accesses
+the matrix column-by-column (one column per query token). CSC stores each column
+contiguously in indptr/indices/data, so a column slice is a zero-copy O(1) view.
+
 Serialization uses numpy/scipy native binary formats instead of pickle:
-  tf_matrix.npz  — scipy sparse save_npz
+  tf_matrix.npz  — scipy sparse save_npz (CSC preserved)
   arrays.npz     — numpy savez_compressed (idf, doc_len, scalar params)
   vocab.json     — compact JSON (no whitespace)
 """
@@ -18,7 +22,7 @@ import logging
 from pathlib import Path
 
 import numpy as np
-from scipy.sparse import csr_matrix, load_npz, save_npz
+from scipy.sparse import csc_matrix, load_npz, save_npz
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +37,7 @@ _VOCAB_FILE = "vocab.json"
 
 class BM25PlusIndex:
     """
-    Vectorized BM25Plus backed by a scipy CSR sparse TF matrix.
+    Vectorized BM25Plus backed by a scipy CSC sparse TF matrix.
 
     Scoring formula (per query term q, document d):
         score(q, d) = IDF(q) * (tf(q,d)*(k1+1) / (tf(q,d) + k1*(1-b+b*|d|/avgdl)) + delta)
@@ -46,7 +50,7 @@ class BM25PlusIndex:
         self.delta = delta
         self.vocab: dict[str, int] = {}
         self.idf: np.ndarray | None = None
-        self.tf_matrix: csr_matrix | None = None
+        self.tf_matrix: csc_matrix | None = None
         self.doc_len: np.ndarray | None = None
         self.avgdl: float = 0.0
         self.corpus_size: int = 0
@@ -70,7 +74,7 @@ class BM25PlusIndex:
         self.doc_len = doc_len
         self.avgdl = float(doc_len.mean()) if n_docs > 0 else 1.0
 
-        # --- build sparse TF matrix (COO → CSR) ---
+        # --- build sparse TF matrix (COO → CSC) ---
         rows, cols, vals = [], [], []
         nd = np.zeros(vocab_size, dtype=np.int32)  # document frequency per term
 
@@ -85,13 +89,18 @@ class BM25PlusIndex:
                 vals.append(float(tf))
                 nd[wi] += 1
 
-        self.tf_matrix = csr_matrix((vals, (rows, cols)), shape=(n_docs, vocab_size), dtype=np.float32)
+        self.tf_matrix = csc_matrix((vals, (rows, cols)), shape=(n_docs, vocab_size), dtype=np.float32)
 
         # --- IDF: log((N+1) / df) ---
         self.idf = np.log((n_docs + 1.0) / nd.astype(np.float32)).astype(np.float32)
 
     def get_scores(self, query_tokens: list[str]) -> np.ndarray:
-        """Return BM25Plus scores (float32) for all documents."""
+        """Return BM25Plus scores (float32) for all documents.
+
+        Uses CSC column slicing to process only non-zero (doc, term) pairs,
+        avoiding a full toarray() dense expansion that would spike to
+        O(n_docs × n_query_terms) memory regardless of corpus sparsity.
+        """
         if self.tf_matrix is None or not query_tokens:
             return np.zeros(self.corpus_size, dtype=np.float32)
 
@@ -99,15 +108,22 @@ class BM25PlusIndex:
         if not q_idx:
             return np.zeros(self.corpus_size, dtype=np.float32)
 
-        # Dense slice for query terms only: (n_docs, n_q)
-        tf_sub = self.tf_matrix[:, q_idx].toarray()
-        dl_ratio = self.doc_len[:, np.newaxis] / self.avgdl  # (n_docs, 1)
+        scores = np.zeros(self.corpus_size, dtype=np.float32)
+        # CSC indptr lets us slice column qi in O(1) with zero allocation:
+        #   indices[indptr[qi]:indptr[qi+1]] → doc ids that contain the term
+        #   data[indptr[qi]:indptr[qi+1]]    → their raw TF values
+        for qi in q_idx:
+            start, end = self.tf_matrix.indptr[qi], self.tf_matrix.indptr[qi + 1]
+            if start == end:
+                continue
+            doc_ids = self.tf_matrix.indices[start:end]
+            tf_vals = self.tf_matrix.data[start:end]
+            dl = self.doc_len[doc_ids]
+            numer = tf_vals * (self.k1 + 1.0)
+            denom = tf_vals + self.k1 * (1.0 - self.b + self.b * dl / self.avgdl)
+            scores[doc_ids] += self.idf[qi] * (numer / denom + self.delta)
 
-        numer = tf_sub * (self.k1 + 1.0)
-        denom = tf_sub + self.k1 * (1.0 - self.b + self.b * dl_ratio)
-        q_idf = self.idf[q_idx]  # (n_q,)
-
-        return (q_idf * (numer / denom + self.delta)).sum(axis=1)
+        return scores
 
     # ------------------------------------------------------------------
     # Serialization
