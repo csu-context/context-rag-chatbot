@@ -160,9 +160,15 @@ class IngestionPipeline:
             files.extend(filtered_files)
         return files
 
-    def process_and_chunk(self, files: list[Path]) -> list[dict[str, Any]]:
+    def process_and_chunk(self, files: list[Path], progress_callback=None) -> list[dict[str, Any]]:
         all_hierarchical_data = []
-        for file_path in tqdm(files, desc="Processing Files"):
+        total_files = len(files)
+        for idx, file_path in enumerate(files):
+            if progress_callback:
+                try:
+                    progress_callback(idx, total_files, file_path.name)
+                except Exception as cb_e:
+                    logger.error(f"진행 상황 콜백 호출 실패: {cb_e}")
             try:
                 # 1. 파일 확장자에 따른 전략 동적 선택 및 파싱
                 active_strategy = self.strategy if file_path.suffix.lower() == ".pdf" else MarkdownParserStrategy()
@@ -214,6 +220,12 @@ class IngestionPipeline:
 
             except Exception as e:
                 logger.error(f"파일 처리 실패: {file_path.name} - {e!s}")
+
+        if progress_callback and total_files > 0:
+            try:
+                progress_callback(total_files, total_files, "모든 파일 처리 완료")
+            except Exception as cb_e:
+                logger.error(f"진행 상황 콜백 호출 실패: {cb_e}")
 
         return all_hierarchical_data
 
@@ -372,7 +384,13 @@ class PipelineOrchestrator:
 
         return files_to_process, source_ids_to_delete, new_manifest
 
-    def _process_changes(self, files_to_process: list[Path], source_ids_to_delete: list[str], session: Any):
+    def _process_changes(
+        self,
+        files_to_process: list[Path],
+        source_ids_to_delete: list[str],
+        session: Any,
+        progress_callback=None,
+    ):
         """도출된 변경 사항(DB 삭제, 파싱, 업서트, 인덱스 갱신)을 순차적으로 수행합니다."""
         if files_to_process or source_ids_to_delete:
             with session.trace_step("cache_flush"):
@@ -385,7 +403,9 @@ class PipelineOrchestrator:
 
         if files_to_process:
             with session.trace_step("parse_and_chunk") as step:
-                processed_data = self.ingestion_pipeline.process_and_chunk(files_to_process)
+                processed_data = self.ingestion_pipeline.process_and_chunk(
+                    files_to_process, progress_callback=progress_callback
+                )
                 step["parent_chunk_count"] = len(processed_data)
 
             if processed_data:
@@ -406,8 +426,16 @@ class PipelineOrchestrator:
                 except Exception as e:
                     step["status"] = f"failed: {e}"
 
-    def run_ingestion(self, force: bool = False):
+    def run_ingestion(self, force: bool = False, parser_type: str = None, progress_callback=None):
         """전체 데이터 구축 파이프라인 실행"""
+        if parser_type:
+            parser_type_lower = parser_type.lower()
+            if self.parser_type != parser_type_lower:
+                logger.info(f"파서 타입 변경 감지: {self.parser_type} -> {parser_type_lower}")
+                self.parser_type = parser_type_lower
+                self.strategy = self._get_parser_strategy()
+                self.ingestion_pipeline.strategy = self.strategy
+
         logger.info(f"데이터 구축 파이프라인을 시작합니다. (전략: {self.parser_type}, 강제 재색인: {force})")
 
         with self.tracing_logger.start_session(type="ingestion", parser_type=self.parser_type) as session:
@@ -468,7 +496,12 @@ class PipelineOrchestrator:
                         self._save_manifest(new_manifest)
                     return
 
-            self._process_changes(files_to_process, source_ids_to_delete, session)
+            self._process_changes(
+                files_to_process,
+                source_ids_to_delete,
+                session,
+                progress_callback=progress_callback,
+            )
 
             with session.trace_step("update_manifest"):
                 self._save_manifest(new_manifest)

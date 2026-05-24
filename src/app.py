@@ -62,6 +62,8 @@ if "admin_active" not in st.session_state:
     st.session_state.admin_active = False
 if "dialog_doc_to_show" not in st.session_state:
     st.session_state.dialog_doc_to_show = None
+if "dialog_chunks_file_to_show" not in st.session_state:
+    st.session_state.dialog_chunks_file_to_show = None
 if "is_generating" not in st.session_state:
     st.session_state.is_generating = False
 if "should_rerun_app" not in st.session_state:
@@ -87,6 +89,36 @@ if "show_expert_mode" not in st.session_state:
 
 
 # --- 3. 팝업 다이얼로그 정의 ---
+
+
+def reset_chunks_viewer():
+    st.session_state.dialog_chunks_file_to_show = None
+    st.session_state.admin_active = True
+    st.session_state.should_rerun_app = True
+
+
+@st.dialog("문서 청크 목록 및 메타데이터 상세", width="large", on_dismiss=reset_chunks_viewer)
+def show_chunks_viewer_dialog(file_name, db_manager):
+    st.subheader(f"문서명: {file_name}")
+    chunks = db_manager.get_source_chunks(file_name)
+    st.write(f"총 청크 수: {len(chunks)}개")
+
+    with st.container(height=500):
+        if not chunks:
+            st.info("이 문서에 저장된 청크 데이터가 없습니다.")
+        else:
+            for i, chunk in enumerate(chunks):
+                st.markdown(f"### Chunk {i + 1} (ID: `{chunk['id']}`)")
+                st.text_area(
+                    "청크 내용", chunk["content"], height=150, key=f"chunk_content_{file_name}_{i}", disabled=True
+                )
+                st.markdown("**메타데이터**")
+                st.json(chunk["metadata"])
+                st.divider()
+
+    if st.button("닫기", use_container_width=True, key="close_chunks_viewer_btn"):
+        reset_chunks_viewer()
+        st.rerun()
 
 
 # [문서 원문 보기]
@@ -117,27 +149,48 @@ def show_admin_dialog(db_manager):  # noqa: C901
     st.markdown("지식 베이스(RAW_DATA) 관리 및 데이터베이스 동기화를 수행합니다.")
 
     # 상단 옵션 영역
-    col_opt1, _ = st.columns([1, 1])
+    col_opt1, col_opt2 = st.columns([1, 1])
     with col_opt1:
         auto_sync = st.checkbox(
             "파일 업로드/삭제 후 자동 동기화 실행",
             value=True,
             help="체크 시 별도의 Sync 버튼 클릭 없이 즉시 DB에 반영합니다.",
         )
+    with col_opt2:
+        default_parser_idx = 0 if settings.PARSER_TYPE.lower() == "manual" else 1
+        parser_type = st.radio(
+            "적용 파서 선택",
+            options=["manual", "docling"],
+            index=default_parser_idx,
+            horizontal=True,
+            help="동기화 파이프라인에서 사용할 PDF 파서 전략을 지정합니다.",
+        )
 
     st.divider()
 
     # 공통 동기화 로직 함수
     def trigger_sync(force=False):
+        progress_bar = st.progress(0)
+
+        def sync_callback(current, total, file_name):
+            if total > 0:
+                percent = int((current / total) * 100)
+                percent = min(100, max(0, percent))
+                progress_bar.progress(percent, text=f"[{current}/{total}] {file_name} 처리 중... ({percent}%)")
+            else:
+                progress_bar.progress(0, text="대기 중...")
+
         with st.status("데이터베이스 동기화 중...", expanded=True) as status:
             # 싱글톤 인스턴스 사용 (불필요한 모델 로드 방지)
             orchestrator = PipelineOrchestrator()
-            orchestrator.run_ingestion(force=force)
+            orchestrator.run_ingestion(force=force, parser_type=parser_type, progress_callback=sync_callback)
+            progress_bar.progress(100, text="모든 파일 처리 완료 (100%)")
             status.update(label="동기화 완료", state="complete", expanded=False)
         # 캐시된 RAG 시스템(db_manager, rag_chain)을 재초기화하여 리셋된 컬렉션을 반영
         initialize_rag_system.clear()
         st.success("DB 동기화 완료")
         time.sleep(0.5)
+        progress_bar.empty()
         st.rerun()
 
     # 상단 영역: 업로드 및 동기화
@@ -196,25 +249,39 @@ def show_admin_dialog(db_manager):  # noqa: C901
     if not current_files:
         st.info("현재 등록된 문서가 없습니다.")
     else:
-        h_col1, h_col2, h_col3, h_col4, h_col5 = st.columns([0.2, 3.0, 0.8, 0.6, 0.6])
+        h_col1, h_col2, h_col3, h_col4, h_col5, h_col6 = st.columns([0.2, 2.5, 0.8, 0.8, 0.6, 0.6])
         h_col1.write("**No**")
         h_col2.write("**파일명**")
         h_col3.write("**크기**")
-        h_col4.write("**청크**")
-        h_col5.write("**삭제**")
+        h_col4.write("**적용 파서**")
+        h_col5.write("**청크**")
+        h_col6.write("**삭제**")
         st.markdown(
             "<hr style='margin: 0px 0px 10px 0px; border: 0.5px solid rgba(151,166,195,0.2);'>",
             unsafe_allow_html=True,
         )
 
         for i, f in enumerate(current_files):
-            r_col1, r_col2, r_col3, r_col4, r_col5 = st.columns([0.2, 3.0, 0.8, 0.6, 0.6])
+            r_col1, r_col2, r_col3, r_col4, r_col5, r_col6 = st.columns([0.2, 2.5, 0.8, 0.8, 0.6, 0.6])
             r_col1.write(f"{i + 1}")
             r_col2.text(f.name)
             r_col3.write(format_size(f.stat().st_size))
-            chunk_count = db_manager.get_source_count(f.name)
-            r_col4.write(f"{chunk_count}")
-            if r_col5.button("🗑️", key=f"del_btn_{i}", help=f"'{f.name}' 삭제") and f.exists():
+
+            # 적용 파서 식별
+            chunks = db_manager.get_source_chunks(f.name)
+            parser_name = "-"
+            if chunks:
+                parser_name = chunks[0].get("metadata", {}).get("parser", "manual")
+            r_col4.write(f"`{parser_name}`")
+
+            chunk_count = len(chunks)
+            if r_col5.button(f"{chunk_count} 🔍", key=f"view_chunks_{i}", help="청크 상세 내용 보기"):
+                st.session_state.dialog_chunks_file_to_show = f.name
+                st.session_state.admin_active = False
+                st.session_state.should_rerun_app = True
+                st.rerun()
+
+            if r_col6.button("🗑️", key=f"del_btn_{i}", help=f"'{f.name}' 삭제") and f.exists():
                 f.unlink()
                 st.toast(f"파일 삭제됨: {f.name}")
                 if auto_sync:
@@ -362,6 +429,9 @@ with st.sidebar:
 # --- 6. 다이얼로그 활성화 제어 ---
 if st.session_state.get("admin_active", False):
     show_admin_dialog(db_manager)
+
+if st.session_state.get("dialog_chunks_file_to_show"):
+    show_chunks_viewer_dialog(st.session_state.dialog_chunks_file_to_show, db_manager)
 
 
 # --- UI 스트리밍 핸들러 ---
