@@ -1,4 +1,4 @@
-﻿import logging
+import logging
 
 import torch
 from sentence_transformers import SentenceTransformer
@@ -34,9 +34,7 @@ class BGEEmbedder:
 
         # 2. 모델 로드 및 장치 할당
         self.model = SentenceTransformer(
-            model_name,
-            cache_folder=str(MODELS_DIR),
-            local_files_only=not settings.ALLOW_EXTERNAL_API
+            model_name, cache_folder=str(MODELS_DIR), local_files_only=not settings.ALLOW_EXTERNAL_API
         )
         self.model.to(self.device)
         print(f"Model loaded on: {self.device}")

@@ -76,7 +76,7 @@ class RAGPipeline:
             return docs
 
     def _do_reranking(
-            self, query: str, docs: list[Document], final_k: int, session: Any
+        self, query: str, docs: list[Document], final_k: int, session: Any
     ) -> tuple[list[Document], list[float]]:
         with session.trace_step("reranking") as step:
             if docs:

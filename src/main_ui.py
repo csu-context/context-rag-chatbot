@@ -5,11 +5,7 @@ import streamlit as st
 # ==============================================================================
 # 1. 페이지 및 레이아웃 설정
 # ==============================================================================
-st.set_page_config(
-    page_title="기업 매뉴얼 챗봇",
-    page_icon="🤖",
-    layout="wide"
-)
+st.set_page_config(page_title="기업 매뉴얼 챗봇", page_icon="🤖", layout="wide")
 
 # ==============================================================================
 # 2. 전역 세션 상태(Session State) 초기화
@@ -25,28 +21,16 @@ with st.sidebar:
 
     # 3-1. 대화형 인터페이스에 사용될 LLM(Large Language Model) 선택
     st.subheader("모델 설정")
-    selected_model = st.selectbox(
-        "사용할 LLM 모델 선택",
-        ["claude-3-5-sonnet-20240620", "gemma2", "phi3"],
-        index=0
-    )
+    selected_model = st.selectbox("사용할 LLM 모델 선택", ["claude-3-5-sonnet-20240620", "gemma2", "phi3"], index=0)
 
     # 3-2. RAG 검색기(Retriever) 관련 하이퍼파라미터 설정
     st.subheader("검색 설정")
-    k_value = st.slider(
-        "검색할 문서 조각 개수 (K)",
-        min_value=1,
-        max_value=10,
-        value=4,
-        step=1
-    )
+    k_value = st.slider("검색할 문서 조각 개수 (K)", min_value=1, max_value=10, value=4, step=1)
 
     # 3-3. 신규 지식 베이스(문서) 업로드 파이프라인
     st.subheader("문서 관리")
     uploaded_files = st.file_uploader(
-        "매뉴얼 파일 업로드 (PDF, DOCX)",
-        type=["pdf", "docx"],
-        accept_multiple_files=True
+        "매뉴얼 파일 업로드 (PDF, DOCX)", type=["pdf", "docx"], accept_multiple_files=True
     )
 
     if uploaded_files:
@@ -92,8 +76,7 @@ if prompt := st.chat_input("궁금한 점을 입력해 주세요."):
 
         # RAG 연동 전 UI 테스트용 Mock 응답 데이터
         response = (
-            f"'{prompt}'에 대한 분석 결과입니다. (현재 백엔드 연동 대기 중)\n\n"
-            "**참조 출처:** [운영매뉴얼.pdf, 12p]"
+            f"'{prompt}'에 대한 분석 결과입니다. (현재 백엔드 연동 대기 중)\n\n**참조 출처:** [운영매뉴얼.pdf, 12p]"
         )
         st.markdown(response)
 

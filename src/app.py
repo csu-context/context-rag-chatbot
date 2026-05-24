@@ -79,9 +79,7 @@ def show_admin_dialog():
     with col1:
         st.subheader("신규 문서 업로드")
         uploaded_files = st.file_uploader(
-            "파일 선택 (PDF, MD)",
-            accept_multiple_files=True,
-            type=["pdf", "md", "markdown"]
+            "파일 선택 (PDF, MD)", accept_multiple_files=True, type=["pdf", "md", "markdown"]
         )
         # 중첩된 if문을 and 연산자로 결합하여 복잡도를 낮춥니다.
         if st.button("업로드 실행", key="admin_upload_btn") and uploaded_files:
@@ -115,6 +113,7 @@ def show_admin_dialog():
     if st.button("관리 시스템 종료"):
         st.session_state.admin_active = False
         st.rerun()
+
 
 # ==============================================================================
 # RAG 파이프라인 초기화
@@ -176,7 +175,7 @@ with st.sidebar:
     # 리트리버 가중치 동적 업데이트
     # noinspection PyBroadException
     try:
-        if hasattr(global_retriever, 'weights'):
+        if hasattr(global_retriever, "weights"):
             global_retriever.weights = [bm25_weight, vector_weight]
     except Exception:
         pass
@@ -250,13 +249,15 @@ if st.session_state.is_generating:
     with st.chat_message("assistant"):
         ui_handler = StreamUIHandler()
         try:
-            for pipe_step in rag_chain.stream({
-                "question": st.session_state.current_prompt,
-                "k": k_value,
-                "final_k": final_k_value,
-                "bm25_weight": bm25_weight,
-                "vector_weight": vector_weight
-            }):
+            for pipe_step in rag_chain.stream(
+                {
+                    "question": st.session_state.current_prompt,
+                    "k": k_value,
+                    "final_k": final_k_value,
+                    "bm25_weight": bm25_weight,
+                    "vector_weight": vector_weight,
+                }
+            ):
                 ui_handler.process_step(pipe_step)
 
             # 생성 완료 후 컨텍스트 저장

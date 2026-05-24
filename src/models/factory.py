@@ -62,10 +62,7 @@ class LLMFactory:
                 base_url = getattr(settings, "OLLAMA_BASE_URL", "http://localhost:11434")
                 return OllamaModel(model_name="llama3.2:1b", base_url=base_url, temperature=temp_)
             else:
-                logger.warning(
-                    f"지원하지 않는 모델 타입 '{type_}'입니다. "
-                    f"기본 설정(anthropic)으로 Fallback 합니다."
-                )
+                logger.warning(f"지원하지 않는 모델 타입 '{type_}'입니다. 기본 설정(anthropic)으로 Fallback 합니다.")
                 api_key = getattr(settings, "ANTHROPIC_API_KEY", None)
                 fallback_name = getattr(LLMDefaults, "CLAUDE_DEFAULT", "claude-3-5-sonnet-20240620")
                 return AnthropicModel(model_name=fallback_name, api_key=api_key, temperature=temp_)

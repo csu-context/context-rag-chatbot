@@ -104,11 +104,7 @@ class OllamaModel(BaseLLM):
     """
 
     def __init__(
-            self,
-            model_name: str | None = None,
-            base_url: str | None = None,
-            temperature: float = 0.1,
-            **kwargs: Any
+        self, model_name: str | None = None, base_url: str | None = None, temperature: float = 0.1, **kwargs: Any
     ):
         """
         Ollama 모델 초기화 및 헬스 체크 수행
@@ -139,7 +135,7 @@ class OllamaModel(BaseLLM):
             num_ctx=num_ctx,
             num_predict=num_predict,
             repeat_penalty=repeat_penalty,
-            **kwargs
+            **kwargs,
         )
 
         if not self.check_health():
