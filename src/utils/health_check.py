@@ -112,45 +112,122 @@ def check_database_status():
 
         if count == 0:
             logger.warning("  DB가 비어 있습니다. 전처리가 필요합니다.")
-            return
+            return {}
 
-        # TODO: 향후 데이터 증가 시 페이징(limit, offset) 처리 필요
-        all_data = db_manager.collection.get(include=["metadatas"])
-        metadatas = all_data["metadatas"]
-
-        db_file_map = {}
-        for meta in metadatas:
-            src_name = meta.get(MetadataFields.SRC_NAME, "UNKNOWN")
-            src_id = meta.get(MetadataFields.SOURCE_ID, "UNKNOWN")
-            if src_name not in db_file_map:
-                db_file_map[src_name] = {"source_id": src_id, "count": 0}
-            db_file_map[src_name]["count"] += 1
-
-        logger.info("[정합성 비교] 로컬 파일 vs 벡터 DB")
+        # [정합성 분석] 로컬 파일 vs 벡터 DB vs 물리 데이터
+        logger.info("[정합성 분석] 로컬 파일 vs 벡터 DB")
 
         raw_files = []
         for ext in [".pdf", ".md", ".markdown"]:
             raw_files.extend(list(RAW_DATA_DIR.glob(f"**/*{ext}")))
 
-        local_files_info = {f.name: generate_file_hash(f, parser_type=settings.PARSER_TYPE) for f in raw_files}
-        all_filenames = set(local_files_info.keys()) | set(db_file_map.keys())
+        local_files_info = {}
+        for f in raw_files:
+            rel_path = str(f.relative_to(RAW_DATA_DIR))
+            local_files_info[rel_path] = {
+                "name": f.name,
+                "hash": generate_file_hash(f, parser_type=settings.PARSER_TYPE),
+                "path": f,
+            }
 
-        for fname in sorted(all_filenames):
-            local_id = local_files_info.get(fname)
-            db_info = db_file_map.get(fname)
+        # 1. DB에서 모든 메타데이터 가져오기 (고도화된 분석용)
+        # TODO: 데이터가 수만 건 이상일 경우 페이징 처리 필요
+        all_db_data = db_manager.collection.get(include=["metadatas"])
+        db_metas = all_db_data["metadatas"]
 
-            if local_id and db_info:
-                if local_id == db_info["source_id"]:
-                    logger.info(f"  [MATCH] {fname:30} | 일치 (청크: {db_info['count']:3d})")
+        # 상대 경로별 그룹화
+        db_rel_path_map = {}
+        for meta in db_metas:
+            rel_path = meta.get(MetadataFields.RELATIVE_PATH)
+            # 하위 호환성: relative_path가 없으면 src_name 활용
+            if not rel_path:
+                rel_path = meta.get(MetadataFields.SRC_NAME, "UNKNOWN")
+
+            if rel_path not in db_rel_path_map:
+                db_rel_path_map[rel_path] = []
+            db_rel_path_map[rel_path].append(meta)
+
+        anomalies = {
+            "ghost_chunks": [],  # 로컬에 없는데 DB에 있음
+            "mismatched_hash": [],  # 로컬과 DB의 해시가 다름
+            "duplicate_parsers": [],  # 동일 파일에 여러 파서 타입이 공존
+            "missing_in_db": [],  # 로컬에는 있는데 DB에 없음
+        }
+
+        all_rel_paths = set(local_files_info.keys()) | set(db_rel_path_map.keys())
+
+        for rel_path in sorted(all_rel_paths):
+            local_info = local_files_info.get(rel_path)
+            db_chunks = db_rel_path_map.get(rel_path, [])
+
+            if local_info and db_chunks:
+                # 1. 파서/해시 일치 여부 확인
+                parser_types = {m.get(MetadataFields.PARSER_TYPE, "manual") for m in db_chunks}
+                source_ids = {m.get(MetadataFields.SOURCE_ID) for m in db_chunks}
+
+                if len(parser_types) > 1:
+                    logger.error(f"  [DUP_PARSER] {rel_path:30} | 여러 파서 공존: {parser_types}")
+                    anomalies["duplicate_parsers"].append(rel_path)
+                
+                # 현재 설정된 파서의 해시와 일치하는지 확인
+                current_sid = local_info["hash"]
+                if current_sid not in source_ids:
+                    logger.error(f"  [MISMATCH] {rel_path:30} | 해시 불일치 (Update 필요)")
+                    anomalies["mismatched_hash"].append(rel_path)
                 else:
-                    logger.error(f"  [MISMATCH] {fname:30} | 내용 변경됨 (Update 필요)")
-            elif local_id:
-                logger.warning(f"  [MISSING_IN_DB] {fname:30} | DB에 없음 (Ingest 필요)")
-            else:
-                logger.warning(f"  [DELETED_LOCALLY] {fname:30} | 파일 삭제됨 (DB 정리 필요)")
+                    logger.info(f"  [MATCH] {rel_path:30} | 일치 (청크: {len(db_chunks):3d})")
 
+            elif local_info:
+                logger.warning(f"  [MISSING] {rel_path:30} | DB에 없음 (Ingest 필요)")
+                anomalies["missing_in_db"].append(rel_path)
+            else:
+                logger.warning(f"  [GHOST] {rel_path:30} | 파일 삭제됨 (DB 정리 필요)")
+                anomalies["ghost_chunks"].append(rel_path)
+
+        return anomalies
     except Exception as e:
         logger.error(f"  DB 정합성 점검 중 오류 발생: {e}")
+        return {}
+
+
+def repair_integrity(anomalies: dict):
+    """
+    탐지된 정합성 오류를 복구합니다.
+    - ghost_chunks: DB에서 삭제
+    - duplicate_parsers: 현재 설정 이외의 파서 데이터 삭제
+    """
+    if not anomalies:
+        return
+
+    from src.pipeline import PipelineOrchestrator
+    orchestrator = PipelineOrchestrator()
+    pipeline = orchestrator.ingestion_pipeline
+
+    # 1. 유령 청크 제거
+    ghosts = anomalies.get("ghost_chunks", [])
+    if ghosts:
+        logger.info(f"유령 청크 {len(ghosts)}개 정리 중...")
+        pipeline.cleanup_db(source_ids_to_delete=[], relative_paths_to_delete=ghosts)
+
+    # 2. 중복 파서 데이터 정리 (현재 설정된 파서가 아닌 것들 삭제)
+    duplicates = anomalies.get("duplicate_parsers", [])
+    if duplicates:
+        logger.info(f"중복 파서 데이터 {len(duplicates)}개 정리 중...")
+        for rel_path in duplicates:
+            db_data = pipeline.db_manager.collection.get(
+                where={MetadataFields.RELATIVE_PATH: rel_path},
+                include=["metadatas"]
+            )
+            
+            sids_to_delete = []
+            for meta in db_data["metadatas"]:
+                if meta.get(MetadataFields.PARSER_TYPE) != settings.PARSER_TYPE:
+                    sids_to_delete.append(meta.get(MetadataFields.SOURCE_ID))
+            
+            if sids_to_delete:
+                pipeline.cleanup_db(source_ids_to_delete=list(set(sids_to_delete)))
+
+    logger.info("정합성 복구 작업이 완료되었습니다.")
 
 
 def run_full_diagnostics(silent: bool = False, check_model: bool = True) -> tuple[bool, dict]:
@@ -176,19 +253,23 @@ def run_full_diagnostics(silent: bool = False, check_model: bool = True) -> tupl
     if check_model:
         model_ok = check_model_loading()
 
-    db_report = {"connected": False, "count": 0}
+    db_report = {"connected": False, "count": 0, "anomalies": {}}
     try:
         from src.vector_db.chroma_manager import ChromaDBManager
 
         db_manager = ChromaDBManager(collection_name="rag_collection")
         db_report["count"] = db_manager.get_count()
         db_report["connected"] = True
-        if not silent:
-            check_database_status()
-    except Exception:
+        
+        # 정합성 상세 리포트 생성
+        db_report["anomalies"] = check_database_status()
+    except Exception as e:
+        logger.error(f"진단 중 오류 발생: {e}")
         pass
 
-    is_healthy = env_ok and model_ok and db_report["connected"]
+    # 건강 상태 정의: 환경 변수 OK + DB 연결 OK + 중대한 정합성 오류(유령 청크 등) 없음
+    has_critical_anomaly = len(db_report["anomalies"].get("ghost_chunks", [])) > 0
+    is_healthy = env_ok and model_ok and db_report["connected"] and not has_critical_anomaly
 
     if silent:
         logger.setLevel(current_level)

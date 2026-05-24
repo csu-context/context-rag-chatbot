@@ -59,6 +59,8 @@ class MarkdownParserStrategy(ParserStrategy):
         base_metadata = {
             MetadataFields.SOURCE_ID: generate_file_hash(file_path, parser_type),
             MetadataFields.SRC_NAME: file_path.name,
+            MetadataFields.RELATIVE_PATH: str(file_path.relative_to(RAW_DATA_DIR)),
+            MetadataFields.PARSER_TYPE: parser_type,
             MetadataFields.DOC_TYPE: file_path.suffix.lower().replace(".", ""),
             MetadataFields.PG_NUM: 1,
             MetadataFields.CATEGORY: file_path.parent.name if file_path.parent.name != "raw" else "일반",
@@ -106,11 +108,12 @@ class DoclingPDFParserStrategy(ParserStrategy):
                     "metadata": {
                         MetadataFields.SOURCE_ID: source_id,
                         MetadataFields.SRC_NAME: file_path.name,
+                        MetadataFields.RELATIVE_PATH: str(file_path.relative_to(RAW_DATA_DIR)),
+                        MetadataFields.PARSER_TYPE: "docling",
                         MetadataFields.PG_NUM: 1,
                         MetadataFields.DOC_TYPE: "pdf",
                         MetadataFields.CATEGORY: file_path.parent.name,
                         # Docling 전용 메타데이터: 표 감지 정보
-                        "parser": "docling",
                         "table_count": parsed["table_count"],
                         "page_count": parsed["page_count"],
                         "has_table": parsed["table_count"] > 0,
@@ -240,22 +243,32 @@ class IngestionPipeline:
 
         return saved_paths
 
-    def cleanup_db(self, source_ids_to_delete: list[str]):
+    def cleanup_db(self, source_ids_to_delete: list[str], relative_paths_to_delete: list[str] | None = None):
         """
         DB, 캐시 및 가공된 JSON 파일에서 삭제된 데이터를 제거합니다.
         (BM25Manager는 processed_dir의 모든 json을 읽으므로 물리적 파일 삭제가 곧 정합성임)
         """
-        if not source_ids_to_delete:
+        if not source_ids_to_delete and not relative_paths_to_delete:
             return
 
-        logger.info(f"데이터 정합성 검증: {len(source_ids_to_delete)}개 소스 ID에 대한 클린업을 수행합니다.")
+        logger.info("데이터 정합성 검증 및 클린업을 수행합니다.")
 
-        # 1. 벡터 DB 데이터 삭제
-        self.db_manager.delete_documents(where={"source_id": {"$in": source_ids_to_delete}})
-        logger.info("   - ChromaDB 벡터 데이터 삭제 완료")
+        # 1. 상대 경로 기반 삭제 (원자적 정리 강화)
+        if relative_paths_to_delete:
+            for rel_path in relative_paths_to_delete:
+                logger.info(f"   - 상대 경로 기준 삭제: {rel_path}")
+                self.db_manager.delete_documents(where={MetadataFields.RELATIVE_PATH: rel_path})
 
-        # 2. 물리적 캐시 및 JSON 파일 삭제 (강화된 클린업)
+        # 2. 벡터 DB 데이터 삭제 (Source ID 기반 - 하위 호환성)
+        if source_ids_to_delete:
+            self.db_manager.delete_documents(where={MetadataFields.SOURCE_ID: {"$in": source_ids_to_delete}})
+            logger.info(f"   - ChromaDB {len(source_ids_to_delete)}개 Source ID 삭제 완료")
+
+        # 3. 물리적 캐시 및 JSON 파일 삭제
+        # relative_paths_to_delete가 있으면 해당 경로를 가진 모든 JSON 파일을 찾아 삭제
         deleted_count = 0
+
+        # a. Source ID 기반 삭제
         for sid in source_ids_to_delete:
             # 파싱 캐시 삭제
             cache_file = CACHE_DIR / f"{sid}_parsed.pkl"
@@ -267,6 +280,27 @@ class IngestionPipeline:
             if json_file.exists():
                 json_file.unlink()
                 deleted_count += 1
+
+        # b. 상대 경로 기반 물리 파일 삭제 (파서 변경 등 중복 방지)
+        if relative_paths_to_delete:
+            for json_file in list(self.processed_dir.glob("*.json")):
+                if json_file.name == "manifest.json":
+                    continue
+                try:
+                    with open(json_file, encoding="utf-8") as f:
+                        data = json.load(f)
+                        if data and isinstance(data, list) and len(data) > 0:
+                            meta = data[0].get("metadata", {})
+                            if meta.get(MetadataFields.RELATIVE_PATH) in relative_paths_to_delete:
+                                sid = json_file.stem
+                                cache_file = CACHE_DIR / f"{sid}_parsed.pkl"
+                                if cache_file.exists():
+                                    cache_file.unlink()
+                                if json_file.exists():
+                                    json_file.unlink()
+                                    deleted_count += 1
+                except Exception as e:
+                    logger.warning(f"파일 스캔 중 오류 ({json_file.name}): {e}")
 
         if deleted_count > 0:
             logger.info(f"   - 물리적 데이터 파일 {deleted_count}개 삭제 완료")
@@ -372,16 +406,22 @@ class PipelineOrchestrator:
 
         return files_to_process, source_ids_to_delete, new_manifest
 
-    def _process_changes(self, files_to_process: list[Path], source_ids_to_delete: list[str], session: Any):
+    def _process_changes(
+        self,
+        files_to_process: list[Path],
+        source_ids_to_delete: list[str],
+        session: Any,
+        relative_paths_to_delete: list[str] | None = None,
+    ):
         """도출된 변경 사항(DB 삭제, 파싱, 업서트, 인덱스 갱신)을 순차적으로 수행합니다."""
-        if files_to_process or source_ids_to_delete:
+        if files_to_process or source_ids_to_delete or relative_paths_to_delete:
             with session.trace_step("cache_flush"):
                 logger.info("데이터 변경이 감지되어 시맨틱 캐시를 초기화합니다.")
                 self.cache.flush()
 
-        if source_ids_to_delete:
+        if source_ids_to_delete or relative_paths_to_delete:
             with session.trace_step("db_cleanup"):
-                self.ingestion_pipeline.cleanup_db(source_ids_to_delete)
+                self.ingestion_pipeline.cleanup_db(source_ids_to_delete, relative_paths_to_delete)
 
         if files_to_process:
             with session.trace_step("parse_and_chunk") as step:
@@ -396,7 +436,7 @@ class PipelineOrchestrator:
                 with session.trace_step("db_upsert"):
                     self.ingestion_pipeline.upsert_to_db(processed_data)
 
-        if files_to_process or source_ids_to_delete:
+        if files_to_process or source_ids_to_delete or relative_paths_to_delete:
             with session.trace_step("bm25_update") as step:
                 try:
                     from src.vector_db.bm25_manager import BM25Manager
@@ -406,6 +446,36 @@ class PipelineOrchestrator:
                 except Exception as e:
                     step["status"] = f"failed: {e}"
 
+    def process_single_file(self, file_path: Path, force: bool = False) -> bool:
+        """특정 단일 파일에 대해 즉시 색인 업데이트를 수행합니다. (Atomic Update)"""
+        if not file_path.exists():
+            logger.error(f"파일을 찾을 수 없습니다: {file_path}")
+            return False
+
+        relative_path = str(file_path.relative_to(RAW_DATA_DIR))
+        logger.info(f"단일 파일 개별 동기화 시작: {relative_path}")
+
+        with self.tracing_logger.start_session(type="single_file_sync", file=relative_path) as session:
+            # 1. 기존 데이터 삭제 대상 식별 (동일 상대 경로의 모든 데이터)
+            # Delete-before-Insert 원칙에 따라 이전 파서 타입 데이터까지 포함하여 삭제
+            relative_paths_to_delete = [relative_path]
+
+            # 2. 변경 사항 처리 실행
+            self._process_changes(
+                files_to_process=[file_path],
+                source_ids_to_delete=[],
+                session=session,
+                relative_paths_to_delete=relative_paths_to_delete,
+            )
+
+            # 3. 매니페스트 업데이트
+            manifest = self._load_manifest()
+            manifest[relative_path] = generate_file_hash(file_path, self.parser_type)
+            self._save_manifest(manifest)
+
+        logger.info(f"단일 파일 개별 동기화 완료: {relative_path}")
+        return True
+
     def run_ingestion(self, force: bool = False):
         """전체 데이터 구축 파이프라인 실행"""
         logger.info(f"데이터 구축 파이프라인을 시작합니다. (전략: {self.parser_type}, 강제 재색인: {force})")
@@ -414,6 +484,7 @@ class PipelineOrchestrator:
             with session.trace_step("scan_and_check_updates") as step:
                 all_files = self.ingestion_pipeline.scan_files()
                 old_manifest = self._load_manifest()
+                relative_paths_to_delete = []
 
                 if not all_files and not old_manifest:
                     logger.warning("처리할 파일이 없고 이전 기록도 없습니다.")
@@ -450,6 +521,11 @@ class PipelineOrchestrator:
                     files_to_process, source_ids_to_delete, new_manifest = self._calculate_delta(
                         all_files, old_manifest
                     )
+                    # 파서 변경 대응: 업데이트 대상 파일들은 상대 경로 기준으로도 삭제를 병행 (Delete-before-Insert 원자성 확보)
+                    files_to_process_relative = [str(f.relative_to(RAW_DATA_DIR)) for f in files_to_process]
+                    relative_paths_to_delete = files_to_process_relative + [
+                        p for p in old_manifest if p not in new_manifest
+                    ]
 
                 step["total_files"] = len(all_files)
                 step["files_to_process"] = len(files_to_process)
@@ -468,7 +544,9 @@ class PipelineOrchestrator:
                         self._save_manifest(new_manifest)
                     return
 
-            self._process_changes(files_to_process, source_ids_to_delete, session)
+            self._process_changes(
+                files_to_process, source_ids_to_delete, session, relative_paths_to_delete=relative_paths_to_delete
+            )
 
             with session.trace_step("update_manifest"):
                 self._save_manifest(new_manifest)

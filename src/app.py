@@ -11,6 +11,7 @@ from src.common.constants import MetadataFields
 from src.core.chains import get_rag_chain
 from src.models.factory import LLMFactory
 from src.pipeline import PipelineOrchestrator
+from src.utils.health_check import repair_integrity, run_full_diagnostics
 from src.utils.logger import PerformanceLogger, setup_global_logging
 from src.utils.monitoring import get_system_stats
 from src.utils.paths import RAW_DATA_DIR, ensure_directories
@@ -177,9 +178,9 @@ def show_admin_dialog(db_manager):  # noqa: C901
     st.divider()
 
     # 하단 영역: 문서 목록 및 행 단위 삭제
-    st.subheader("등록된 문서 목록 및 삭제")
+    st.subheader("등록된 문서 목록 및 관리")
     if not auto_sync:
-        st.caption("주의: 자동 동기화가 꺼져 있습니다. 삭제 후 반드시 'Sync'를 실행해야 DB에서 제거됩니다.")
+        st.caption("주의: 자동 동기화가 꺼져 있습니다. 변경 후 반드시 'Sync'를 실행해야 DB에 반영됩니다.")
 
     def format_size(size_bytes):
         if size_bytes == 0:
@@ -196,25 +197,55 @@ def show_admin_dialog(db_manager):  # noqa: C901
     if not current_files:
         st.info("현재 등록된 문서가 없습니다.")
     else:
-        h_col1, h_col2, h_col3, h_col4, h_col5 = st.columns([0.2, 3.0, 0.8, 0.6, 0.6])
+        # 컬럼 레이아웃 조정 (파서 타입 및 개별 동기화 추가)
+        h_col1, h_col2, h_col3, h_col4, h_col5, h_col6, h_col7 = st.columns([0.2, 2.5, 0.8, 0.8, 0.6, 0.6, 0.6])
         h_col1.write("**No**")
         h_col2.write("**파일명**")
         h_col3.write("**크기**")
-        h_col4.write("**청크**")
-        h_col5.write("**삭제**")
+        h_col4.write("**파서**")
+        h_col5.write("**청크**")
+        h_col6.write("**동기화**")
+        h_col7.write("**삭제**")
         st.markdown(
             "<hr style='margin: 0px 0px 10px 0px; border: 0.5px solid rgba(151,166,195,0.2);'>",
             unsafe_allow_html=True,
         )
 
+        # ChromaDB에서 실제 메타데이터를 가져와 파서 타입 확인
+        all_metas = db_manager.collection.get(include=["metadatas"])["metadatas"]
+        file_parser_map = {}
+        for m in all_metas:
+            fname = m.get(MetadataFields.SRC_NAME)
+            ptype = m.get(MetadataFields.PARSER_TYPE, "manual")
+            if fname not in file_parser_map:
+                file_parser_map[fname] = ptype
+
         for i, f in enumerate(current_files):
-            r_col1, r_col2, r_col3, r_col4, r_col5 = st.columns([0.2, 3.0, 0.8, 0.6, 0.6])
+            r_col1, r_col2, r_col3, r_col4, r_col5, r_col6, r_col7 = st.columns([0.2, 2.5, 0.8, 0.8, 0.6, 0.6, 0.6])
             r_col1.write(f"{i + 1}")
             r_col2.text(f.name)
             r_col3.write(format_size(f.stat().st_size))
+            
+            # 파서 타입 표시
+            parser_type = file_parser_map.get(f.name, "-")
+            parser_color = "blue" if parser_type == "docling" else "green" if parser_type == "manual" else "gray"
+            r_col4.markdown(f":{parser_color}[{parser_type}]")
+            
             chunk_count = db_manager.get_source_count(f.name)
-            r_col4.write(f"{chunk_count}")
-            if r_col5.button("🗑️", key=f"del_btn_{i}", help=f"'{f.name}' 삭제") and f.exists():
+            r_col5.write(f"{chunk_count}")
+            
+            # 개별 동기화 버튼
+            if r_col6.button("🔄", key=f"sync_btn_{i}", help=f"'{f.name}' 개별 동기화"):
+                orchestrator = PipelineOrchestrator()
+                with st.spinner(f"{f.name} 동기화 중..."):
+                    if orchestrator.process_single_file(f):
+                        st.toast(f"동기화 완료: {f.name}")
+                        initialize_rag_system.clear()
+                        time.sleep(0.5)
+                        st.rerun()
+
+            # 삭제 버튼
+            if r_col7.button("🗑️", key=f"del_btn_{i}", help=f"'{f.name}' 삭제") and f.exists():
                 f.unlink()
                 st.toast(f"파일 삭제됨: {f.name}")
                 if auto_sync:
@@ -222,6 +253,44 @@ def show_admin_dialog(db_manager):  # noqa: C901
                 else:
                     time.sleep(0.5)
                     st.session_state.should_rerun_app = True  # Set flag instead of direct rerun
+
+    st.divider()
+
+    # --- 자가 진단 및 정합성 리포트 영역 ---
+    st.subheader("데이터 정합성 자가 진단")
+    if st.button("진단 리포트 생성", key="health_check_btn", use_container_width=True):
+        with st.spinner("시스템 진단 중..."):
+            is_healthy, report = run_full_diagnostics(silent=True, check_model=False)
+            st.session_state.health_report = report
+            
+    if "health_report" in st.session_state:
+        report = st.session_state.health_report
+        anomalies = report["db"].get("anomalies", {})
+        
+        ghosts = anomalies.get("ghost_chunks", [])
+        mismatches = anomalies.get("mismatched_hash", [])
+        duplicates = anomalies.get("duplicate_parsers", [])
+        
+        has_issue = ghosts or mismatches or duplicates
+        
+        if not has_issue:
+            st.success("✅ 모든 데이터가 정합성을 유지하고 있습니다.")
+        else:
+            if ghosts:
+                st.error(f"⚠️ 유령 청크 감지: {len(ghosts)}개 파일의 데이터가 DB에 남아있습니다.")
+            if mismatches:
+                st.warning(f"⚠️ 업데이트 필요: {len(mismatches)}개 파일의 내용이 DB와 다릅니다.")
+            if duplicates:
+                st.error(f"⚠️ 중복 적재 감지: {len(duplicates)}개 파일에 여러 파서 데이터가 공존합니다.")
+                
+            if st.button("정합성 자동 복구 (Repair)", type="primary", use_container_width=True):
+                with st.spinner("복구 작업 진행 중..."):
+                    repair_integrity(anomalies)
+                    st.success("복구가 완료되었습니다. 상태를 재확인하세요.")
+                    del st.session_state.health_report
+                    initialize_rag_system.clear()
+                    time.sleep(0.5)
+                    st.rerun()
 
     st.divider()
     if st.button("관리 시스템 종료 (닫기)", use_container_width=True):
