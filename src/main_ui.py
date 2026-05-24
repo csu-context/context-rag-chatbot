@@ -1,23 +1,29 @@
 import time
-import streamlit as st
-from pathlib import Path
 
-# --- 1. 페이지 설정 ---
+import streamlit as st
+
+# ==============================================================================
+# 1. 페이지 및 레이아웃 설정
+# ==============================================================================
 st.set_page_config(
     page_title="기업 매뉴얼 챗봇",
     page_icon="🤖",
-    layout="wide"  # 넓은 화면 레이아웃 사용
+    layout="wide"
 )
 
-# --- 2. 초기 세션 상태 설정 (대화 기록 유지용) ---
+# ==============================================================================
+# 2. 전역 세션 상태(Session State) 초기화
+# ==============================================================================
 if "messages" not in st.session_state:
-    st.session_state.messages = []  # 대화 히스토리를 저장할 리스트
+    st.session_state.messages = []  # 대화 히스토리 영속성을 위한 리스트 초기화
 
-# --- 3. 사이드바 (Sidebar) 구성 ---
+# ==============================================================================
+# 3. 사이드바(Sidebar) UI 컴포넌트 구성
+# ==============================================================================
 with st.sidebar:
     st.title("설정 및 관리")
 
-    # [모델 설정] 유라가 쓰는 모델들로 구성했어
+    # 3-1. 대화형 인터페이스에 사용될 LLM(Large Language Model) 선택
     st.subheader("모델 설정")
     selected_model = st.selectbox(
         "사용할 LLM 모델 선택",
@@ -25,7 +31,7 @@ with st.sidebar:
         index=0
     )
 
-    # [검색 설정]
+    # 3-2. RAG 검색기(Retriever) 관련 하이퍼파라미터 설정
     st.subheader("검색 설정")
     k_value = st.slider(
         "검색할 문서 조각 개수 (K)",
@@ -35,7 +41,7 @@ with st.sidebar:
         step=1
     )
 
-    # [문서 관리]
+    # 3-3. 신규 지식 베이스(문서) 업로드 파이프라인
     st.subheader("문서 관리")
     uploaded_files = st.file_uploader(
         "매뉴얼 파일 업로드 (PDF, DOCX)",
@@ -46,47 +52,50 @@ with st.sidebar:
     if uploaded_files:
         st.write(f"총 {len(uploaded_files)}개의 파일이 선택되었습니다.")
         if st.button("문서 DB화 시작"):
-            with st.spinner("문서를 분석하고 DB에 저장 중입니다..."):
-                time.sleep(2)
-                st.success("문서 DB화 완료!")
+            with st.spinner("문서를 파싱하고 벡터 DB에 적재 중입니다..."):
+                time.sleep(2)  # TODO: 실제 Ingestion 파이프라인 연동 필요
+                st.success("문서 DB 적재가 완료되었습니다.")
 
     st.markdown("---")
 
-    # [시스템 관리]
+    # 3-4. 시스템 상태 및 벡터 DB 초기화 제어
     st.subheader("시스템 관리")
-    if st.button("벡터 DB 초기화", help="저장된 모든 문서 데이터를 삭제합니다."):
-        st.warning("정말로 초기화하시겠습니까?")
-        st.session_state.messages = []  # 대화 기록 초기화
+    if st.button("벡터 DB 초기화", help="저장된 모든 임베딩 데이터를 영구 삭제합니다."):
+        st.warning("초기화 프로세스가 실행되었습니다.")
+        st.session_state.messages = []  # 컨텍스트 초기화 처리
 
-# --- 4. 메인 채팅창 (Main Chat) 구성 ---
+# ==============================================================================
+# 4. 메인 채팅 인터페이스 렌더링
+# ==============================================================================
 st.title("기업 매뉴얼 기반 지능형 챗봇")
 st.markdown(f"현재 모델: **{selected_model}** | 검색 개수(K): **{k_value}**")
 st.markdown("---")
 
-# 대화 히스토리 시각화
+# 누적된 대화 히스토리를 UI에 순차적으로 렌더링
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# --- 5. 사용자 입력 처리 및 대화 로직 ---
+# ==============================================================================
+# 5. 사용자 질의 입력 및 RAG 파이프라인 실행 로직
+# ==============================================================================
 if prompt := st.chat_input("궁금한 점을 입력해 주세요."):
-    # 5-1. 사용자 메시지 표시 및 저장
+    # 5-1. 사용자 질의 출력 및 세션 저장
     with st.chat_message("user"):
         st.markdown(prompt)
     st.session_state.messages.append({"role": "user", "content": prompt})
 
-    # 5-2. 챗봇 답변 생성
-    with st.chat_message("assistant"):
-        with st.spinner("생각 중..."):
-            time.sleep(1)  # 가짜 대기 시간
+    # 5-2. 시스템 응답 생성 및 스트리밍 시뮬레이션
+    # IDE 경고 해결: 중첩된 컨텍스트 매니저(with) 결합
+    with st.chat_message("assistant"), st.spinner("답변을 생성하는 중입니다..."):
+        time.sleep(1)  # TODO: 실제 RAG Chain invoke/stream 연동 시 제거
 
-            # RAG 연동 전 기본 응답
-            response = (
-                f"'{prompt}'에 대한 답변입니다. (추후 RAG 백엔드와 연동되어 "
-                "실제 매뉴얼 내용을 기반으로 답변합니다.)\n\n"
-                "**인용 출처:** [운영매뉴얼.pdf, 12p]"
-            )
-            st.markdown(response)
+        # RAG 연동 전 UI 테스트용 Mock 응답 데이터
+        response = (
+            f"'{prompt}'에 대한 분석 결과입니다. (현재 백엔드 연동 대기 중)\n\n"
+            "**참조 출처:** [운영매뉴얼.pdf, 12p]"
+        )
+        st.markdown(response)
 
-    # 5-3. 챗봇 답변 저장
+    # 5-3. 어시스턴트 응답 세션 누적 처리
     st.session_state.messages.append({"role": "assistant", "content": response})

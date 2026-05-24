@@ -59,7 +59,7 @@ def show_document_dialog(doc_source: str, doc_page: str, doc_score: float, doc_c
 
 @st.dialog("데이터 관리 시스템", width="large")
 def show_admin_dialog():
-    """지식 베이스(Raw Data) 관리 및 ChromaDB 동기화를 수행하는 관리자 인터페이스입니다."""
+    """지식 베이스(Raw Data) 관리 및 데이터베이스 동기화를 수행하는 관리자 인터페이스입니다."""
     st.markdown("지식 베이스(RAW_DATA) 관리 및 데이터베이스 동기화를 수행합니다.")
 
     auto_sync = st.checkbox("파일 업로드/삭제 후 자동 동기화 실행", value=True)
@@ -76,22 +76,23 @@ def show_admin_dialog():
 
     col1, col2 = st.columns([1, 1])
 
-    # 1. 파일 업로드 영역
     with col1:
         st.subheader("신규 문서 업로드")
-        uploaded_files = st.file_uploader("파일 선택 (PDF, MD)", accept_multiple_files=True, type=["pdf", "md", "markdown"])
-        if st.button("업로드 실행", key="admin_upload_btn"):
-            if uploaded_files:
-                for uploaded_file in uploaded_files:
-                    # 파이참의 타입 체킹 오작동 방지 (type ignore)
-                    file_path = RAW_DATA_DIR / uploaded_file.name  # type: ignore
-                    with open(file_path, "wb") as f:
-                        f.write(uploaded_file.getbuffer())  # type: ignore
-                if auto_sync:
-                    trigger_sync()
-                st.rerun()
+        uploaded_files = st.file_uploader(
+            "파일 선택 (PDF, MD)",
+            accept_multiple_files=True,
+            type=["pdf", "md", "markdown"]
+        )
+        # 중첩된 if문을 and 연산자로 결합하여 복잡도를 낮춥니다.
+        if st.button("업로드 실행", key="admin_upload_btn") and uploaded_files:
+            for uploaded_file in uploaded_files:
+                file_path = RAW_DATA_DIR / uploaded_file.name  # type: ignore
+                with open(file_path, "wb") as f:
+                    f.write(uploaded_file.getbuffer())  # type: ignore
+            if auto_sync:
+                trigger_sync()
+            st.rerun()
 
-    # 2. 수동 동기화 영역
     with col2:
         st.subheader("수동 동기화")
         if st.button("데이터 파이프라인 가동 (Sync)", key="dialog_sync_btn"):
@@ -100,7 +101,6 @@ def show_admin_dialog():
 
     st.divider()
 
-    # 3. 등록된 문서 관리 영역
     st.subheader("등록된 문서 목록")
     current_files = list(RAW_DATA_DIR.glob("*.*"))
     for i, f in enumerate(current_files):
@@ -115,7 +115,6 @@ def show_admin_dialog():
     if st.button("관리 시스템 종료"):
         st.session_state.admin_active = False
         st.rerun()
-
 
 # ==============================================================================
 # RAG 파이프라인 초기화
@@ -139,6 +138,7 @@ def initialize_rag_system():
 
     _rag_chain = get_rag_chain(_retriever)
     return _global_db_manager, _rag_chain, _retriever
+
 
 try:
     db_manager, rag_chain, global_retriever = initialize_rag_system()

@@ -3,10 +3,11 @@ import logging
 import os
 import threading
 import time
-from typing import Any, ClassVar, Optional
+from typing import Any, ClassVar
 
-from langchain_ollama import ChatOllama
+# noinspection PyPackageRequirements
 import requests
+from langchain_ollama import ChatOllama
 
 from src.models.base import BaseLLM, LLMResponse
 
@@ -38,6 +39,7 @@ class OllamaPullStatus:
     @classmethod
     def _run_pull(cls, model: "OllamaModel", status_info: dict) -> None:
         """백그라운드 모델 다운로드 작업을 수행하는 내부 메서드입니다."""
+        # noinspection PyBroadException
         try:
             if model.is_model_available():
                 with cls._lock:
@@ -101,8 +103,13 @@ class OllamaModel(BaseLLM):
     Ollama를 통해 로컬 환경에서 구동되는 sLLM(Small Large Language Model)을 제어하는 인스턴스 클래스입니다.
     """
 
-    def __init__(self, model_name: Optional[str] = None, base_url: Optional[str] = None, temperature: float = 0.1,
-                 **kwargs: Any):
+    def __init__(
+            self,
+            model_name: str | None = None,
+            base_url: str | None = None,
+            temperature: float = 0.1,
+            **kwargs: Any
+    ):
         """
         Ollama 모델 초기화 및 헬스 체크 수행
 
@@ -121,7 +128,6 @@ class OllamaModel(BaseLLM):
         if not self.base_url:
             raise ValueError("Ollama 서버 주소(base_url) 설정이 올바르지 않습니다.")
 
-        # 컨텍스트 길이 및 예측 토큰 설정 병합
         num_ctx = kwargs.pop("num_ctx", 2048)
         num_predict = kwargs.pop("num_predict", 512)
         repeat_penalty = kwargs.pop("repeat_penalty", 1.2)
@@ -136,7 +142,6 @@ class OllamaModel(BaseLLM):
             **kwargs
         )
 
-        # 초기화 시 헬스 체크 수행
         if not self.check_health():
             logger.warning(
                 f"Ollama 서비스 헬스체크 실패 ({self.base_url}). "
@@ -147,6 +152,7 @@ class OllamaModel(BaseLLM):
         """Ollama API 엔드포인트의 가용성을 확인합니다."""
         import urllib.request
 
+        # noinspection PyBroadException
         try:
             url = self.base_url.rstrip("/") + "/api/tags"
             with urllib.request.urlopen(url, timeout=2.0) as response:
@@ -159,6 +165,7 @@ class OllamaModel(BaseLLM):
         import json
         import urllib.request
 
+        # noinspection PyBroadException
         try:
             url = self.base_url.rstrip("/") + "/api/tags"
             with urllib.request.urlopen(url, timeout=2.0) as response:
@@ -202,6 +209,7 @@ class OllamaModel(BaseLLM):
     def invoke(self, prompt: str, **kwargs: Any) -> LLMResponse:
         """동기 방식으로 Ollama 모델을 호출하여 텍스트를 생성합니다."""
         start_time = time.time()
+        # noinspection PyBroadException
         try:
             response = self.llm.invoke(prompt, **kwargs)
             latency = time.time() - start_time
@@ -237,6 +245,7 @@ class OllamaModel(BaseLLM):
     async def ainvoke(self, prompt: str, **kwargs: Any) -> LLMResponse:
         """비동기 방식으로 Ollama 모델을 호출하여 텍스트를 생성합니다."""
         start_time = time.time()
+        # noinspection PyBroadException
         try:
             response = await self.llm.ainvoke(prompt, **kwargs)
             latency = time.time() - start_time
