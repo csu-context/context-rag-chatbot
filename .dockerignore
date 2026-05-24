@@ -1,0 +1,32 @@
+# Git
+**/.git
+**/.gitignore
+
+# Python
+**/__pycache__/
+**/*.py[cod]
+**/*.class
+**/.venv/
+**/env/
+**/venv/
+**/.pytest_cache/
+**/.ruff_cache/
+pip-log.txt
+
+# IDEs
+**/.idea/
+**/.vscode/
+
+# Project Data & Artifacts (빌드 컨텍스트에서 제외하여 build 속도 개선)
+data/
+vector_db/
+logs/
+.cache/
+.deploy_keys/
+.env*
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+.aider*

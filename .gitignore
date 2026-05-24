@@ -214,6 +214,8 @@ __marimo__/
 /logs/
 /data/raw/
 /data/processed/
+/data/eval/*
+!/data/eval/*.example
 
 # 벡터 데이터베이스 (ChromaDB 등 로컬 DB 파일)
 database/
@@ -228,3 +230,13 @@ chroma/
 
 # 맥OS 시스템 파일
 .DS_Store
+._*
+
+# Deployment Keys
+.deploy_keys/
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+.terraform.lock.hcl

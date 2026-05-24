@@ -59,6 +59,32 @@
 
 ---
 
+## Docker 환경에서 시작하기 (Docker Setup)
+
+팀원 간 라이브러리 버전 충돌을 방지하고, ChromaDB 서버를 안정적으로 운영하기 위해 Docker 환경 사용을 권장합니다.
+
+### 1. 필수 요구사항
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) 설치
+- (Windows/Linux GPU 사용 시) [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) 설치
+
+### 2. 실행 방법
+프로젝트 루트 디렉토리에서 아래 명령어를 입력하세요.
+```bash
+# 컨테이너 빌드 및 실행 (백그라운드)
+docker-compose up -d --build
+```
+
+### 3. 서비스 접속
+- **Streamlit UI:** `http://localhost:8501`
+- **ChromaDB 상태 확인:** `http://localhost:8000/api/v2/heartbeat` (숫자가 표시되면 정상)
+
+### 4. 주요 명령어
+- **로그 확인:** `docker-compose logs -f app`
+- **컨테이너 중지:** `docker-compose down`
+- **컨테이너 내 명령어 실행:** `docker-compose exec app bash`
+
+---
+
 ## 협업 규칙 (Ground Rules)
 
 1. **브랜치 전략:** 직접 `main`에 푸시하지 않습니다.
@@ -99,6 +125,32 @@
 *   개발이 완료되면 `develop` 브랜치를 대상으로 **Pull Request**를 생성합니다.
 *   **Issue 연동:** PR 설명란에 `Closes #이슈번호`를 기재하여 관련 이슈가 자동으로 닫히도록 합니다.
 *   최소 1명 이상의 팀원에게 **Approve(승인)**를 받은 후 `develop`에 병합(Merge)합니다.
+
+---
+
+## 코드 스타일 및 자동화 (Linting & Formatting)
+
+본 프로젝트는 일관된 코드 스타일 유지와 품질 관리를 위해 **Ruff**와 **Black**을 사용합니다. 모든 팀원은 커밋 전 아래 명령어를 통해 코드를 정돈해 주세요.
+
+### 1. 도구 설치
+`requirements.txt`를 통해 패키지를 설치하면 자동으로 포함됩니다.
+```bash
+pip install -r requirements.txt
+```
+
+### 2. 코드 검사 및 자동 수정 (Ruff)
+문법 오류, 미사용 임포트 등을 검사하고 가능한 경우 자동으로 수정합니다.
+```bash
+ruff check . --fix
+```
+
+### 3. 코드 포맷팅 (Black)
+코드의 공백, 줄바꿈 등 외형을 일관되게 교정합니다.
+```bash
+black .
+```
+
+> **참고:** GitHub Actions가 설정되어 있어, **Pull Request 생성 시 자동으로 린트 및 포맷팅 검사가 수행**됩니다. 검사를 통과하지 못하면 병합(Merge)이 불가능할 수 있으니 로컬에서 먼저 확인해 주세요.
 
 ---
 
