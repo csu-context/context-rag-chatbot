@@ -117,77 +117,94 @@ def check_database_status():
         # [정합성 분석] 로컬 파일 vs 벡터 DB vs 물리 데이터
         logger.info("[정합성 분석] 로컬 파일 vs 벡터 DB")
 
-        raw_files = []
-        for ext in [".pdf", ".md", ".markdown"]:
-            raw_files.extend(list(RAW_DATA_DIR.glob(f"**/*{ext}")))
+        local_files_info = _get_local_files_info()
+        db_rel_path_map = _get_db_rel_path_map(db_manager)
 
-        local_files_info = {}
-        for f in raw_files:
-            rel_path = str(f.relative_to(RAW_DATA_DIR))
-            local_files_info[rel_path] = {
-                "name": f.name,
-                "hash": generate_file_hash(f, parser_type=settings.PARSER_TYPE),
-                "path": f,
-            }
-
-        # 1. DB에서 모든 메타데이터 가져오기 (고도화된 분석용)
-        # TODO: 데이터가 수만 건 이상일 경우 페이징 처리 필요
-        all_db_data = db_manager.collection.get(include=["metadatas"])
-        db_metas = all_db_data["metadatas"]
-
-        # 상대 경로별 그룹화
-        db_rel_path_map = {}
-        for meta in db_metas:
-            rel_path = meta.get(MetadataFields.RELATIVE_PATH)
-            # 하위 호환성: relative_path가 없으면 src_name 활용
-            if not rel_path:
-                rel_path = meta.get(MetadataFields.SRC_NAME, "UNKNOWN")
-
-            if rel_path not in db_rel_path_map:
-                db_rel_path_map[rel_path] = []
-            db_rel_path_map[rel_path].append(meta)
-
-        anomalies = {
-            "ghost_chunks": [],  # 로컬에 없는데 DB에 있음
-            "mismatched_hash": [],  # 로컬과 DB의 해시가 다름
-            "duplicate_parsers": [],  # 동일 파일에 여러 파서 타입이 공존
-            "missing_in_db": [],  # 로컬에는 있는데 DB에 없음
-        }
-
-        all_rel_paths = set(local_files_info.keys()) | set(db_rel_path_map.keys())
-
-        for rel_path in sorted(all_rel_paths):
-            local_info = local_files_info.get(rel_path)
-            db_chunks = db_rel_path_map.get(rel_path, [])
-
-            if local_info and db_chunks:
-                # 1. 파서/해시 일치 여부 확인
-                parser_types = {m.get(MetadataFields.PARSER_TYPE, "manual") for m in db_chunks}
-                source_ids = {m.get(MetadataFields.SOURCE_ID) for m in db_chunks}
-
-                if len(parser_types) > 1:
-                    logger.error(f"  [DUP_PARSER] {rel_path:30} | 여러 파서 공존: {parser_types}")
-                    anomalies["duplicate_parsers"].append(rel_path)
-                
-                # 현재 설정된 파서의 해시와 일치하는지 확인
-                current_sid = local_info["hash"]
-                if current_sid not in source_ids:
-                    logger.error(f"  [MISMATCH] {rel_path:30} | 해시 불일치 (Update 필요)")
-                    anomalies["mismatched_hash"].append(rel_path)
-                else:
-                    logger.info(f"  [MATCH] {rel_path:30} | 일치 (청크: {len(db_chunks):3d})")
-
-            elif local_info:
-                logger.warning(f"  [MISSING] {rel_path:30} | DB에 없음 (Ingest 필요)")
-                anomalies["missing_in_db"].append(rel_path)
-            else:
-                logger.warning(f"  [GHOST] {rel_path:30} | 파일 삭제됨 (DB 정리 필요)")
-                anomalies["ghost_chunks"].append(rel_path)
-
-        return anomalies
+        return _analyze_anomalies(local_files_info, db_rel_path_map)
     except Exception as e:
         logger.error(f"  DB 정합성 점검 중 오류 발생: {e}")
         return {}
+
+
+def _get_local_files_info() -> dict[str, dict]:
+    """로컬 raw 데이터 파일들의 정보(상대 경로, 해시)를 추출"""
+    raw_files = []
+    for ext in [".pdf", ".md", ".markdown"]:
+        raw_files.extend(list(RAW_DATA_DIR.glob(f"**/*{ext}")))
+
+    local_files_info = {}
+    for f in raw_files:
+        rel_path = str(f.relative_to(RAW_DATA_DIR))
+        local_files_info[rel_path] = {
+            "name": f.name,
+            "hash": generate_file_hash(f, parser_type=settings.PARSER_TYPE),
+            "path": f,
+        }
+    return local_files_info
+
+
+def _get_db_rel_path_map(db_manager) -> dict[str, list]:
+    """DB의 메타데이터를 가져와 상대 경로별로 그룹화"""
+    # TODO: 데이터가 수만 건 이상일 경우 페이징 처리 필요
+    all_db_data = db_manager.collection.get(include=["metadatas"])
+    db_metas = all_db_data["metadatas"]
+
+    db_rel_path_map = {}
+    for meta in db_metas:
+        rel_path = meta.get(MetadataFields.RELATIVE_PATH)
+        # 하위 호환성: relative_path가 없으면 src_name 활용
+        if not rel_path:
+            rel_path = meta.get(MetadataFields.SRC_NAME, "UNKNOWN")
+
+        if rel_path not in db_rel_path_map:
+            db_rel_path_map[rel_path] = []
+        db_rel_path_map[rel_path].append(meta)
+    return db_rel_path_map
+
+
+def _analyze_anomalies(local_files_info: dict, db_rel_path_map: dict) -> dict:
+    """로컬 정보와 DB 정보를 비교하여 이상 징후 탐지"""
+    anomalies = {
+        "ghost_chunks": [],  # 로컬에 없는데 DB에 있음
+        "mismatched_hash": [],  # 로컬과 DB의 해시가 다름
+        "duplicate_parsers": [],  # 동일 파일에 여러 파서 타입이 공존
+        "missing_in_db": [],  # 로컬에는 있는데 DB에 없음
+    }
+
+    all_rel_paths = set(local_files_info.keys()) | set(db_rel_path_map.keys())
+
+    for rel_path in sorted(all_rel_paths):
+        local_info = local_files_info.get(rel_path)
+        db_chunks = db_rel_path_map.get(rel_path, [])
+
+        if local_info and db_chunks:
+            _check_local_db_mismatch(rel_path, local_info, db_chunks, anomalies)
+        elif local_info:
+            logger.warning(f"  [MISSING] {rel_path:30} | DB에 없음 (Ingest 필요)")
+            anomalies["missing_in_db"].append(rel_path)
+        else:
+            logger.warning(f"  [GHOST] {rel_path:30} | 파일 삭제됨 (DB 정리 필요)")
+            anomalies["ghost_chunks"].append(rel_path)
+
+    return anomalies
+
+
+def _check_local_db_mismatch(rel_path: str, local_info: dict, db_chunks: list, anomalies: dict):
+    """동일 파일에 대해 로컬과 DB의 메타데이터 일치 여부 세부 확인"""
+    parser_types = {m.get(MetadataFields.PARSER_TYPE, "manual") for m in db_chunks}
+    source_ids = {m.get(MetadataFields.SOURCE_ID) for m in db_chunks}
+
+    if len(parser_types) > 1:
+        logger.error(f"  [DUP_PARSER] {rel_path:30} | 여러 파서 공존: {parser_types}")
+        anomalies["duplicate_parsers"].append(rel_path)
+
+    # 현재 설정된 파서의 해시와 일치하는지 확인
+    current_sid = local_info["hash"]
+    if current_sid not in source_ids:
+        logger.error(f"  [MISMATCH] {rel_path:30} | 해시 불일치 (Update 필요)")
+        anomalies["mismatched_hash"].append(rel_path)
+    else:
+        logger.info(f"  [MATCH] {rel_path:30} | 일치 (청크: {len(db_chunks):3d})")
 
 
 def repair_integrity(anomalies: dict):
@@ -200,6 +217,7 @@ def repair_integrity(anomalies: dict):
         return
 
     from src.pipeline import PipelineOrchestrator
+
     orchestrator = PipelineOrchestrator()
     pipeline = orchestrator.ingestion_pipeline
 
@@ -215,15 +233,14 @@ def repair_integrity(anomalies: dict):
         logger.info(f"중복 파서 데이터 {len(duplicates)}개 정리 중...")
         for rel_path in duplicates:
             db_data = pipeline.db_manager.collection.get(
-                where={MetadataFields.RELATIVE_PATH: rel_path},
-                include=["metadatas"]
+                where={MetadataFields.RELATIVE_PATH: rel_path}, include=["metadatas"]
             )
-            
+
             sids_to_delete = []
             for meta in db_data["metadatas"]:
                 if meta.get(MetadataFields.PARSER_TYPE) != settings.PARSER_TYPE:
                     sids_to_delete.append(meta.get(MetadataFields.SOURCE_ID))
-            
+
             if sids_to_delete:
                 pipeline.cleanup_db(source_ids_to_delete=list(set(sids_to_delete)))
 
@@ -260,7 +277,7 @@ def run_full_diagnostics(silent: bool = False, check_model: bool = True) -> tupl
         db_manager = ChromaDBManager(collection_name="rag_collection")
         db_report["count"] = db_manager.get_count()
         db_report["connected"] = True
-        
+
         # 정합성 상세 리포트 생성
         db_report["anomalies"] = check_database_status()
     except Exception as e:

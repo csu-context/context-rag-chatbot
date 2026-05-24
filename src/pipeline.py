@@ -253,59 +253,88 @@ class IngestionPipeline:
 
         logger.info("데이터 정합성 검증 및 클린업을 수행합니다.")
 
-        # 1. 상대 경로 기반 삭제 (원자적 정리 강화)
-        if relative_paths_to_delete:
-            for rel_path in relative_paths_to_delete:
-                logger.info(f"   - 상대 경로 기준 삭제: {rel_path}")
-                self.db_manager.delete_documents(where={MetadataFields.RELATIVE_PATH: rel_path})
+        # 1. 벡터 DB 데이터 삭제
+        self._delete_from_vector_db(source_ids_to_delete, relative_paths_to_delete)
 
-        # 2. 벡터 DB 데이터 삭제 (Source ID 기반 - 하위 호환성)
-        if source_ids_to_delete:
-            self.db_manager.delete_documents(where={MetadataFields.SOURCE_ID: {"$in": source_ids_to_delete}})
-            logger.info(f"   - ChromaDB {len(source_ids_to_delete)}개 Source ID 삭제 완료")
-
-        # 3. 물리적 캐시 및 JSON 파일 삭제
-        # relative_paths_to_delete가 있으면 해당 경로를 가진 모든 JSON 파일을 찾아 삭제
-        deleted_count = 0
-
-        # a. Source ID 기반 삭제
-        for sid in source_ids_to_delete:
-            # 파싱 캐시 삭제
-            cache_file = CACHE_DIR / f"{sid}_parsed.pkl"
-            if cache_file.exists():
-                cache_file.unlink()
-
-            # 가공된 JSON 삭제 (BM25 정합성 핵심)
-            json_file = self.processed_dir / f"{sid}.json"
-            if json_file.exists():
-                json_file.unlink()
-                deleted_count += 1
-
-        # b. 상대 경로 기반 물리 파일 삭제 (파서 변경 등 중복 방지)
-        if relative_paths_to_delete:
-            for json_file in list(self.processed_dir.glob("*.json")):
-                if json_file.name == "manifest.json":
-                    continue
-                try:
-                    with open(json_file, encoding="utf-8") as f:
-                        data = json.load(f)
-                        if data and isinstance(data, list) and len(data) > 0:
-                            meta = data[0].get("metadata", {})
-                            if meta.get(MetadataFields.RELATIVE_PATH) in relative_paths_to_delete:
-                                sid = json_file.stem
-                                cache_file = CACHE_DIR / f"{sid}_parsed.pkl"
-                                if cache_file.exists():
-                                    cache_file.unlink()
-                                if json_file.exists():
-                                    json_file.unlink()
-                                    deleted_count += 1
-                except Exception as e:
-                    logger.warning(f"파일 스캔 중 오류 ({json_file.name}): {e}")
+        # 2. 물리적 캐시 및 JSON 파일 삭제
+        deleted_count = self._delete_physical_files(source_ids_to_delete, relative_paths_to_delete)
 
         if deleted_count > 0:
             logger.info(f"   - 물리적 데이터 파일 {deleted_count}개 삭제 완료")
 
         logger.info("데이터 정합성 검증 및 클린업 작업이 완료되었습니다.")
+
+    def _delete_from_vector_db(self, source_ids_to_delete: list[str], relative_paths_to_delete: list[str] | None):
+        """벡터 DB에서 데이터 삭제"""
+        # 상대 경로 기반 삭제 (원자적 정리 강화)
+        if relative_paths_to_delete:
+            for rel_path in relative_paths_to_delete:
+                logger.info(f"   - 상대 경로 기준 삭제: {rel_path}")
+                self.db_manager.delete_documents(where={MetadataFields.RELATIVE_PATH: rel_path})
+
+        # Source ID 기반 삭제 (하위 호환성)
+        if source_ids_to_delete:
+            self.db_manager.delete_documents(where={MetadataFields.SOURCE_ID: {"$in": source_ids_to_delete}})
+            logger.info(f"   - ChromaDB {len(source_ids_to_delete)}개 Source ID 삭제 완료")
+
+    def _delete_physical_files(
+        self, source_ids_to_delete: list[str], relative_paths_to_delete: list[str] | None
+    ) -> int:
+        """물리적 캐시 및 JSON 파일 삭제"""
+        deleted_count = 0
+
+        # a. Source ID 기반 삭제
+        for sid in source_ids_to_delete:
+            if self._remove_sid_files(sid):
+                deleted_count += 1
+
+        # b. 상대 경로 기반 물리 파일 삭제 (파서 변경 등 중복 방지)
+        if relative_paths_to_delete:
+            deleted_count += self._remove_files_by_rel_path(relative_paths_to_delete)
+
+        return deleted_count
+
+    def _remove_sid_files(self, sid: str) -> bool:
+        """특정 Source ID와 관련된 물리 파일 삭제"""
+        removed = False
+        # 파싱 캐시 삭제
+        cache_file = CACHE_DIR / f"{sid}_parsed.pkl"
+        if cache_file.exists():
+            cache_file.unlink()
+
+        # 가공된 JSON 삭제 (BM25 정합성 핵심)
+        json_file = self.processed_dir / f"{sid}.json"
+        if json_file.exists():
+            json_file.unlink()
+            removed = True
+        return removed
+
+    def _remove_files_by_rel_path(self, relative_paths_to_delete: list[str]) -> int:
+        """상대 경로 목록에 해당하는 물리 파일들을 찾아 삭제"""
+        deleted_count = 0
+        for json_file in list(self.processed_dir.glob("*.json")):
+            if json_file.name == "manifest.json":
+                continue
+            try:
+                with open(json_file, encoding="utf-8") as f:
+                    data = json.load(f)
+                    if not (data and isinstance(data, list) and len(data) > 0):
+                        continue
+
+                    meta = data[0].get("metadata", {})
+                    if meta.get(MetadataFields.RELATIVE_PATH) in relative_paths_to_delete:
+                        sid = json_file.stem
+                        # 캐시 삭제
+                        cache_file = CACHE_DIR / f"{sid}_parsed.pkl"
+                        if cache_file.exists():
+                            cache_file.unlink()
+                        # JSON 삭제
+                        if json_file.exists():
+                            json_file.unlink()
+                            deleted_count += 1
+            except Exception as e:
+                logger.warning(f"파일 스캔 중 오류 ({json_file.name}): {e}")
+        return deleted_count
 
     def upsert_to_db(self, data: list[dict[str, Any]]):
         ids, docs, metas = [], [], []
@@ -521,7 +550,8 @@ class PipelineOrchestrator:
                     files_to_process, source_ids_to_delete, new_manifest = self._calculate_delta(
                         all_files, old_manifest
                     )
-                    # 파서 변경 대응: 업데이트 대상 파일들은 상대 경로 기준으로도 삭제를 병행 (Delete-before-Insert 원자성 확보)
+                    # 파서 변경 대응: 업데이트 대상 파일들은 상대 경로 기준으로도 삭제를 병행
+                    # (Delete-before-Insert 원자성 확보)
                     files_to_process_relative = [str(f.relative_to(RAW_DATA_DIR)) for f in files_to_process]
                     relative_paths_to_delete = files_to_process_relative + [
                         p for p in old_manifest if p not in new_manifest

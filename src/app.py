@@ -225,15 +225,15 @@ def show_admin_dialog(db_manager):  # noqa: C901
             r_col1.write(f"{i + 1}")
             r_col2.text(f.name)
             r_col3.write(format_size(f.stat().st_size))
-            
+
             # 파서 타입 표시
             parser_type = file_parser_map.get(f.name, "-")
             parser_color = "blue" if parser_type == "docling" else "green" if parser_type == "manual" else "gray"
             r_col4.markdown(f":{parser_color}[{parser_type}]")
-            
+
             chunk_count = db_manager.get_source_count(f.name)
             r_col5.write(f"{chunk_count}")
-            
+
             # 개별 동기화 버튼
             if r_col6.button("🔄", key=f"sync_btn_{i}", help=f"'{f.name}' 개별 동기화"):
                 orchestrator = PipelineOrchestrator()
@@ -260,19 +260,19 @@ def show_admin_dialog(db_manager):  # noqa: C901
     st.subheader("데이터 정합성 자가 진단")
     if st.button("진단 리포트 생성", key="health_check_btn", use_container_width=True):
         with st.spinner("시스템 진단 중..."):
-            is_healthy, report = run_full_diagnostics(silent=True, check_model=False)
+            _is_healthy, report = run_full_diagnostics(silent=True, check_model=False)
             st.session_state.health_report = report
-            
+
     if "health_report" in st.session_state:
         report = st.session_state.health_report
         anomalies = report["db"].get("anomalies", {})
-        
+
         ghosts = anomalies.get("ghost_chunks", [])
         mismatches = anomalies.get("mismatched_hash", [])
         duplicates = anomalies.get("duplicate_parsers", [])
-        
+
         has_issue = ghosts or mismatches or duplicates
-        
+
         if not has_issue:
             st.success("✅ 모든 데이터가 정합성을 유지하고 있습니다.")
         else:
@@ -282,7 +282,7 @@ def show_admin_dialog(db_manager):  # noqa: C901
                 st.warning(f"⚠️ 업데이트 필요: {len(mismatches)}개 파일의 내용이 DB와 다릅니다.")
             if duplicates:
                 st.error(f"⚠️ 중복 적재 감지: {len(duplicates)}개 파일에 여러 파서 데이터가 공존합니다.")
-                
+
             if st.button("정합성 자동 복구 (Repair)", type="primary", use_container_width=True):
                 with st.spinner("복구 작업 진행 중..."):
                     repair_integrity(anomalies)
