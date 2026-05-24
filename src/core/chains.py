@@ -21,7 +21,7 @@ class RAGPipeline:
 
     def __init__(self, retriever_or_db: Any, llm: Any = None, reranker: Any = None):
         self.retriever_or_db = retriever_or_db
-        self.llm = llm or LLMFactory().get_model().get_model()
+        self.llm = llm or LLMFactory().get_model("ollama").get_model()
         self.reranker = reranker or RerankerFactory.create()
         self.tracing_logger = TracingLogger()
 
@@ -74,7 +74,7 @@ class RAGPipeline:
             return docs
 
     def _do_reranking(
-        self, query: str, docs: list[Document], final_k: int, session: Any
+            self, query: str, docs: list[Document], final_k: int, session: Any
     ) -> tuple[list[Document], list[float]]:
         with session.trace_step("reranking") as step:
             if docs:
