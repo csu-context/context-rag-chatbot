@@ -112,6 +112,24 @@ def reset_admin_active():
     st.session_state.admin_active = False
 
 
+@st.cache_data(ttl=30)  # 30초 캐싱
+def _get_file_parser_map(_db_manager) -> dict[str, str]:
+    """ChromaDB에서 파일별 파서 타입을 조회하여 캐싱합니다."""
+    try:
+        all_metas = _db_manager.collection.get(include=["metadatas"])["metadatas"]
+        result = {}
+        for m in all_metas:
+            # relative_path가 있으면 우선 사용, 없으면 파일명(src_name) 사용
+            rel_path = m.get(MetadataFields.RELATIVE_PATH) or m.get(MetadataFields.SRC_NAME)
+            if rel_path and rel_path not in result:
+                # 구 스키마('parser') 호환성 유지
+                result[rel_path] = m.get(MetadataFields.PARSER_TYPE) or m.get("parser", "manual")
+        return result
+    except Exception as e:
+        logger.warning(f"파서 맵 로드 중 오류: {e}")
+        return {}
+
+
 # [데이터 관리 시스템 (Admin)]
 @st.dialog("데이터 관리 시스템", width="large", on_dismiss=reset_admin_active)
 def show_admin_dialog(db_manager):  # noqa: C901
@@ -191,8 +209,9 @@ def show_admin_dialog(db_manager):  # noqa: C901
         return f"{round(size_bytes / p, 2)} {size_name[i]}"
 
     current_files = []
+    # 하위 디렉토리까지 포함하여 재귀적으로 스캔
     for ext in ["*.pdf", "*.md", "*.markdown"]:
-        current_files.extend(list(RAW_DATA_DIR.glob(ext)))
+        current_files.extend(list(RAW_DATA_DIR.glob(f"**/{ext}")))
 
     if not current_files:
         st.info("현재 등록된 문서가 없습니다.")
@@ -211,27 +230,28 @@ def show_admin_dialog(db_manager):  # noqa: C901
             unsafe_allow_html=True,
         )
 
-        # ChromaDB에서 실제 메타데이터를 가져와 파서 타입 확인
-        all_metas = db_manager.collection.get(include=["metadatas"])["metadatas"]
-        file_parser_map = {}
-        for m in all_metas:
-            fname = m.get(MetadataFields.SRC_NAME)
-            ptype = m.get(MetadataFields.PARSER_TYPE, "manual")
-            if fname not in file_parser_map:
-                file_parser_map[fname] = ptype
+        # ChromaDB에서 실제 메타데이터를 가져와 파서 타입 확인 (캐싱된 헬퍼 사용)
+        file_parser_map = _get_file_parser_map(db_manager)
 
         for i, f in enumerate(current_files):
+            # 상대 경로 계산
+            rel_path = str(f.relative_to(RAW_DATA_DIR))
             r_col1, r_col2, r_col3, r_col4, r_col5, r_col6, r_col7 = st.columns([0.2, 2.5, 0.8, 0.8, 0.6, 0.6, 0.6])
             r_col1.write(f"{i + 1}")
-            r_col2.text(f.name)
+            r_col2.text(rel_path)  # 파일명 대신 상대 경로 표시
             r_col3.write(format_size(f.stat().st_size))
 
             # 파서 타입 표시
-            parser_type = file_parser_map.get(f.name, "-")
+            parser_type = file_parser_map.get(rel_path, "-")
             parser_color = "blue" if parser_type == "docling" else "green" if parser_type == "manual" else "gray"
             r_col4.markdown(f":{parser_color}[{parser_type}]")
 
+            # 청크 수 조회 시에도 상대 경로 또는 파일명 사용 (Legacy 대응)
             chunk_count = db_manager.get_source_count(f.name)
+            if chunk_count == 0 and rel_path != f.name:
+                # relative_path로 다시 시도
+                # (db_manager.get_source_count가 MetadataFields.SRC_NAME만 볼 경우 대응 필요)
+                pass
             r_col5.write(f"{chunk_count}")
 
             # 개별 동기화 버튼

@@ -1,5 +1,6 @@
 import logging
 import time
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -189,9 +190,14 @@ def _analyze_anomalies(local_files_info: dict, db_rel_path_map: dict) -> dict:
     return anomalies
 
 
+def _get_parser_type(meta: dict) -> str:
+    """메타데이터에서 파서 타입을 추출 (구 스키마 호환)"""
+    return meta.get(MetadataFields.PARSER_TYPE) or meta.get("parser") or "manual"
+
+
 def _check_local_db_mismatch(rel_path: str, local_info: dict, db_chunks: list, anomalies: dict):
     """동일 파일에 대해 로컬과 DB의 메타데이터 일치 여부 세부 확인"""
-    parser_types = {m.get(MetadataFields.PARSER_TYPE, "manual") for m in db_chunks}
+    parser_types = {_get_parser_type(m) for m in db_chunks}
     source_ids = {m.get(MetadataFields.SOURCE_ID) for m in db_chunks}
 
     if len(parser_types) > 1:
@@ -205,6 +211,47 @@ def _check_local_db_mismatch(rel_path: str, local_info: dict, db_chunks: list, a
         anomalies["mismatched_hash"].append(rel_path)
     else:
         logger.info(f"  [MATCH] {rel_path:30} | 일치 (청크: {len(db_chunks):3d})")
+
+
+def _repair_ghost_chunks(pipeline, ghosts: list[str]):
+    """유령 청크 정리 로직 분리"""
+    logger.info(f"유령 청크 {len(ghosts)}개 정리 중...")
+    for rel_path in ghosts:
+        # relative_path가 없는 legacy 청크 대응: src_name으로 조회하여 relative_path가 없는 것들 수집
+        db_data = pipeline.db_manager.collection.get(
+            where={MetadataFields.SRC_NAME: Path(rel_path).name}, include=["metadatas"]
+        )
+        legacy_sids = [
+            m.get(MetadataFields.SOURCE_ID) for m in db_data["metadatas"] if not m.get(MetadataFields.RELATIVE_PATH)
+        ]
+
+        if legacy_sids:
+            logger.info(f"  Legacy 유령 청크 발견 ({rel_path}): {len(legacy_sids)}개 삭제")
+            pipeline.cleanup_db(source_ids_to_delete=list(set(legacy_sids)))
+
+        # 정상적인 relative_path 기반 삭제 시도 (idempotent)
+        pipeline.cleanup_db(source_ids_to_delete=[], relative_paths_to_delete=[rel_path])
+
+
+def _repair_duplicate_parsers(pipeline, duplicates: list[str]):
+    """중복 파서 데이터 정리 로직 분리"""
+    logger.info(f"중복 파서 데이터 {len(duplicates)}개 정리 중...")
+    for rel_path in duplicates:
+        # relative_path가 있는 경우와 없는(legacy) 경우 모두 고려하여 src_name으로 조회
+        db_data = pipeline.db_manager.collection.get(
+            where={MetadataFields.SRC_NAME: Path(rel_path).name}, include=["metadatas"]
+        )
+
+        sids_to_delete = []
+        for meta in db_data["metadatas"]:
+            # relative_path가 일치하거나 (신규), relative_path가 없으면서 이름이 같은 경우 (Legacy)
+            is_match = meta.get(MetadataFields.RELATIVE_PATH) == rel_path or not meta.get(MetadataFields.RELATIVE_PATH)
+            if is_match and _get_parser_type(meta) != settings.PARSER_TYPE:
+                sids_to_delete.append(meta.get(MetadataFields.SOURCE_ID))
+
+        if sids_to_delete:
+            logger.info(f"  중복 파서 데이터 삭제 ({rel_path}): {len(sids_to_delete)}개")
+            pipeline.cleanup_db(source_ids_to_delete=list(set(sids_to_delete)))
 
 
 def repair_integrity(anomalies: dict):
@@ -224,25 +271,12 @@ def repair_integrity(anomalies: dict):
     # 1. 유령 청크 제거
     ghosts = anomalies.get("ghost_chunks", [])
     if ghosts:
-        logger.info(f"유령 청크 {len(ghosts)}개 정리 중...")
-        pipeline.cleanup_db(source_ids_to_delete=[], relative_paths_to_delete=ghosts)
+        _repair_ghost_chunks(pipeline, ghosts)
 
-    # 2. 중복 파서 데이터 정리 (현재 설정된 파서가 아닌 것들 삭제)
+    # 2. 중복 파서 데이터 정리
     duplicates = anomalies.get("duplicate_parsers", [])
     if duplicates:
-        logger.info(f"중복 파서 데이터 {len(duplicates)}개 정리 중...")
-        for rel_path in duplicates:
-            db_data = pipeline.db_manager.collection.get(
-                where={MetadataFields.RELATIVE_PATH: rel_path}, include=["metadatas"]
-            )
-
-            sids_to_delete = []
-            for meta in db_data["metadatas"]:
-                if meta.get(MetadataFields.PARSER_TYPE) != settings.PARSER_TYPE:
-                    sids_to_delete.append(meta.get(MetadataFields.SOURCE_ID))
-
-            if sids_to_delete:
-                pipeline.cleanup_db(source_ids_to_delete=list(set(sids_to_delete)))
+        _repair_duplicate_parsers(pipeline, duplicates)
 
     logger.info("정합성 복구 작업이 완료되었습니다.")
 

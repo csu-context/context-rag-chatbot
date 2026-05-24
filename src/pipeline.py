@@ -1,6 +1,5 @@
 import json
 import logging
-import os
 import pickle
 import threading
 import time
@@ -55,7 +54,7 @@ class MarkdownParserStrategy(ParserStrategy):
             logger.warning(f"마크다운 파일의 내용이 너무 짧아 건너뜁니다: {file_path.name}")
             return []
 
-        parser_type = os.getenv("PARSER_TYPE", "manual").lower()
+        parser_type = settings.PARSER_TYPE.lower()
         base_metadata = {
             MetadataFields.SOURCE_ID: generate_file_hash(file_path, parser_type),
             MetadataFields.SRC_NAME: file_path.name,
@@ -316,22 +315,24 @@ class IngestionPipeline:
             if json_file.name == "manifest.json":
                 continue
             try:
+                data = None
                 with open(json_file, encoding="utf-8") as f:
                     data = json.load(f)
-                    if not (data and isinstance(data, list) and len(data) > 0):
-                        continue
 
-                    meta = data[0].get("metadata", {})
-                    if meta.get(MetadataFields.RELATIVE_PATH) in relative_paths_to_delete:
-                        sid = json_file.stem
-                        # 캐시 삭제
-                        cache_file = CACHE_DIR / f"{sid}_parsed.pkl"
-                        if cache_file.exists():
-                            cache_file.unlink()
-                        # JSON 삭제
-                        if json_file.exists():
-                            json_file.unlink()
-                            deleted_count += 1
+                if not (data and isinstance(data, list) and len(data) > 0):
+                    continue
+
+                meta = data[0].get("metadata", {})
+                if meta.get(MetadataFields.RELATIVE_PATH) in relative_paths_to_delete:
+                    sid = json_file.stem
+                    # 캐시 삭제
+                    cache_file = CACHE_DIR / f"{sid}_parsed.pkl"
+                    if cache_file.exists():
+                        cache_file.unlink()
+                    # JSON 삭제
+                    if json_file.exists():
+                        json_file.unlink()
+                        deleted_count += 1
             except Exception as e:
                 logger.warning(f"파일 스캔 중 오류 ({json_file.name}): {e}")
         return deleted_count
@@ -481,7 +482,12 @@ class PipelineOrchestrator:
             logger.error(f"파일을 찾을 수 없습니다: {file_path}")
             return False
 
-        relative_path = str(file_path.relative_to(RAW_DATA_DIR))
+        try:
+            relative_path = str(file_path.relative_to(RAW_DATA_DIR))
+        except ValueError:
+            logger.error(f"파일이 RAW_DATA_DIR 외부에 있습니다: {file_path}")
+            return False
+
         logger.info(f"단일 파일 개별 동기화 시작: {relative_path}")
 
         with self.tracing_logger.start_session(type="single_file_sync", file=relative_path) as session:
@@ -553,9 +559,11 @@ class PipelineOrchestrator:
                     # 파서 변경 대응: 업데이트 대상 파일들은 상대 경로 기준으로도 삭제를 병행
                     # (Delete-before-Insert 원자성 확보)
                     files_to_process_relative = [str(f.relative_to(RAW_DATA_DIR)) for f in files_to_process]
-                    relative_paths_to_delete = files_to_process_relative + [
-                        p for p in old_manifest if p not in new_manifest
-                    ]
+                    # 이미 source_ids_to_delete로 처리되는 항목(변경분)은 제외하고,
+                    # 삭제된 파일들만 relative_paths_to_delete에 추가
+                    relative_paths_to_delete = [p for p in old_manifest if p not in new_manifest]
+                    # 파서 변경 대응을 위해 현재 처리 대상인 파일들의 상대 경로도 추가 (중복되더라도 DB쪽은 안전)
+                    relative_paths_to_delete += files_to_process_relative
 
                 step["total_files"] = len(all_files)
                 step["files_to_process"] = len(files_to_process)
