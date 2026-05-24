@@ -593,7 +593,14 @@ if prompt := st.chat_input(
     st.session_state.final_docs = []
     st.session_state.start_time = time.time()
 
-    st.session_state.stream_iter = rag_chain.stream({"question": prompt, "k": k_value, "final_k": final_k_value})
+    st.session_state.stream_iter = rag_chain.stream(
+        {
+            "question": prompt,
+            "k": k_value,
+            "final_k": final_k_value,
+            "history": st.session_state.messages[:-1],
+        }
+    )
     st.rerun()
 
 
