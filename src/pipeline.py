@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import pickle
+import threading
 import time
 import uuid
 from abc import ABC, abstractmethod
@@ -12,6 +13,7 @@ from tqdm import tqdm
 
 from src.common.config import settings
 from src.common.constants import MetadataFields
+from src.core.cache import SemanticCache
 from src.data.parser import ManualParser
 from src.processing.chunking import HierarchicalChunker, create_parent_child_chunks
 from src.processing.pdf_parser import DoclingPDFParser
@@ -218,7 +220,7 @@ class IngestionPipeline:
     def save_processed_data(self, data: list[dict[str, Any]]) -> list[Path]:
         """
         전처리된 데이터를 source_id별 개별 JSON 파일로 저장합니다.
-        (BM25 인덱스와의 정합성 유지를 위해 개별 파일 관리가 필수적임)
+        (BM25 인덱스와 정합성 유지를 위해 개별 파일 관리가 필수적임)
         """
         saved_paths = []
         # 데이터를 source_id별로 그룹화
@@ -249,11 +251,8 @@ class IngestionPipeline:
         logger.info(f"데이터 정합성 검증: {len(source_ids_to_delete)}개 소스 ID에 대한 클린업을 수행합니다.")
 
         # 1. 벡터 DB 데이터 삭제
-        try:
-            self.db_manager.delete_documents(where={"source_id": {"$in": source_ids_to_delete}})
-            logger.info("   - ChromaDB 벡터 데이터 삭제 완료")
-        except Exception as e:
-            logger.error(f"   - ChromaDB 삭제 실패: {e}")
+        self.db_manager.delete_documents(where={"source_id": {"$in": source_ids_to_delete}})
+        logger.info("   - ChromaDB 벡터 데이터 삭제 완료")
 
         # 2. 물리적 캐시 및 JSON 파일 삭제 (강화된 클린업)
         deleted_count = 0
@@ -289,14 +288,34 @@ class IngestionPipeline:
 
 
 class PipelineOrchestrator:
-    """전체 파이프라인(Ingestion & Inference)을 총괄하는 오케스트레이터"""
+    """전체 파이프라인(Ingestion & Inference)을 총괄하는 오케스트레이터 (싱글톤)"""
+
+    _instance = None
+    _lock = threading.Lock()
+
+    def __new__(cls, *args, **kwargs):
+        with cls._lock:
+            if cls._instance is None:
+                cls._instance = super().__new__(cls)
+                # 초기화는 한 번만 수행
+                cls._instance._initialized = False
+            return cls._instance
 
     def __init__(self):
-        self.parser_type = settings.PARSER_TYPE.lower()
-        self.strategy = self._get_parser_strategy()
-        self.ingestion_pipeline = IngestionPipeline(self.strategy)
-        self.tracing_logger = TracingLogger()
-        self.manifest_path = PROCESSED_DATA_DIR / "manifest.json"
+        if self._initialized:
+            return
+        with self._lock:
+            if self._initialized:
+                return
+            logger.info("PipelineOrchestrator 초기화...")
+            self.parser_type = settings.PARSER_TYPE.lower()
+            self.strategy = self._get_parser_strategy()
+            self.ingestion_pipeline = IngestionPipeline(self.strategy)
+            self.tracing_logger = TracingLogger()
+            self.manifest_path = PROCESSED_DATA_DIR / "manifest.json"
+            self.cache = SemanticCache()
+            self._initialized = True
+            logger.info("PipelineOrchestrator 초기화 완료.")
 
     def _load_manifest(self) -> dict[str, str]:
         """manifest.json 파일을 로드합니다. 파일이 없거나 손상된 경우, 빈 dict를 반환합니다."""
@@ -322,12 +341,7 @@ class PipelineOrchestrator:
             logger.error(f"Manifest 저장 실패: {e}")
 
     def _get_parser_strategy(self) -> ParserStrategy:
-        """설정된 파서 타입에 따라 전략을 반환하며 가용성을 검증합니다.
-
-        - "docling"  : IBM Docling 기반 (표 구조 + 한글 OCR, 권장)
-        - "enhanced" : Unstructured 기반 (hi_res + YOLO, 레거시)
-        - "manual"   : PyMuPDF 기반 (초고속, 기본)
-        """
+        """설정된 파서 타입에 따라 전략을 반환하며 가용성을 검증합니다."""
         if self.parser_type == "docling":
             try:
                 import docling  # noqa: F401
@@ -360,12 +374,15 @@ class PipelineOrchestrator:
 
     def _process_changes(self, files_to_process: list[Path], source_ids_to_delete: list[str], session: Any):
         """도출된 변경 사항(DB 삭제, 파싱, 업서트, 인덱스 갱신)을 순차적으로 수행합니다."""
-        # 1. DB Cleanup (삭제된 파일 처리)
+        if files_to_process or source_ids_to_delete:
+            with session.trace_step("cache_flush"):
+                logger.info("데이터 변경이 감지되어 시맨틱 캐시를 초기화합니다.")
+                self.cache.flush()
+
         if source_ids_to_delete:
             with session.trace_step("db_cleanup"):
                 self.ingestion_pipeline.cleanup_db(source_ids_to_delete)
 
-        # 2. 파싱, 청킹, 저장, 업서트 (신규/변경된 파일만 처리)
         if files_to_process:
             with session.trace_step("parse_and_chunk") as step:
                 processed_data = self.ingestion_pipeline.process_and_chunk(files_to_process)
@@ -379,7 +396,6 @@ class PipelineOrchestrator:
                 with session.trace_step("db_upsert"):
                     self.ingestion_pipeline.upsert_to_db(processed_data)
 
-        # 3. BM25 인덱스 갱신 (데이터 변경이 있었을 경우에만)
         if files_to_process or source_ids_to_delete:
             with session.trace_step("bm25_update") as step:
                 try:
@@ -390,30 +406,11 @@ class PipelineOrchestrator:
                 except Exception as e:
                     step["status"] = f"failed: {e}"
 
-    def run_ingestion(self):
+    def run_ingestion(self, force: bool = False):
         """전체 데이터 구축 파이프라인 실행"""
-        logger.info(f"데이터 구축 파이프라인을 시작합니다. (전략: {self.parser_type})")
+        logger.info(f"데이터 구축 파이프라인을 시작합니다. (전략: {self.parser_type}, 강제 재색인: {force})")
 
         with self.tracing_logger.start_session(type="ingestion", parser_type=self.parser_type) as session:
-            # 0. 상태 진단 (DB 연결 여부만 필수 체크 - API 키는 비차단)
-            with session.trace_step("diagnostics") as step:
-                from src.utils.health_check import run_full_diagnostics
-
-                is_healthy, report = run_full_diagnostics(silent=True, check_model=False)
-                step["status"] = "healthy" if is_healthy else "unhealthy"
-                step["report"] = report
-
-                # DB 연결 실패만 치명적 오류로 처리 (API 키 누락은 파싱/임베딩에 영향 없음)
-                db_connected = report.get("db", {}).get("connected", False)
-                if not db_connected:
-                    logger.error(f"ChromaDB 연결 실패로 파이프라인을 중단합니다: {report}")
-                    session.data["status"] = "failed_diagnostics"
-                    return
-
-                if not is_healthy:
-                    logger.warning(f"일부 진단 항목 미통과 (파이프라인은 계속 진행): {report}")
-
-            # 1. 스캔 및 증분 업데이트 대상 식별
             with session.trace_step("scan_and_check_updates") as step:
                 all_files = self.ingestion_pipeline.scan_files()
                 old_manifest = self._load_manifest()
@@ -423,7 +420,36 @@ class PipelineOrchestrator:
                     session.data["status"] = "no_files"
                     return
 
-                files_to_process, source_ids_to_delete, new_manifest = self._calculate_delta(all_files, old_manifest)
+                if force:
+                    logger.info(
+                        "강제 동기화가 요청되었습니다. 모든 기존 데이터를 완전히 삭제하고 전체 재색인을 수행합니다."
+                    )
+
+                    # 강제 초기화 시 기존 데이터를 물리적으로 모두 정리 (vector DB 및 파싱 캐시 등)
+                    logger.info("ChromaDB 컬렉션 및 가공 파일 물리적 초기화 시작...")
+                    self.ingestion_pipeline.db_manager.reset_collection()
+
+                    for f in self.ingestion_pipeline.processed_dir.glob("*.json"):
+                        try:
+                            f.unlink()
+                        except Exception as e:
+                            logger.error(f"JSON 파일 삭제 실패 {f}: {e}")
+
+                    for f in CACHE_DIR.glob("*_parsed.pkl"):
+                        try:
+                            f.unlink()
+                        except Exception as e:
+                            logger.error(f"캐시 파일 삭제 실패 {f}: {e}")
+
+                    files_to_process = all_files
+                    source_ids_to_delete = []  # 이미 물리적으로 모두 삭제했으므로 부분 삭제 프로세스는 건너뜀
+                    new_manifest = {
+                        str(f.relative_to(RAW_DATA_DIR)): generate_file_hash(f, self.parser_type) for f in all_files
+                    }
+                else:
+                    files_to_process, source_ids_to_delete, new_manifest = self._calculate_delta(
+                        all_files, old_manifest
+                    )
 
                 step["total_files"] = len(all_files)
                 step["files_to_process"] = len(files_to_process)
@@ -431,18 +457,19 @@ class PipelineOrchestrator:
 
                 logger.info(
                     f"파일 스캔 완료. 전체: {len(all_files)}, "
-                    f"신규/변경: {len(files_to_process)}, 삭제: {len(source_ids_to_delete)}"
+                    f"신규/변경/강제: {len(files_to_process)}, 삭제: {len(source_ids_to_delete)}"
                 )
 
                 if not files_to_process and not source_ids_to_delete:
                     logger.info("변경 사항이 없으므로 데이터 구축 작업을 건너뜁니다.")
                     session.data["status"] = "no_changes"
+                    if force:
+                        # 강제 초기화 후 파일이 없는 경우에도 manifest를 갱신하여 일관성 유지
+                        self._save_manifest(new_manifest)
                     return
 
-            # 2. 식별된 변경 사항 일괄 처리
             self._process_changes(files_to_process, source_ids_to_delete, session)
 
-            # 3. Manifest 업데이트
             with session.trace_step("update_manifest"):
                 self._save_manifest(new_manifest)
 
@@ -459,6 +486,6 @@ class PreprocessingPipeline:
 
 
 if __name__ == "__main__":
-    setup_global_logging()  # 실행 시 로깅 설정을 적용합니다.
+    setup_global_logging()
     orchestrator = PipelineOrchestrator()
     orchestrator.run_ingestion()

@@ -10,6 +10,9 @@
     *   **실행**: `python scripts/compare_eval.py <baseline_json> <current_json>`
 *   **`compare_rerankers.py`**: 다양한 리랭커 모델(Local, Jina, Cohere 등)의 검색 성능을 비교 분석합니다.
     *   **용도**: 최적의 리랭커 모델 선정 및 가중치 튜닝.
+*   **`benchmark_ttft.py`**: 시맨틱 캐시의 동작 여부 및 응답 대기 시간(TTFT)을 측정합니다.
+    *   **용도**: Cache Miss, 반복 질문(Cache Hit), 유사 질문(Cache Hit) 시나리오에 대한 성능(TTFT) 비교 및 검증.
+    *   **실행**: `python scripts/benchmark_ttft.py`
 
 ### 2. 개발 및 테스트 유틸리티
 *   **`run_pytest.py`**: 프로젝트의 전체 테스트 케이스를 실행하고 결과를 요약합니다.

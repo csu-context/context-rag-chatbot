@@ -7,6 +7,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda
 
 from src.common.constants import MetadataFields
+from src.core.cache import SemanticCache
 from src.core.prompts import RAG_SYSTEM_PROMPT
 from src.core.reranker import RerankerFactory
 from src.models.factory import LLMFactory
@@ -24,6 +25,7 @@ class RAGPipeline:
         self.llm = llm or LLMFactory().get_model("ollama").get_model()
         self.reranker = reranker or RerankerFactory.create()
         self.tracing_logger = TracingLogger()
+        self.cache = SemanticCache()
 
     def _perform_retrieval(self, query: str, k: int) -> list[Document]:
         """리트리버 타입에 따른 검색 수행 로직"""
@@ -100,10 +102,42 @@ class RAGPipeline:
             )
             return final_docs, scores
 
-    def _stream_generation(self, query: str, final_docs: list[Document], session: Any) -> Iterator[str]:
+    def _build_cache_query(self, query: str, history: list[dict[str, Any]]) -> str:
+        """대화 맥락에 따른 캐시 오염을 방지하기 위해 최근 대화 이력을 쿼리에 결합합니다."""
+        if not history:
+            return query
+        recent_history = history[-6:]
+        history_parts = []
+        for msg in recent_history:
+            role = msg.get("role", "")
+            content = msg.get("content", "")
+            history_parts.append(f"{role}: {content}")
+        history_str = "\n".join(history_parts)
+        return f"[History]\n{history_str}\n\n[Current Query]\n{query}"
+
+    def _stream_generation(
+        self, query: str, final_docs: list[Document], history: list[dict[str, Any]], session: Any
+    ) -> Iterator[str]:
         with session.trace_step("generation") as step:
             context = self._format_docs(final_docs)
-            prompt_template = ChatPromptTemplate.from_messages([("system", RAG_SYSTEM_PROMPT), ("human", "{question}")])
+
+            # system 메시지는 RAG_SYSTEM_PROMPT 템플릿 유지
+            messages = [("system", RAG_SYSTEM_PROMPT)]
+
+            # history 슬라이딩 윈도우 K=3 적용 (마지막 6개 메시지)
+            recent_history = history[-6:]
+            for msg in recent_history:
+                role = msg.get("role")
+                content = msg.get("content", "")
+                if role == "user":
+                    messages.append(("human", content))
+                elif role == "assistant":
+                    messages.append(("ai", content))
+
+            # 현재 질문
+            messages.append(("human", "{question}"))
+
+            prompt_template = ChatPromptTemplate.from_messages(messages)
             prompt_val = prompt_template.invoke({"question": query, "context": context})
 
             llm_params = {
@@ -111,9 +145,11 @@ class RAGPipeline:
                 "temperature": str(getattr(self.llm, "temperature", "unknown")),
             }
 
+            prompt_messages = prompt_val.to_messages()
+            preview_content = prompt_messages[0].content if prompt_messages else ""
             step.update(
                 {
-                    "prompt_preview": str(prompt_val.to_messages()[0].content)[:200] + "...",
+                    "prompt_preview": str(preview_content)[:200] + "...",
                     "llm_params": llm_params,
                 }
             )
@@ -125,6 +161,7 @@ class RAGPipeline:
                 yield content
 
             step.update({"answer_length": len(full_answer)})
+            session.data["final_answer"] = full_answer
 
     @staticmethod
     def _extract_answer(answer_obj: Any) -> str:
@@ -137,30 +174,73 @@ class RAGPipeline:
         query = input_dict.get("question", "")
         retrieval_k = input_dict.get("k", 20)
         final_k = input_dict.get("final_k", 5)
+        history = input_dict.get("history", [])
+
+        # 대화 이력이 병합된 고유 캐시 쿼리 생성
+        cache_query = self._build_cache_query(query, history)
+        use_cache = len(history) == 0
 
         with self.tracing_logger.start_session(query=query) as session:
-            # 1. Retrieval
+            # 1. Semantic Cache Check
+            yield {"stage": "cache", "status": "running"}
+            cached_result = self.cache.get(cache_query) if use_cache else None
+            if cached_result:
+                session.data["cache_hit"] = True
+                yield {"stage": "cache", "status": "hit"}
+
+                # Stream cached answer
+                answer = cached_result["answer"]
+                for char in answer:
+                    yield {"stage": "generation", "status": "streaming", "output": char}
+                yield {"stage": "generation", "status": "complete"}
+
+                # Yield cached sources for citation
+                sources = cached_result["sources"]
+                yield {"stage": "citation", "status": "complete", "output": "from cache", "source_documents": sources}
+                return
+
+            yield {"stage": "cache", "status": "miss"}
+            session.data["cache_hit"] = False
+
+            # 2. Retrieval
             yield {"stage": "retrieval", "status": "running"}
             docs = self._do_retrieval(query, retrieval_k, session)
             yield {"stage": "retrieval", "status": "complete", "output": docs}
 
-            # 2. Reranking
+            # 3. Reranking
             yield {"stage": "reranking", "status": "running"}
             final_docs, scores = self._do_reranking(query, docs, final_k, session)
             for doc, score in zip(final_docs, scores, strict=False):
                 doc.metadata["rerank_score"] = score
             yield {"stage": "reranking", "status": "complete", "output": final_docs}
 
-            # 3. Generation
+            # 4. Generation
             yield {"stage": "generation", "status": "running"}
-            for token in self._stream_generation(query, final_docs, session):
+            full_answer = ""
+            for token in self._stream_generation(query, final_docs, history, session):
+                full_answer += token
                 yield {"stage": "generation", "status": "streaming", "output": token}
             yield {"stage": "generation", "status": "complete"}
 
-            # 4. Citation
+            # 5. Final Formatting (Citation) & Caching
             yield {"stage": "citation", "status": "running"}
-            citations = format_citations(final_docs)
-            yield {"stage": "citation", "status": "complete", "output": citations, "source_documents": final_docs}
+            citations_str = format_citations(final_docs)
+
+            # Cache the actual document data, not the formatted string
+            docs_for_cache = []
+            for doc in final_docs:
+                docs_for_cache.append(
+                    {
+                        "content": doc.page_content,
+                        "metadata": doc.metadata,
+                        "score": doc.metadata.get("rerank_score", doc.metadata.get("score", 0.0)),
+                    }
+                )
+
+            if use_cache:
+                self.cache.add(cache_query, full_answer, docs_for_cache)
+
+            yield {"stage": "citation", "status": "complete", "output": citations_str, "source_documents": final_docs}
 
 
 def get_rag_chain(retriever_or_db):

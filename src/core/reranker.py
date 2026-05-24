@@ -39,7 +39,7 @@ class BaseReranker(ABC):
     MAX_INFER_TIME_SEC = 5  # API 타임아웃
     PERFORMANCE_THRESHOLD_SEC = 3.0  # 지연 기준 시간 (이 시간 초과 시 top_k 동적 조정)
 
-    def __init__(self, name: str, top_k: int = 5, threshold: float = 0.3):
+    def __init__(self, name: str, top_k: int = 5, threshold: float = 0.45):
         self.name = name
         self.top_k = top_k
         self.threshold = threshold
@@ -118,13 +118,15 @@ class CrossEncoderReranker(BaseReranker):
             self._set_model_defaults()
 
     def _set_model_defaults(self) -> None:
+        # sigmoid 정규화 후 [0, 1] 기준 임계값
+        # sigmoid(0) = 0.5 (중립), sigmoid(1) ≈ 0.73 (긍정적)
         model_lower = self.model_name.lower()
         if "bge" in model_lower:
-            self.threshold = 0.2
-        elif "skesarmom" in model_lower or "kor" in model_lower:
             self.threshold = 0.4
+        elif "skesarmom" in model_lower or "kor" in model_lower:
+            self.threshold = 0.5
         else:
-            self.threshold = 0.3
+            self.threshold = 0.45
 
     @classmethod
     def get_instance(
@@ -185,11 +187,34 @@ class CrossEncoderReranker(BaseReranker):
             )
 
         pairs = [(query, doc.page_content) for doc in documents]
-        model = self._load_model()
 
         start_time = time.time()
-        scores = model.predict(pairs).tolist()
+        try:
+            model = self._load_model()
+            scores_pred = model.predict(pairs)
+            raw_scores = scores_pred.tolist() if hasattr(scores_pred, "tolist") else list(scores_pred)
+        except RuntimeError as e:
+            err_msg = str(e).lower()
+            # CUDA, MPS, OOM, Device 관련 에러가 발생한 경우 CPU로 폴백
+            if self.device != "cpu" and any(x in err_msg for x in ["cuda", "mps", "device", "out of memory", "oom"]):
+                logger.warning(f"[{self.name}] GPU/MPS error detected: {e}. Falling back to CPU mode...")
+                self.device = "cpu"
+                with self._singleton_lock:
+                    self._model = None  # 기존 GPU 모델 언로드 유도
+                try:
+                    model = self._load_model()
+                    scores_pred = model.predict(pairs)
+                    raw_scores = scores_pred.tolist() if hasattr(scores_pred, "tolist") else list(scores_pred)
+                except Exception as cpu_err:
+                    logger.error(f"[{self.name}] Failed to run even on CPU fallback: {cpu_err}")
+                    raise cpu_err
+            else:
+                raise
+
         elapsed_time = time.time() - start_time
+        # ms-marco 등 raw logit(범위 -10~15)을 [0, 1]로 정규화
+        # temperature=5로 스케일링하여 sigmoid 포화 방지
+        scores = torch.sigmoid(torch.tensor(raw_scores) / 5.0).tolist()
 
         scored_docs = sorted(zip(scores, documents, strict=True), key=lambda x: x[0], reverse=True)
         filtered = [(s, d) for s, d in scored_docs if s >= effective_threshold]
@@ -330,18 +355,21 @@ class RerankerFactory:
     @staticmethod
     def create(top_k: int = 5) -> BaseReranker:
         reranker_type = settings.RERANKER_TYPE.lower()
-        # 보안 가드레일: 외부 API 리랭커 사용 허용 여부 체크
-        allow_external = settings.ALLOW_EXTERNAL_RERANKER
+        # 보안 가드레일: 외부 API 및 전체 외부 호출 허용 여부 체크
+        allow_external = settings.ALLOW_EXTERNAL_RERANKER and settings.ALLOW_EXTERNAL_API
 
         if reranker_type in ["cohere", "jina"]:
             if not allow_external:
                 logger.warning(
                     f"보안 정책: 외부 리랭커 '{reranker_type}' 사용이 차단되었습니다. "
-                    ".env 파일에서 ALLOW_EXTERNAL_RERANKER=true 설정을 확인하십시오. 로컬 모델로 전환합니다."
+                    "ALLOW_EXTERNAL_API 또는 ALLOW_EXTERNAL_RERANKER 설정을 확인하십시오. 로컬 모델로 전환합니다."
                 )
                 reranker_type = "local"
             else:
-                logger.info(f"보안 정책에 따라 외부 리랭커 '{reranker_type}' 사용이 허용되었습니다.")
+                logger.warning(
+                    f"보안 경고: 외부 리랭커 '{reranker_type}' 사용이 허용되어 있습니다 "
+                    "(ALLOW_EXTERNAL_API=True 및 ALLOW_EXTERNAL_RERANKER=True)."
+                )
 
         if reranker_type == "cohere":
             logger.info("Cohere 리랭커를 사용합니다.")
