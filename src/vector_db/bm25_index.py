@@ -2,7 +2,7 @@
 Memory-efficient BM25Plus index using scipy sparse matrices.
 
 Replaces rank_bm25.BM25Plus:
-  - TF matrix  : scipy CSC sparse (n_docs × vocab_size)  — replaces list[dict] doc_freqs
+  - TF matrix  : scipy CSC sparse (n_docs x vocab_size)  — replaces list[dict] doc_freqs
   - IDF        : numpy float32 array (vocab_size,)        — replaces Python dict
   - doc_len    : numpy float32 array (n_docs,)            — replaces list[int]
   - vocab      : plain dict[str, int]                     — word → column index
@@ -99,7 +99,7 @@ class BM25PlusIndex:
 
         Uses CSC column slicing to process only non-zero (doc, term) pairs,
         avoiding a full toarray() dense expansion that would spike to
-        O(n_docs × n_query_terms) memory regardless of corpus sparsity.
+        O(n_docs x n_query_terms) memory regardless of corpus sparsity.
         """
         if self.tf_matrix is None or not query_tokens:
             return np.zeros(self.corpus_size, dtype=np.float32)
