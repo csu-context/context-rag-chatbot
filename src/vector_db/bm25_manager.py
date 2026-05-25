@@ -30,8 +30,12 @@ class BM25Manager:
         self.bm25 = None
         self.corpus_data = []
 
-        # 중앙 관리되는 캐시 파일 경로 사용
-        self.cache_path = BM25_CACHE_FILE
+        # data_dir이 기본 PROCESSED_DATA_DIR인 경우 BM25_CACHE_FILE을 사용하고,
+        # 그렇지 않으면 data_dir 하위에 캐시 파일을 생성하여 테스트 환경과 분리함
+        if data_dir == PROCESSED_DATA_DIR:
+            self.cache_path = BM25_CACHE_FILE
+        else:
+            self.cache_path = data_dir / "bm25_cache.pkl"
 
         # 동의어 사전 로드
         self.synonyms = self._load_synonyms()

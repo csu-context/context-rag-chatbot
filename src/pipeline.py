@@ -172,8 +172,22 @@ class IngestionPipeline:
             try:
                 # 1. 파일 확장자에 따른 전략 동적 선택 및 파싱
                 if file_path.suffix.lower() == ".pdf":
-                    rel_path = str(file_path.relative_to(RAW_DATA_DIR))
-                    file_parser = (file_parser_types or {}).get(rel_path, "manual").lower()
+                    import unicodedata
+
+                    rel_path = unicodedata.normalize("NFC", str(file_path.relative_to(RAW_DATA_DIR)))
+                    normalized_parser_types = {
+                        unicodedata.normalize("NFC", k): v for k, v in (file_parser_types or {}).items()
+                    }
+                    file_parser = normalized_parser_types.get(rel_path, "manual").lower()
+                    logger.warning(
+                        f"=== 디버깅 파서 선택 ===\n"
+                        f"파일명: {file_path.name}\n"
+                        f"rel_path (NFC): {rel_path}\n"
+                        f"결정된 file_parser: {file_parser}\n"
+                        f"전달된 file_parser_types: {file_parser_types}\n"
+                        f"정규화된 parser_types: {normalized_parser_types}\n"
+                        f"========================="
+                    )
                     if file_parser == "docling":
                         try:
                             import docling  # noqa: F401
@@ -266,37 +280,90 @@ class IngestionPipeline:
 
         return saved_paths
 
-    def cleanup_db(self, source_ids_to_delete: list[str]):
+    def _prepare_cleanup_targets(
+        self, source_ids_to_delete: list[str] | None, filenames_to_delete: list[str] | None
+    ) -> tuple[list[str], list[str]]:
+        import unicodedata
+        from pathlib import Path
+
+        valid_ids = list(set([sid for sid in (source_ids_to_delete or []) if sid]))
+
+        target_filenames = []
+        if filenames_to_delete:
+            for fname in filenames_to_delete:
+                if not fname:
+                    continue
+                name_only = Path(fname).name
+                nfc_n = unicodedata.normalize("NFC", name_only)
+                nfd_n = unicodedata.normalize("NFD", name_only)
+                target_filenames.extend([nfc_n, nfd_n])
+
+        target_filenames = list(set(target_filenames))
+
+        if target_filenames:
+            logger.info(f"파일명 기반 클린업 대상 확인: {filenames_to_delete}")
+            try:
+                results = self.db_manager.collection.get(
+                    where={"src_name": {"$in": target_filenames}}, include=["metadatas"]
+                )
+                if results and results.get("metadatas"):
+                    for meta in results["metadatas"]:
+                        if meta and "source_id" in meta:
+                            valid_ids.append(meta["source_id"])
+            except Exception as e:
+                logger.error(f"파일명 기반 source_id 조회 중 오류 발생: {e}")
+
+        return list(set(valid_ids)), target_filenames
+
+    def _cleanup_local_files(self, valid_ids: list[str]) -> int:
+        deleted_count = 0
+        for sid in valid_ids:
+            cache_file = CACHE_DIR / f"{sid}_parsed.pkl"
+            if cache_file.exists():
+                try:
+                    cache_file.unlink()
+                except Exception as e:
+                    logger.error(f"캐시 파일 삭제 실패 {cache_file.name}: {e}")
+
+            json_file = self.processed_dir / f"{sid}.json"
+            if json_file.exists():
+                try:
+                    json_file.unlink()
+                    deleted_count += 1
+                except Exception as e:
+                    logger.error(f"JSON 파일 삭제 실패 {json_file.name}: {e}")
+        return deleted_count
+
+    def cleanup_db(self, source_ids_to_delete: list[str] | None = None, filenames_to_delete: list[str] | None = None):
         """
         DB, 캐시 및 가공된 JSON 파일에서 삭제된 데이터를 제거합니다.
         (BM25Manager는 processed_dir의 모든 json을 읽으므로 물리적 파일 삭제가 곧 정합성임)
         """
-        valid_ids = [sid for sid in source_ids_to_delete if sid]
-        if not valid_ids:
+        valid_ids, target_filenames = self._prepare_cleanup_targets(source_ids_to_delete, filenames_to_delete)
+
+        if not valid_ids and not target_filenames:
             return
 
-        logger.info(f"데이터 정합성 검증: {len(valid_ids)}개 소스 ID에 대한 클린업을 수행합니다.")
+        logger.info(
+            f"데이터 정합성 검증: {len(valid_ids)}개 소스 ID, "
+            f"{len(target_filenames)}개 파일명 조건에 대한 클린업을 수행합니다."
+        )
 
         # 1. 벡터 DB 데이터 삭제
-        self.db_manager.delete_documents(where={"source_id": {"$in": valid_ids}})
-        logger.info("   - ChromaDB 벡터 데이터 삭제 완료")
+        try:
+            if valid_ids:
+                self.db_manager.delete_documents(where={"source_id": {"$in": valid_ids}})
+            if target_filenames:
+                self.db_manager.delete_documents(where={"src_name": {"$in": target_filenames}})
+            logger.info("ChromaDB 벡터 데이터 삭제 완료")
+        except Exception as e:
+            logger.error(f"ChromaDB 벡터 데이터 삭제 실패: {e}")
 
         # 2. 물리적 캐시 및 JSON 파일 삭제 (강화된 클린업)
-        deleted_count = 0
-        for sid in valid_ids:
-            # 파싱 캐시 삭제
-            cache_file = CACHE_DIR / f"{sid}_parsed.pkl"
-            if cache_file.exists():
-                cache_file.unlink()
-
-            # 가공된 JSON 삭제 (BM25 정합성 핵심)
-            json_file = self.processed_dir / f"{sid}.json"
-            if json_file.exists():
-                json_file.unlink()
-                deleted_count += 1
+        deleted_count = self._cleanup_local_files(valid_ids)
 
         if deleted_count > 0:
-            logger.info(f"   - 물리적 데이터 파일 {deleted_count}개 삭제 완료")
+            logger.info(f"물리적 데이터 파일 {deleted_count}개 삭제 완료")
 
         logger.info("데이터 정합성 검증 및 클린업 작업이 완료되었습니다.")
 
@@ -404,8 +471,16 @@ class PipelineOrchestrator:
 
         new_files = {}
         for f in all_files:
-            rel_path = str(f.relative_to(RAW_DATA_DIR))
+            import unicodedata
+
+            rel_path = unicodedata.normalize("NFC", str(f.relative_to(RAW_DATA_DIR)))
             old_info = old_files.get(rel_path, {})
+            if not old_info:
+                # NFD-NFC 매치 백업
+                for k, v in old_files.items():
+                    if unicodedata.normalize("NFC", k) == rel_path:
+                        old_info = v
+                        break
             file_parser_type = old_info.get("parser_type", self.parser_type)
             h = generate_file_hash(f, file_parser_type)
             new_files[rel_path] = {"hash": h, "parser_type": file_parser_type}
@@ -444,7 +519,19 @@ class PipelineOrchestrator:
 
         if source_ids_to_delete:
             with session.trace_step("db_cleanup"):
-                self.ingestion_pipeline.cleanup_db(source_ids_to_delete)
+                filenames_to_delete = []
+                try:
+                    old_manifest = self._load_manifest()
+                    old_files = old_manifest.get("files", {})
+                    for rel_path, info in old_files.items():
+                        if info.get("hash") in source_ids_to_delete:
+                            filenames_to_delete.append(Path(rel_path).name)
+                except Exception as e:
+                    logger.error(f"삭제 파일명 추출 중 오류 발생: {e}")
+
+                self.ingestion_pipeline.cleanup_db(
+                    source_ids_to_delete=source_ids_to_delete, filenames_to_delete=filenames_to_delete
+                )
 
         if files_to_process:
             with session.trace_step("parse_and_chunk") as step:
@@ -468,7 +555,7 @@ class PipelineOrchestrator:
                         progress_callback(
                             len(files_to_process),
                             len(files_to_process),
-                            "임베딩 변환 및 벡터 적재 중 (시간이 소요될 수 있습니다)"
+                            "임베딩 변환 및 벡터 적재 중 (시간이 소요될 수 있습니다)",
                         )
                     except Exception as cb_e:
                         logger.error(f"진행 상황 콜백 호출 실패: {cb_e}")
@@ -539,8 +626,10 @@ class PipelineOrchestrator:
                     source_ids_to_delete = []  # 이미 물리적으로 모두 삭제했으므로 부분 삭제 프로세스는 건너뜀
 
                     new_files = {}
+                    import unicodedata
+
                     for f in all_files:
-                        rel_path = str(f.relative_to(RAW_DATA_DIR))
+                        rel_path = unicodedata.normalize("NFC", str(f.relative_to(RAW_DATA_DIR)))
                         new_files[rel_path] = {
                             "hash": generate_file_hash(f, self.parser_type),
                             "parser_type": self.parser_type,
@@ -554,9 +643,7 @@ class PipelineOrchestrator:
                 # target_files 부분 동기화 필터링 적용
                 if target_files is not None:
                     target_paths = {p.resolve() for p in target_files}
-                    filtered_files_to_process = [
-                        f for f in files_to_process if f.resolve() in target_paths
-                    ]
+                    filtered_files_to_process = [f for f in files_to_process if f.resolve() in target_paths]
 
                     # target_files에 해당하지 않는 문서들의 구 해시값은 delete 목록에서 보존
                     target_names = {p.name for p in target_files}
@@ -620,16 +707,24 @@ class PipelineOrchestrator:
         old_manifest = self._load_manifest()
         old_files = old_manifest.get("files", {})
 
+        import unicodedata
+
+        normalized_file_name = unicodedata.normalize("NFC", file_name)
         target_rel_path = None
         for rel_path in old_files:
-            if Path(rel_path).name == file_name or rel_path == file_name:
+            normalized_rel_path = unicodedata.normalize("NFC", rel_path)
+            is_match = (
+                Path(normalized_rel_path).name == normalized_file_name or normalized_rel_path == normalized_file_name
+            )
+            if is_match:
                 target_rel_path = rel_path
                 break
 
         if not target_rel_path:
             for f in self.ingestion_pipeline.scan_files():
-                if f.name == file_name:
-                    target_rel_path = str(f.relative_to(RAW_DATA_DIR))
+                normalized_f_name = unicodedata.normalize("NFC", f.name)
+                if normalized_f_name == normalized_file_name:
+                    target_rel_path = unicodedata.normalize("NFC", str(f.relative_to(RAW_DATA_DIR)))
                     break
 
         if not target_rel_path:
@@ -640,6 +735,10 @@ class PipelineOrchestrator:
 
         if target_rel_path not in old_files:
             old_files[target_rel_path] = {}
+        old_hash = old_files[target_rel_path].get("hash")
+        hashes_to_delete = [old_hash] if old_hash else []
+        logger.info(f"파서 변경 전 기존 ChromaDB 데이터 클린업 수행 (파일명: {file_name}, 해시: {hashes_to_delete})")
+        self.ingestion_pipeline.cleanup_db(source_ids_to_delete=hashes_to_delete, filenames_to_delete=[file_name])
         old_files[target_rel_path]["hash"] = ""
         old_files[target_rel_path]["parser_type"] = new_parser_lower
 
@@ -648,9 +747,7 @@ class PipelineOrchestrator:
 
         # target_files를 전달하여 해당 파일만 동기화하도록 강제
         target_path = RAW_DATA_DIR / target_rel_path
-        self.run_ingestion(
-            force=False, progress_callback=progress_callback, target_files=[target_path]
-        )
+        self.run_ingestion(force=False, progress_callback=progress_callback, target_files=[target_path])
 
     def update_multiple_file_parsers(self, file_parser_map: dict[str, str], progress_callback=None):  # noqa: C901
         """복수 파일의 동기화 파서 타입을 한꺼번에 변경하고, 대상 파일들을 즉각 재색인합니다."""
@@ -658,28 +755,48 @@ class PipelineOrchestrator:
         old_files = old_manifest.get("files", {})
 
         updated_count = 0
+        hashes_to_delete = []
         for file_name, new_parser in file_parser_map.items():
             new_parser_lower = new_parser.lower()
+            import unicodedata
+
+            normalized_file_name = unicodedata.normalize("NFC", file_name)
 
             target_rel_path = None
             for rel_path in old_files:
-                if Path(rel_path).name == file_name or rel_path == file_name:
+                normalized_rel_path = unicodedata.normalize("NFC", rel_path)
+                is_match = (
+                    Path(normalized_rel_path).name == normalized_file_name
+                    or normalized_rel_path == normalized_file_name
+                )
+                if is_match:
                     target_rel_path = rel_path
                     break
 
             if not target_rel_path:
                 for f in self.ingestion_pipeline.scan_files():
-                    if f.name == file_name:
-                        target_rel_path = str(f.relative_to(RAW_DATA_DIR))
+                    normalized_f_name = unicodedata.normalize("NFC", f.name)
+                    if normalized_f_name == normalized_file_name:
+                        target_rel_path = unicodedata.normalize("NFC", str(f.relative_to(RAW_DATA_DIR)))
                         break
 
             if target_rel_path:
                 logger.info(f"파일 {target_rel_path}의 파서를 {new_parser_lower}로 변경 등록합니다.")
                 if target_rel_path not in old_files:
                     old_files[target_rel_path] = {}
+                old_hash = old_files[target_rel_path].get("hash")
+                if old_hash:
+                    hashes_to_delete.append(old_hash)
                 old_files[target_rel_path]["hash"] = ""
                 old_files[target_rel_path]["parser_type"] = new_parser_lower
                 updated_count += 1
+
+        if hashes_to_delete:
+            filenames_to_delete = list(file_parser_map.keys())
+            logger.info(f"파서 일괄 변경 전 기존 ChromaDB 데이터 클린업 수행 (개수: {len(filenames_to_delete)})")
+            self.ingestion_pipeline.cleanup_db(
+                source_ids_to_delete=hashes_to_delete, filenames_to_delete=filenames_to_delete
+            )
 
         if updated_count > 0:
             old_manifest["files"] = old_files
@@ -701,9 +818,7 @@ class PipelineOrchestrator:
                 if target_rel_path:
                     target_paths.append(RAW_DATA_DIR / target_rel_path)
 
-            self.run_ingestion(
-                force=False, progress_callback=progress_callback, target_files=target_paths
-            )
+            self.run_ingestion(force=False, progress_callback=progress_callback, target_files=target_paths)
 
 
 # 하위 호환성을 위한 기존 클래스 래핑

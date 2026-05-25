@@ -175,6 +175,7 @@ def show_chunks_viewer_dialog(file_name, db_manager):  # noqa: C901
                 st.markdown(f"### Chunk {idx + 1} (ID: `{c_id}`)")
                 st.write("**청크 내용 (자식 텍스트)**")
                 import html
+
                 escaped_content = html.escape(chunk["content"])
                 st.markdown(
                     f"""<div style="
@@ -319,6 +320,7 @@ def show_admin_dialog(db_manager):  # noqa: C901
         progress_bar = st.progress(0)
 
         with st.status("데이터베이스 동기화 중...", expanded=True) as status:
+
             def sync_callback(current, total, file_name, pb=progress_bar, st_status=status):
                 if total > 0:
                     percent = int((current / total) * 100)
@@ -426,8 +428,11 @@ def show_admin_dialog(db_manager):  # noqa: C901
             r_col3.write(format_size(f.stat().st_size))
 
             # 적용 파서 식별 (매니페스트 우선 조회, 차선으로 ChromaDB 조회)
-            rel_path = str(f.relative_to(RAW_DATA_DIR))
-            file_manifest_info = manifest_files.get(rel_path, {})
+            import unicodedata
+
+            rel_path = unicodedata.normalize("NFC", str(f.relative_to(RAW_DATA_DIR)))
+            normalized_manifest_files = {unicodedata.normalize("NFC", k): v for k, v in manifest_files.items()}
+            file_manifest_info = normalized_manifest_files.get(rel_path, {})
             parser_name = file_manifest_info.get("parser_type")
 
             chunks = db_manager.get_source_chunks(f.name)
@@ -499,6 +504,7 @@ def show_admin_dialog(db_manager):  # noqa: C901
 
                 progress_bar = st.progress(0)
                 with st.status(f"{f.name} 개별 동기화 중...", expanded=True) as status:
+
                     def single_file_sync_callback(current, total, name, pb=progress_bar, st_status=status):
                         if total > 0:
                             percent = int((current / total) * 100)
@@ -525,7 +531,7 @@ def show_admin_dialog(db_manager):  # noqa: C901
                     trigger_sync(force=False)
                 else:
                     time.sleep(0.5)
-                    st.session_state.should_rerun_app = True  # Set flag instead of direct rerun
+                    st.rerun()
 
     pending = st.session_state.get("parser_change_pending")
     if pending:
@@ -552,6 +558,7 @@ def show_admin_dialog(db_manager):  # noqa: C901
                 progress_bar = st.progress(0)
 
                 with st.status("지정된 파일들의 파서 전환 및 재색인 중...", expanded=True) as status:
+
                     def multi_file_sync_callback(current, total, name, pb=progress_bar, st_status=status):
                         if total > 0:
                             percent = int((current / total) * 100)
@@ -560,9 +567,7 @@ def show_admin_dialog(db_manager):  # noqa: C901
                             st_status.update(label=f"진행 중: {name}", state="running")
 
                     orchestrator = PipelineOrchestrator()
-                    orchestrator.update_multiple_file_parsers(
-                        pending_copy, progress_callback=multi_file_sync_callback
-                    )
+                    orchestrator.update_multiple_file_parsers(pending_copy, progress_callback=multi_file_sync_callback)
                     progress_bar.progress(100, text="파서 전환 완료")
                     status.update(label="파서 전환 및 재색인 완료", state="complete", expanded=False)
 
@@ -580,7 +585,7 @@ def show_admin_dialog(db_manager):  # noqa: C901
     st.divider()
     if st.button("관리 시스템 종료 (닫기)", use_container_width=True):
         st.session_state.admin_active = False
-        st.session_state.should_rerun_app = True  # Set flag instead of direct rerun
+        st.rerun()
 
 
 # --- 4. RAG 시스템 초기화 (캐싱) ---

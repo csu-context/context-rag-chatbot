@@ -190,10 +190,7 @@ class TestParserSelection:
         orchestrator.run_ingestion = MagicMock()
 
         # rules.pdf와 info.md를 모두 docling으로 변경 실행
-        orchestrator.update_multiple_file_parsers({
-            "rules.pdf": "docling",
-            "info.md": "docling"
-        })
+        orchestrator.update_multiple_file_parsers({"rules.pdf": "docling", "info.md": "docling"})
 
         # 매니페스트 갱신 저장 확인
         orchestrator._save_manifest.assert_called_once()
