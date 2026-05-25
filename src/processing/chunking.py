@@ -180,6 +180,7 @@ class HierarchicalChunker:
                 MetadataFields.PARENT_ID: parent_id,
                 MetadataFields.HEADER_PATH: base_metadata.get(MetadataFields.HEADER_PATH, "기본 섹션"),
                 MetadataFields.IS_TABLE: has_table,
+                "parser": base_metadata.get("parser", "manual"),
             }
 
             children_list.append(
@@ -233,6 +234,7 @@ class HierarchicalChunker:
                     MetadataFields.CHUNK_ID: parent_id,
                     MetadataFields.PARENT_ID: None,
                     MetadataFields.HEADER_PATH: header_path,
+                    "parser": base_metadata.get("parser", "manual"),
                 }
 
                 hierarchical_data.append(

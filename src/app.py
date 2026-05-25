@@ -64,6 +64,8 @@ if "dialog_doc_to_show" not in st.session_state:
     st.session_state.dialog_doc_to_show = None
 if "dialog_chunks_file_to_show" not in st.session_state:
     st.session_state.dialog_chunks_file_to_show = None
+if "parser_change_pending" not in st.session_state:
+    st.session_state.parser_change_pending = None
 if "is_generating" not in st.session_state:
     st.session_state.is_generating = False
 if "should_rerun_app" not in st.session_state:
@@ -172,15 +174,17 @@ def show_admin_dialog(db_manager):  # noqa: C901
     def trigger_sync(force=False):
         progress_bar = st.progress(0)
 
-        def sync_callback(current, total, file_name):
-            if total > 0:
-                percent = int((current / total) * 100)
-                percent = min(100, max(0, percent))
-                progress_bar.progress(percent, text=f"[{current}/{total}] {file_name} 처리 중... ({percent}%)")
-            else:
-                progress_bar.progress(0, text="대기 중...")
-
         with st.status("데이터베이스 동기화 중...", expanded=True) as status:
+            def sync_callback(current, total, file_name, pb=progress_bar, st_status=status):
+                if total > 0:
+                    percent = int((current / total) * 100)
+                    percent = min(100, max(0, percent))
+                    pb.progress(percent, text=f"[{current}/{total}] {file_name} 처리 중... ({percent}%)")
+                    st_status.update(label=f"진행 중: {file_name}", state="running")
+                    st.write(f"[{current}/{total}] {file_name} 처리 완료 ({percent}%)")
+                else:
+                    pb.progress(0, text="대기 중...")
+
             # 싱글톤 인스턴스 사용 (불필요한 모델 로드 방지)
             orchestrator = PipelineOrchestrator()
             orchestrator.run_ingestion(force=force, parser_type=parser_type, progress_callback=sync_callback)
@@ -249,39 +253,128 @@ def show_admin_dialog(db_manager):  # noqa: C901
     if not current_files:
         st.info("현재 등록된 문서가 없습니다.")
     else:
-        h_col1, h_col2, h_col3, h_col4, h_col5, h_col6 = st.columns([0.2, 2.5, 0.8, 0.8, 0.6, 0.6])
+        orchestrator = PipelineOrchestrator()
+        manifest = orchestrator._load_manifest()
+        manifest_files = manifest.get("files", {})
+
+        h_col1, h_col2, h_col3, h_col4, h_col5, h_col6, h_col7, h_col8 = st.columns(
+            [0.3, 2.0, 0.6, 0.9, 0.9, 0.6, 0.6, 0.6]
+        )
         h_col1.write("**No**")
         h_col2.write("**파일명**")
         h_col3.write("**크기**")
-        h_col4.write("**적용 파서**")
-        h_col5.write("**청크**")
-        h_col6.write("**삭제**")
+        h_col4.write("**상태**")
+        h_col5.write("**적용 파서**")
+        h_col6.write("**청크**")
+        h_col7.write("**동기화**")
+        h_col8.write("**삭제**")
         st.markdown(
             "<hr style='margin: 0px 0px 10px 0px; border: 0.5px solid rgba(151,166,195,0.2);'>",
             unsafe_allow_html=True,
         )
 
         for i, f in enumerate(current_files):
-            r_col1, r_col2, r_col3, r_col4, r_col5, r_col6 = st.columns([0.2, 2.5, 0.8, 0.8, 0.6, 0.6])
+            r_col1, r_col2, r_col3, r_col4, r_col5, r_col6, r_col7, r_col8 = st.columns(
+                [0.3, 2.0, 0.6, 0.9, 0.9, 0.6, 0.6, 0.6]
+            )
             r_col1.write(f"{i + 1}")
             r_col2.text(f.name)
             r_col3.write(format_size(f.stat().st_size))
 
-            # 적용 파서 식별
+            # 적용 파서 식별 (매니페스트 우선 조회, 차선으로 ChromaDB 조회)
+            rel_path = str(f.relative_to(RAW_DATA_DIR))
+            file_manifest_info = manifest_files.get(rel_path, {})
+            parser_name = file_manifest_info.get("parser_type")
+
             chunks = db_manager.get_source_chunks(f.name)
-            parser_name = "-"
-            if chunks:
-                parser_name = chunks[0].get("metadata", {}).get("parser", "manual")
-            r_col4.write(f"`{parser_name}`")
+            chunk_count = len(chunks)
+            if not parser_name:
+                parser_name = parser_type
+                if chunks:
+                    parser_name = chunks[0].get("metadata", {}).get("parser", parser_type)
+
+            parser_options = ["manual", "docling"]
+
+            # 청크 개수가 0개이면 미동기화, 0보다 크면 동기화 완료 배지 표시
+            pending = st.session_state.get("parser_change_pending") or {}
+            if chunk_count == 0:
+                r_col4.markdown(
+                    "<div style='color: #ff4b4b; font-size: 0.8rem; "
+                    "font-weight: bold; white-space: nowrap; margin-top: 6px;'>미동기화 (대기)</div>",
+                    unsafe_allow_html=True,
+                )
+                display_parser = pending.get(f.name, parser_name or parser_type)
+            else:
+                r_col4.markdown(
+                    "<div style='color: #00cc66; font-size: 0.8rem; "
+                    "font-weight: bold; white-space: nowrap; margin-top: 6px;'>동기화 완료</div>",
+                    unsafe_allow_html=True,
+                )
+                display_parser = pending.get(f.name, parser_name)
+
+            try:
+                selected_idx = parser_options.index(display_parser.lower())
+            except ValueError:
+                selected_idx = 0
+
+            selected_parser = r_col5.selectbox(
+                "파서 선택",
+                options=parser_options,
+                index=selected_idx,
+                key=f"parser_select_{i}_{display_parser}",
+                label_visibility="collapsed",
+                disabled=False,
+            )
+
+            if selected_parser != parser_name:
+                if f.name not in pending or pending[f.name] != selected_parser:
+                    if st.session_state.parser_change_pending is None:
+                        st.session_state.parser_change_pending = {}
+                    st.session_state.parser_change_pending[f.name] = selected_parser
+                    st.rerun()
+            elif f.name in pending:
+                st.session_state.parser_change_pending.pop(f.name, None)
+                if not st.session_state.parser_change_pending:
+                    st.session_state.parser_change_pending = None
+                st.rerun()
 
             chunk_count = len(chunks)
-            if r_col5.button(f"{chunk_count} 🔍", key=f"view_chunks_{i}", help="청크 상세 내용 보기"):
+            if r_col6.button(f"{chunk_count} 🔍", key=f"view_chunks_{i}", help="청크 상세 내용 보기"):
                 st.session_state.dialog_chunks_file_to_show = f.name
                 st.session_state.admin_active = False
                 st.session_state.should_rerun_app = True
                 st.rerun()
 
-            if r_col6.button("🗑️", key=f"del_btn_{i}", help=f"'{f.name}' 삭제") and f.exists():
+            # 개별 동기화/재색인 실행
+            if r_col7.button("🔄", key=f"sync_btn_{i}", help="개별 동기화 및 재색인 실행"):
+                active_parser = selected_parser
+                if pending and f.name in pending:
+                    st.session_state.parser_change_pending.pop(f.name, None)
+                    if not st.session_state.parser_change_pending:
+                        st.session_state.parser_change_pending = None
+
+                progress_bar = st.progress(0)
+                with st.status(f"{f.name} 개별 동기화 중...", expanded=True) as status:
+                    def single_file_sync_callback(current, total, name, pb=progress_bar, st_status=status):
+                        if total > 0:
+                            percent = int((current / total) * 100)
+                            percent = min(100, max(0, percent))
+                            pb.progress(percent, text=f"[{current}/{total}] {name} 처리 중... ({percent}%)")
+                            st_status.update(label=f"진행 중: {name}", state="running")
+                            st.write(f"[{current}/{total}] {name} 처리 완료 ({percent}%)")
+
+                    orchestrator = PipelineOrchestrator()
+                    orchestrator.update_file_parser(f.name, active_parser, progress_callback=single_file_sync_callback)
+                    progress_bar.progress(100, text="동기화 완료")
+                    status.update(label="개별 동기화 및 재색인 완료", state="complete", expanded=False)
+
+                initialize_rag_system.clear()
+                st.toast(f"동기화 완료: {f.name}")
+                time.sleep(0.5)
+                progress_bar.empty()
+                st.rerun()
+
+            if r_col8.button("🗑️", key=f"del_btn_{i}", help=f"'{f.name}' 삭제") and f.exists():
                 f.unlink()
                 st.toast(f"파일 삭제됨: {f.name}")
                 if auto_sync:
@@ -289,6 +382,56 @@ def show_admin_dialog(db_manager):  # noqa: C901
                 else:
                     time.sleep(0.5)
                     st.session_state.should_rerun_app = True  # Set flag instead of direct rerun
+
+    pending = st.session_state.get("parser_change_pending")
+    if pending:
+        st.warning(
+            "파서 변경 확인: 다음 파일들의 파서를 변경하시겠습니까? "
+            "변경 시 해당 파일들은 새로운 파서 규격으로 즉시 재색인됩니다."
+        )
+
+        change_details = []
+        for file_name, new_parser in pending.items():
+            file_chunks = db_manager.get_source_chunks(file_name)
+            old_parser = "manual"
+            if file_chunks:
+                old_parser = file_chunks[0].get("metadata", {}).get("parser", "manual")
+            change_details.append(f"- {file_name}: {old_parser} -> {new_parser}")
+
+        st.markdown("\n".join(change_details))
+
+        col_confirm, col_cancel = st.columns(2)
+        with col_confirm:
+            if st.button("예, 변경 및 재색인 실행", key="confirm_parser_change_btn", use_container_width=True):
+                pending_copy = pending.copy()
+                st.session_state.parser_change_pending = None
+                progress_bar = st.progress(0)
+
+                with st.status("지정된 파일들의 파서 전환 및 재색인 중...", expanded=True) as status:
+                    def multi_file_sync_callback(current, total, name, pb=progress_bar, st_status=status):
+                        if total > 0:
+                            percent = int((current / total) * 100)
+                            percent = min(100, max(0, percent))
+                            pb.progress(percent, text=f"[{current}/{total}] {name} 처리 중... ({percent}%)")
+                            st_status.update(label=f"진행 중: {name}", state="running")
+
+                    orchestrator = PipelineOrchestrator()
+                    orchestrator.update_multiple_file_parsers(
+                        pending_copy, progress_callback=multi_file_sync_callback
+                    )
+                    progress_bar.progress(100, text="파서 전환 완료")
+                    status.update(label="파서 전환 및 재색인 완료", state="complete", expanded=False)
+
+                initialize_rag_system.clear()
+                st.toast("선택한 파일들의 파서가 성공적으로 전환되었습니다.")
+                time.sleep(0.5)
+                progress_bar.empty()
+                st.rerun()
+
+        with col_cancel:
+            if st.button("취소", key="cancel_parser_change_btn", use_container_width=True):
+                st.session_state.parser_change_pending = None
+                st.rerun()
 
     st.divider()
     if st.button("관리 시스템 종료 (닫기)", use_container_width=True):
