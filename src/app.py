@@ -134,7 +134,6 @@ def show_admin_dialog(db_manager):  # noqa: C901
 
     st.divider()
 
-
     # 하단 영역: 문서 목록 및 행 단위 삭제
     st.subheader("등록된 문서 목록 및 관리")
     if not auto_sync:
@@ -318,7 +317,7 @@ with st.sidebar:
     # 리트리버 가중치 동적 업데이트
     # noinspection PyBroadException
     try:
-        if hasattr(global_retriever, 'weight_bm25'):
+        if hasattr(global_retriever, "weight_bm25"):
             global_retriever.weight_bm25 = bm25_weight
             global_retriever.weight_vector = vector_weight
     except Exception:
@@ -328,7 +327,7 @@ with st.sidebar:
         st.session_state.admin_active = True
         st.rerun()
 
-if st.session_state.admin_active:
+if st.sidebar and st.session_state.admin_active:
     show_admin_dialog(db_manager)
 
 
