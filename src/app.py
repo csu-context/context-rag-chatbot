@@ -1,4 +1,5 @@
 import logging
+import math
 import os
 import time
 
@@ -7,13 +8,24 @@ from dotenv import load_dotenv
 
 from src.core.chains import get_rag_chain
 from src.pipeline import PipelineOrchestrator
-
 from src.utils.health_check import repair_integrity, run_full_diagnostics
-from src.utils.logger import PerformanceLogger, setup_global_logging
-from src.utils.monitoring import get_system_stats
-
+from src.utils.logger import setup_global_logging
 from src.utils.paths import RAW_DATA_DIR, ensure_directories
 from src.vector_db.chroma_manager import ChromaDBManager
+
+
+# ==============================================================================
+# 팀원 추가 메타데이터 필드 호환 상수를 주석 변형 없이 안전하게 매핑
+# ==============================================================================
+class MetadataFields:
+    RELATIVE_PATH = "relative_path"
+    SRC_NAME = "src_name"
+    PARSER_TYPE = "parser_type"
+
+
+def reset_admin_active():
+    st.session_state.admin_active = False
+
 
 # ==============================================================================
 # 시스템 초기화 및 환경 설정
@@ -317,7 +329,7 @@ with st.sidebar:
         st.rerun()
 
 if st.session_state.admin_active:
-    show_admin_dialog()
+    show_admin_dialog(db_manager)
 
 
 # ==============================================================================
