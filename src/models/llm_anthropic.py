@@ -1,4 +1,5 @@
 import os
+import time
 from typing import Any
 
 from langchain_anthropic import ChatAnthropic
@@ -17,12 +18,40 @@ class AnthropicModel(BaseLLM):
         if not api_key:
             raise ValueError("환경 변수 'ANTHROPIC_API_KEY'가 설정되지 않았습니다.")
 
+        # noinspection PyArgumentList
         self.llm = ChatAnthropic(model=model_name, anthropic_api_key=api_key, **kwargs)
 
     def invoke(self, prompt: str, **kwargs: Any) -> LLMResponse:
-        """BaseLLM의 규격에 맞게 LLMResponse 객체를 반환하도록 수정함."""
+        start_time = time.time()
+
         response = self.llm.invoke(prompt, **kwargs)
-        return LLMResponse(content=response.content, model_name=self.model_name)
+        latency = time.time() - start_time
+
+        usage = {}
+        if hasattr(response, "response_metadata"):
+            meta_usage = response.response_metadata.get("usage", {})
+
+            if isinstance(meta_usage, dict):
+                input_tokens = meta_usage.get("input_tokens", 0)
+                output_tokens = meta_usage.get("output_tokens", 0)
+            else:
+                input_tokens = getattr(meta_usage, "input_tokens", 0)
+                output_tokens = getattr(meta_usage, "output_tokens", 0)
+
+            usage = {
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "total_tokens": input_tokens + output_tokens,
+            }
+
+        return LLMResponse(
+            content=str(response.content),
+            usage=usage,
+            latency=latency,
+            model_name=self._model_name,
+            metadata=getattr(response, "response_metadata", {}),
+            cost=0.0,
+        )
 
     def get_model(self) -> Any:
         """BaseLLM의 추상 메서드 구현: 내부 LangChain 모델 인스턴스 반환."""

@@ -71,6 +71,7 @@ def show_admin_dialog():
             orchestrator = PipelineOrchestrator()
             orchestrator.run_ingestion()
             sync_status.update(label="동기화 완료", state="complete", expanded=False)
+            initialize_rag_system.clear()
         st.success("DB 동기화 완료")
         time.sleep(0.5)
 
@@ -100,7 +101,10 @@ def show_admin_dialog():
     st.divider()
 
     st.subheader("등록된 문서 목록")
-    current_files = list(RAW_DATA_DIR.glob("*.*"))
+    current_files = [
+        f for f in RAW_DATA_DIR.glob("*.*")
+        if f.suffix.lower() in [".pdf", ".md", ".markdown"]
+    ]
     for i, f in enumerate(current_files):
         cols = st.columns([3, 1, 1])
         cols[0].text(f.name)
@@ -175,8 +179,9 @@ with st.sidebar:
     # 리트리버 가중치 동적 업데이트
     # noinspection PyBroadException
     try:
-        if hasattr(global_retriever, "weights"):
-            global_retriever.weights = [bm25_weight, vector_weight]
+        if hasattr(global_retriever, 'weight_bm25'):
+            global_retriever.weight_bm25 = bm25_weight
+            global_retriever.weight_vector = vector_weight
     except Exception:
         pass
 

@@ -22,7 +22,7 @@ class RAGPipeline:
 
     def __init__(self, retriever_or_db: Any, llm: Any = None, reranker: Any = None):
         self.retriever_or_db = retriever_or_db
-        self.llm = llm or LLMFactory().get_model("ollama").get_model()
+        self.llm = llm or LLMFactory().get_model().get_model()
         self.reranker = reranker or RerankerFactory.create()
         self.tracing_logger = TracingLogger()
         self.cache = SemanticCache()
