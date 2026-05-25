@@ -4,6 +4,8 @@ from typing import TypedDict
 class ChunkMetadata(TypedDict, total=False):
     source_id: str
     src_name: str
+    relative_path: str
+    parser_type: str
     doc_type: str | None
     pg_num: int
     sec_title: str
