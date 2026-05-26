@@ -7,6 +7,7 @@ from langchain_core.documents import Document
 from src.core.reranker import CrossEncoderReranker
 from src.core.retriever import EnsembleRetriever
 from src.vector_db.bm25_manager import BM25Manager
+from src.vector_db.chroma_manager import ChromaDBManager
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -110,6 +111,33 @@ def test_retriever_candidate_pool_expansion(temp_bm25_manager):
     # get_relevant_documents에서 n_candidates = max(15, n) 적용됨
     results = retriever.get_relevant_documents("휴학", n=2)
     assert len(results) > 0
+
+
+def test_chroma_metadata_filter_where_clause():
+    """ChromaDBManager.retrieve가 metadata_filter를 올바른 ChromaDB where 절로 변환하는지 검증."""
+    manager = ChromaDBManager.__new__(ChromaDBManager)
+    mock_collection = MagicMock()
+    mock_collection.query.return_value = {"documents": [[]], "metadatas": [[]], "distances": [[]], "ids": [[]]}
+    manager.collection = mock_collection
+
+    # 1. 단일 필드 필터 → {k: v} 그대로 전달
+    manager.retrieve("질문", n=3, metadata_filter={"category": "academic"})
+    assert mock_collection.query.call_args.kwargs["where"] == {"category": "academic"}
+    mock_collection.query.reset_mock()
+
+    # 2. 다중 필드 필터 → {"$and": [{k: {"$eq": v}}, ...]} 변환
+    manager.retrieve("질문", n=3, metadata_filter={"category": "academic", "src_name": "manual_a.pdf"})
+    assert mock_collection.query.call_args.kwargs["where"] == {
+        "$and": [
+            {"category": {"$eq": "academic"}},
+            {"src_name": {"$eq": "manual_a.pdf"}},
+        ]
+    }
+    mock_collection.query.reset_mock()
+
+    # 3. 필터 없음 → where=None
+    manager.retrieve("질문", n=3)
+    assert mock_collection.query.call_args.kwargs["where"] is None
 
 
 def test_reranker_strict_context_pruning():
