@@ -94,7 +94,7 @@ class DoclingPDFParser:
                 table_data = {
                     "table_index": table_idx,
                     "page": getattr(table.prov[0], "page_no", 1) if table.prov else 1,
-                    "markdown": table.export_to_markdown() if hasattr(table, "export_to_markdown") else "",
+                    "markdown": table.export_to_markdown(doc=doc) if hasattr(table, "export_to_markdown") else "",
                     "row_count": len(table.data.grid) if hasattr(table, "data") and hasattr(table.data, "grid") else 0,
                     "col_count": (
                         len(table.data.grid[0])
