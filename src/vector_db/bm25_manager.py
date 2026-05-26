@@ -196,21 +196,13 @@ class BM25Manager(BaseRetriever):
             self.bm25 = None
             self.corpus_data = []
 
-    def _apply_metadata_filter(self, scores: np.ndarray, metadata_filter: dict) -> list[int]:
-        """주어진 메타데이터 필터에 부합하는 문서의 인덱스 목록을 반환하고 불일치 문서는 점수를 0.0으로 만듭니다."""
-        matching_indices = []
-        for idx, doc in enumerate(self.corpus_data):
-            doc_meta = doc.get("metadata", {})
-            match = True
-            for k, v in metadata_filter.items():
-                if doc_meta.get(k) != v:
-                    match = False
-                    break
-            if not match:
-                scores[idx] = 0.0
-                continue
-            matching_indices.append(idx)
-        return matching_indices
+    def _apply_metadata_filter(self, metadata_filter: dict) -> list[int]:
+        """주어진 메타데이터 필터에 부합하는 문서의 인덱스 목록을 반환합니다."""
+        return [
+            idx
+            for idx, doc in enumerate(self.corpus_data)
+            if all(doc.get("metadata", {}).get(k) == v for k, v in metadata_filter.items())
+        ]
 
     def get_top_n(
         self,
@@ -242,7 +234,7 @@ class BM25Manager(BaseRetriever):
 
         # 메타데이터 필터링 적용 및 매칭되는 문서 인덱스 분류
         if metadata_filter:
-            matching_indices = self._apply_metadata_filter(scores, metadata_filter)
+            matching_indices = self._apply_metadata_filter(metadata_filter)
         else:
             matching_indices = list(range(len(self.corpus_data)))
 
@@ -250,7 +242,7 @@ class BM25Manager(BaseRetriever):
             return []
 
         # 매칭되는 문서들의 점수 중 최댓값을 구함 (전역 정규화 스케일러용)
-        s_max = float(np.max(scores))
+        s_max = float(np.max(scores[matching_indices]))
         s_min = 0.0
         denom = s_max - s_min if s_max > 0.0 else 1.0
 

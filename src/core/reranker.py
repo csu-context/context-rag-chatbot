@@ -175,8 +175,8 @@ class CrossEncoderReranker(BaseReranker):
         top_k: int | None = None,
         threshold: float | None = None,
     ) -> RerankResult:
-        # RAG 응답 시간 5초 이내 사수를 위해 최종 제공 문서를 엄격하게 최대 3개로 하드캡(Hard-cap) 제한
-        effective_top_k = min(3, top_k or self.top_k)
+        # RAG 응답 시간 5초 이내 사수를 위해 최종 제공 문서를 엄격하게 최대 RERANKER_MAX_DOCS개로 하드캡(Hard-cap) 제한
+        effective_top_k = min(settings.RERANKER_MAX_DOCS, top_k or self.top_k)
         effective_threshold = threshold if threshold is not None else self.threshold
 
         if len(documents) < 2:
