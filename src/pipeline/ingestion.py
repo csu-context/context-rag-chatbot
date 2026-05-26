@@ -19,41 +19,37 @@ from src.vector_db.chroma_manager import ChromaDBManager
 logger = logging.getLogger(__name__)
 
 
-def _process_single_file_helper(
+def _process_single_file_helper(  # noqa: C901
     file_path: Path,
     file_parser_types: dict[str, str] | None,
     processed_dir: Path,
     cache_dir: Path,
 ) -> list[dict[str, Any]]:
-    import uuid
     import logging
+
     from src.common.constants import MetadataFields
     from src.core.storage import StorageManager
-    from src.pipeline.strategies import (
-        DoclingPDFParserStrategy,
-        ManualParserStrategy,
-        MarkdownParserStrategy,
-    )
-    from src.processing.chunking import create_parent_child_chunks, HierarchicalChunker
-    from src.utils.unicode import normalize_path_to_nfc, normalize_to_nfc
+    from src.processing.chunking import HierarchicalChunker
     from src.utils.paths import RAW_DATA_DIR
-    
+    from src.utils.unicode import normalize_to_nfc
+
     logger = logging.getLogger(__name__)
     file_chunks_accum = []
-    
+
     try:
         storage_manager = StorageManager(processed_dir, cache_dir)
         chunker = HierarchicalChunker()
-        
+
         # 1. 파일 확장자에 따른 전략 동적 선택 및 파싱
         if file_path.suffix.lower() == ".pdf":
             rel_path = normalize_path_to_nfc(file_path.relative_to(RAW_DATA_DIR))
             normalized_parser_types = {normalize_to_nfc(k): v for k, v in (file_parser_types or {}).items()}
             file_parser = normalized_parser_types.get(rel_path, "manual").lower()
-            
+
             if file_parser == "docling":
                 try:
                     import docling  # noqa: F401
+
                     active_strategy = DoclingPDFParserStrategy()
                 except ImportError:
                     logger.error("docling 라이브러리가 없어 manual 전략으로 대체합니다.")
@@ -109,7 +105,7 @@ def _process_single_file_helper(
                     )
     except Exception as e:
         logger.error(f"파일 처리 실패: {file_path.name} - {e!s}")
-        
+
     return file_chunks_accum
 
 
@@ -150,12 +146,12 @@ class IngestionPipeline:
     ) -> list[dict[str, Any]]:
         import os
         from concurrent.futures import ProcessPoolExecutor, as_completed
-        
+
         all_hierarchical_data = []
         total_files = len(files)
         if total_files == 0:
             return []
-            
+
         # 단일 파일인 경우 불필요한 프로세스 풀 생성 오버헤드 방지
         if total_files == 1:
             if progress_callback:
@@ -183,11 +179,13 @@ class IngestionPipeline:
         has_pdf = any(f.suffix.lower() == ".pdf" for f in files)
         if has_pdf:
             max_workers = 1
-            logger.info("PDF 파일이 감지되어 메모리 보호(OOM 방지)를 위해 단일 스레드 순차 모드로 전환합니다. (Workers: 1)")
+            logger.info(
+                "PDF 파일이 감지되어 메모리 보호(OOM 방지)를 위해 단일 스레드 순차 모드로 전환합니다. (Workers: 1)"
+            )
         else:
             max_workers = min(total_files, os.cpu_count() or 4)
             logger.info(f"병렬 파싱 활성화 (Workers: {max_workers})")
-        
+
         futures_map = {}
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
             for idx, file_path in enumerate(files):
@@ -199,23 +197,21 @@ class IngestionPipeline:
                     self.storage_manager.cache_dir,
                 )
                 futures_map[future] = (idx, file_path)
-                
-            completed_count = 0
-            for future in as_completed(futures_map):
+
+            for completed_count, future in enumerate(as_completed(futures_map), 1):
                 idx, file_path = futures_map[future]
                 try:
                     res = future.result()
                     all_hierarchical_data.extend(res)
                 except Exception as e:
                     logger.error(f"병렬 파일 처리 실패: {file_path.name} - {e}")
-                
-                completed_count += 1
+
                 if progress_callback:
                     try:
                         progress_callback(completed_count, total_files, file_path.name)
                     except Exception as cb_e:
                         logger.error(f"진행 상황 콜백 호출 실패: {cb_e}")
-                        
+
         return all_hierarchical_data
 
     def save_processed_data(self, data: list[dict[str, Any]]) -> list[Path]:

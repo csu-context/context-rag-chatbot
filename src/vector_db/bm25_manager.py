@@ -110,7 +110,7 @@ class BM25Manager(BaseRetriever):
 
         return flattened
 
-    def load_index(self):
+    def load_index(self):  # noqa: C901
         """
         가공된 데이터를 로드하여 BM25 인덱스를 빌드함.
         [DataOps] 신규/수정/삭제된 파일만 부분 감지하여 인덱스를 증분 업데이트(Incremental Update)합니다.
@@ -127,7 +127,7 @@ class BM25Manager(BaseRetriever):
             # 1. 기존 캐시 및 코퍼스 로드 시도
             corpus_path = self.cache_dir / _CORPUS_FILE
             manifest_path = self.cache_dir / _MANIFEST_FILE
-            
+
             existing_corpus = []
             if corpus_path.exists() and manifest_path.exists():
                 try:
@@ -176,7 +176,8 @@ class BM25Manager(BaseRetriever):
             # 삭제 및 수정된 기존 데이터 필터링 제거
             sids_to_remove = modified_sids | deleted_sids
             updated_corpus = [
-                doc for doc in existing_corpus 
+                doc
+                for doc in existing_corpus
                 if doc.get(DataFields.METADATA, {}).get(MetadataFields.SOURCE_ID) not in sids_to_remove
             ]
 
@@ -222,7 +223,7 @@ class BM25Manager(BaseRetriever):
 
             with open(self.cache_dir / _CORPUS_FILE, "w", encoding="utf-8") as f:
                 json.dump(self.corpus_data, f, ensure_ascii=False, separators=(",", ":"))
-                
+
             with open(self.cache_dir / _MANIFEST_FILE, "w", encoding="utf-8") as f:
                 json.dump({"docs": len(self.corpus_data)}, f)
 
