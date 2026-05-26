@@ -57,13 +57,19 @@ class BM25Manager(BaseRetriever):
             text = text.replace(k, v)
         return text
 
+    STOPWORDS = {
+        "대한", "대해", "위해", "통해", "경우", "또한", "모든", "의한", "따라",
+        "기타", "사항", "있거나", "있으며", "의하여", "관하여", "다만"
+    }
+
     def _tokenizer(self, text: str) -> list[str]:
-        """한국어 형태소 분석을 통해 의미 있는 토큰(명사, 용언 등)만 추출함."""
+        """한국어 형태소 분석을 통해 의미 있는 토큰(명사, 용언 등)만 추출하고 불용어를 필터링함."""
         if not text:
             return []
         text = self._apply_synonyms(text)
         # N: 명사, V: 용언(동사/형용사), S: 외국어/숫자 추출 및 1글자 노이즈 제거
-        return [t.form for t in self.kiwi.tokenize(text) if t.tag.startswith(("N", "V", "S")) and len(t.form) > 1]
+        tokens = [t.form for t in self.kiwi.tokenize(text) if t.tag.startswith(("N", "V", "S")) and len(t.form) > 1]
+        return [tok for tok in tokens if tok not in self.STOPWORDS]
 
     def _get_all_json_files(self) -> list:
         return list(self.data_dir.glob("*.json"))
@@ -176,7 +182,13 @@ class BM25Manager(BaseRetriever):
             self.bm25 = None
             self.corpus_data = []
 
-    def get_top_n(self, query: str, n: int = 5, return_scores: bool = False) -> list[dict]:
+    def get_top_n(
+        self,
+        query: str,
+        n: int = 5,
+        return_scores: bool = False,
+        metadata_filter: dict | None = None,
+    ) -> list[dict]:
         """
         질의어와 가장 유사한 상위 N개의 문서 조각을 반환함.
 
@@ -184,6 +196,7 @@ class BM25Manager(BaseRetriever):
             query (str): 검색할 사용자 질의어.
             n (int): 반환할 결과 개수.
             return_scores (bool): 점수(정규화됨)를 포함하여 반환할지 여부.
+            metadata_filter (dict): 선택적인 메타데이터 필터링 조건.
 
         Returns:
             list[dict]: 검색된 문서 조각 및 메타데이터 리스트.
@@ -196,21 +209,44 @@ class BM25Manager(BaseRetriever):
             return []
 
         scores = self.bm25.get_scores(tokenized_query)
-        if not scores.any():
+
+        # 메타데이터 필터링 적용 및 매칭되는 문서 인덱스 분류
+        matching_indices = []
+        for idx, doc in enumerate(self.corpus_data):
+            if metadata_filter:
+                doc_meta = doc.get("metadata", {})
+                match = True
+                for k, v in metadata_filter.items():
+                    if doc_meta.get(k) != v:
+                        match = False
+                        break
+                if not match:
+                    scores[idx] = 0.0
+                    continue
+            matching_indices.append(idx)
+
+        if not matching_indices:
             return []
 
-        n_docs = len(scores)
-        if n_docs <= n:
-            top_indices = np.argsort(scores)[::-1].tolist()
-        else:
-            top_k = np.argpartition(scores, -n)[-n:]
-            top_indices = top_k[np.argsort(scores[top_k])[::-1]].tolist()
-        top_scores = [float(scores[i]) for i in top_indices]
+        # 매칭되는 문서들의 점수 중 최댓값을 구함 (전역 정규화 스케일러용)
+        s_max = float(np.max(scores))
+        s_min = 0.0
+        denom = s_max - s_min if s_max > 0.0 else 1.0
 
-        # 타 검색 엔진과의 결합을 위한 점수 정규화 (Min-Max Scaling)
-        s_max, s_min = max(top_scores), min(top_scores)
-        denom = s_max - s_min if s_max != s_min else 1.0
-        normalized = [(s - s_min) / denom for s in top_scores]
+        # 매칭된 인덱스들에 대해서만 스코어 기반 정렬 수행
+        matching_scores = scores[matching_indices]
+        if not matching_scores.any():
+            return []
+
+        n_matching = len(matching_indices)
+        if n_matching <= n:
+            sorted_sub_indices = np.argsort(matching_scores)[::-1].tolist()
+        else:
+            top_k_sub = np.argpartition(matching_scores, -n)[-n:]
+            sorted_sub_indices = top_k_sub[np.argsort(matching_scores[top_k_sub])[::-1]].tolist()
+
+        top_indices = [matching_indices[i] for i in sorted_sub_indices]
+        normalized = [(float(scores[i]) - s_min) / denom for i in top_indices]
 
         results = []
         for rank, (idx, norm_score) in enumerate(zip(top_indices, normalized, strict=False)):
@@ -221,9 +257,9 @@ class BM25Manager(BaseRetriever):
                 results.append(doc)
         return results
 
-    def retrieve(self, query: str, n: int = 5) -> list[dict[str, Any]]:
+    def retrieve(self, query: str, n: int = 5, metadata_filter: dict | None = None) -> list[dict[str, Any]]:
         """BaseRetriever 인터페이스 구현. BM25 키워드 검색을 실행합니다."""
-        return self.get_top_n(query=query, n=n, return_scores=True)
+        return self.get_top_n(query=query, n=n, return_scores=True, metadata_filter=metadata_filter)
 
 
 if __name__ == "__main__":

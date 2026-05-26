@@ -151,14 +151,14 @@ class ChromaDBManager(BaseRetriever):
         except Exception as e:
             logger.error(f"문서 업서트 중 오류 발생: {e}")
 
-    def search(self, query_text: str, k: int = 3) -> list[dict[str, Any]]:
+    def search(self, query_text: str, k: int = 3, where: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         """
         주어진 쿼리 텍스트와 가장 유사한 문서를 검색하고,
         하이브리드 리트리버와 호환되는 표준화된 dict 리스트 형태로 반환합니다.
         """
         try:
             # ChromaDB query 호출
-            results = self.collection.query(query_texts=[query_text], n_results=k)
+            results = self.collection.query(query_texts=[query_text], n_results=k, where=where)
 
             # 검색 결과가 없는 경우 빈 리스트 반환 (에러 전파 방지)
             if not results or not results.get("documents") or len(results["documents"][0]) == 0:
@@ -190,9 +190,15 @@ class ChromaDBManager(BaseRetriever):
             logger.error(f"DB 검색 중 오류 발생: {e}")
             return []  # 에러 발생 시에도 빈 리스트를 반환하여 프로세스 중단 방지
 
-    def retrieve(self, query: str, n: int = 5) -> list[dict[str, Any]]:
+    def retrieve(self, query: str, n: int = 5, metadata_filter: dict | None = None) -> list[dict[str, Any]]:
         """BaseRetriever 인터페이스 구현. ChromaDB 검색을 실행합니다."""
-        return self.search(query_text=query, k=n)
+        where_clause = None
+        if metadata_filter:
+            if len(metadata_filter) == 1:
+                where_clause = metadata_filter
+            else:
+                where_clause = {"$and": [{k: v} for k, v in metadata_filter.items()]}
+        return self.search(query_text=query, k=n, where=where_clause)
 
     def get_count(self) -> int:
         """현재 컬렉션에 저장된 총 청크 수를 반환합니다."""

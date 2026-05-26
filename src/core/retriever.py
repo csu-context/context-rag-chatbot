@@ -20,43 +20,44 @@ class EnsembleRetriever(BaseRetriever):
         self.chroma = chroma_manager
         self.bm25 = bm25_manager if bm25_manager else BM25Manager()
 
-    def retrieve(self, query: str, n: int = 5) -> list[dict[str, Any]]:
+    def retrieve(self, query: str, n: int = 5, metadata_filter: dict | None = None) -> list[dict[str, Any]]:
         """BaseRetriever 인터페이스 구현. 하이브리드 RRF 검색을 수행합니다."""
-        return self.get_relevant_documents(query, n)
+        return self.get_relevant_documents(query, n, metadata_filter=metadata_filter)
 
-    def get_relevant_documents(self, query: str, n: int = 5) -> list:
+    def get_relevant_documents(self, query: str, n: int = 5, metadata_filter: dict | None = None) -> list:
         """BM25 + Vector 하이브리드 검색 결과를 RRF로 병합하여 반환."""
-        bm25_results = self._get_bm25_results(query, n)
-        vector_results = self._get_vector_results(query, n)
+        n_candidates = max(15, n)
+        bm25_results = self._get_bm25_results(query, n_candidates, metadata_filter=metadata_filter)
+        vector_results = self._get_vector_results(query, n_candidates, metadata_filter=metadata_filter)
 
         if not bm25_results and not vector_results:
             logger.warning(f"두 엔진 모두 결과 없음: '{query}'")
             return []
         if not bm25_results:
             logger.info("BM25 결과 없음 -> Vector 결과만 반환")
-            return vector_results
+            return vector_results[:n]
         if not vector_results:
             logger.info("Vector 결과 없음 -> BM25 결과만 반환")
-            return bm25_results
+            return bm25_results[:n]
 
         return self._rrf_fusion(bm25_results, vector_results, n)
 
-    def _get_bm25_results(self, query: str, n: int) -> list:
+    def _get_bm25_results(self, query: str, n: int, metadata_filter: dict | None = None) -> list:
         if not self.bm25:
             logger.info("BM25Manager 미연결 -> BM25 검색 생략")
             return []
         try:
-            return self.bm25.retrieve(query, n)
+            return self.bm25.retrieve(query, n, metadata_filter=metadata_filter)
         except Exception as e:
             logger.error(f"BM25 검색 오류: {e}")
             return []
 
-    def _get_vector_results(self, query: str, n: int) -> list:
+    def _get_vector_results(self, query: str, n: int, metadata_filter: dict | None = None) -> list:
         if not self.chroma:
             logger.info("ChromaManager 미연결 -> Vector 검색 생략")
             return []
         try:
-            return self.chroma.retrieve(query, n)
+            return self.chroma.retrieve(query, n, metadata_filter=metadata_filter)
         except Exception as e:
             logger.error(f"Vector 검색 오류: {e}")
             return []
