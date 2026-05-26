@@ -51,7 +51,7 @@ def rag_setup():
 
     # 리트리버는 실제 DB를 사용하되, LLM과 Reranker는 모킹하여 시스템 부하를 줄임
     with (
-        patch("src.models.factory.LLMFactory.get_model") as mock_llm_factory,
+        patch("src.models.factory.LLMFactory.create_llm") as mock_llm_factory,
         patch("src.core.reranker.RerankerFactory.create") as mock_reranker_factory,
     ):
         # Mock LLM 설정
@@ -87,7 +87,7 @@ def test_rag_chain_e2e(tc, rag_setup):
     rag_chain, mock_model, mock_reranker = rag_setup
 
     # Mock Reranker 동작 정의: 입력받은 문서를 그대로 반환
-    def mock_rerank(_query, docs, top_k):
+    def mock_rerank(query, docs, top_k):
         mock_result = MagicMock()
         mock_result.documents = docs[:top_k]
         mock_result.scores = [1.0] * len(mock_result.documents)
@@ -98,7 +98,7 @@ def test_rag_chain_e2e(tc, rag_setup):
     # Mock LLM 응답 정의: 기대하는 키워드를 포함한 답변 생성
     expected_answer = f"테스트 답변입니다. 키워드: {', '.join(tc['expect_keywords'])}"
 
-    def mock_stream(*_args, **_kwargs):
+    def mock_stream(*args, **kwargs):
         yield MagicMock(content=expected_answer)
 
     mock_model.stream.side_effect = mock_stream

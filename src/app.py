@@ -147,10 +147,7 @@ def show_admin_dialog(db_manager):  # noqa: C901
         p = math.pow(1024, i)
         return f"{round(size_bytes / p, 2)} {size_name[i]}"
 
-    current_files = []
-    # 하위 디렉토리까지 포함하여 재귀적으로 스캔
-    for ext in ["*.pdf", "*.md", "*.markdown"]:
-        current_files.extend(list(RAW_DATA_DIR.glob(f"**/{ext}")))
+    current_files = [f for f in RAW_DATA_DIR.glob("**/*.*") if f.is_file()]
 
     if not current_files:
         st.info("현재 등록된 문서가 없습니다.")

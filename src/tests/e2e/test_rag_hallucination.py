@@ -11,7 +11,7 @@ class MockRetriever:
     def __init__(self, docs):
         self.docs = docs
 
-    def search(self, _query_text, _k=5):
+    def search(self, query_text, k=5):
         return [{"content": doc.page_content, "metadata": doc.metadata, "score": 0.9} for doc in self.docs]
 
 
@@ -31,7 +31,7 @@ async def test_rag_normal_response():
     ]
     retriever = MockRetriever(docs)
 
-    with patch("src.models.factory.LLMFactory.get_model") as mock_factory:
+    with patch("src.models.factory.LLMFactory.create_llm") as mock_factory:
         mock_llm_inst = MagicMock()
         mock_model = MagicMock()
 
@@ -39,7 +39,7 @@ async def test_rag_normal_response():
         mock_model.model_name = "test-model"
         mock_model.temperature = 0.1
 
-        def mock_stream(*_args, **_kwargs):
+        def mock_stream(*args, **kwargs):
             yield MagicMock(content="2026년 신입 사원 연봉은 5,000만 원입니다.")
 
         mock_model.stream = mock_stream
@@ -77,7 +77,7 @@ async def test_rag_hallucination_prevention():
     ]
     retriever = MockRetriever(docs)
 
-    with patch("src.models.factory.LLMFactory.get_model") as mock_factory:
+    with patch("src.models.factory.LLMFactory.create_llm") as mock_factory:
         mock_llm_inst = MagicMock()
         mock_model = MagicMock()
 
@@ -85,7 +85,7 @@ async def test_rag_hallucination_prevention():
         mock_model.model_name = "test-model"
         mock_model.temperature = 0.1
 
-        def mock_stream(*_args, **_kwargs):
+        def mock_stream(*args, **kwargs):
             yield MagicMock(content="제공된 문서에서 관련 내용을 찾을 수 없습니다.")
 
         mock_model.stream = mock_stream

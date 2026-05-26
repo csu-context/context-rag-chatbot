@@ -1,7 +1,8 @@
 from unittest.mock import MagicMock, patch
 
-from src.models.factory import LLMFactory
 from src.models.llm_anthropic import AnthropicModel
+
+from src.models.factory import LLMFactory
 
 
 def test_factory_anthropic_model():

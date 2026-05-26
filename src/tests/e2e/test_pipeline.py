@@ -59,14 +59,14 @@ async def test_full_rag_pipeline():
     # 4. RAG 체인 호출 및 검증 (Mock LLM)
     test_query = "복수전공의 정의가 뭐야?"
 
-    with patch("src.models.factory.LLMFactory.get_model") as mock_factory:
+    with patch("src.models.factory.LLMFactory.create_llm") as mock_factory:
         mock_llm_inst = MagicMock()
         mock_model = MagicMock()
         mock_model.model_name = "test-model"
         mock_model.temperature = 0.1
 
         # 동기 제너레이터를 반환하도록 stream 모의 설정 (LangChain이 백그라운드 스레드에서 비동기 소비 가능)
-        def mock_stream(*_args, **_kwargs):
+        def mock_stream(*args, **kwargs):
             yield MagicMock(content="복수전공은 주전공 외에 추가로 이수하는 전공을 의미합니다.")
 
         mock_model.stream = mock_stream
