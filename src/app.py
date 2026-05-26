@@ -75,8 +75,12 @@ ensure_directories()
 init_session_state()
 
 
+def reset_doc_dialog():
+    st.session_state.dialog_doc_to_show = None
+
+
 # [문서 원문 보기]
-@st.dialog("문서 원문 보기")
+@st.dialog("문서 원문 보기", on_dismiss=reset_doc_dialog)
 def show_document_dialog(doc: dict):
     source = doc.get("metadata", {}).get(MetadataFields.SRC_NAME, "알 수 없음")
     page = doc.get("metadata", {}).get(MetadataFields.PG_NUM, "-")
@@ -88,7 +92,8 @@ def show_document_dialog(doc: dict):
     st.markdown(f"**관련도 점수:** {score:.4f}")
     st.text_area("원문 내용", content, height=300)
     if st.button("닫기"):
-        pass
+        reset_doc_dialog()
+        st.rerun()
 
 
 # --- 3. RAG 시스템 초기화 (캐싱 및 팩토리 패턴 도입) ---
@@ -308,7 +313,6 @@ for msg_idx, msg in enumerate(st.session_state.messages):
 
 if st.session_state.dialog_doc_to_show:
     show_document_dialog(st.session_state.dialog_doc_to_show)
-    st.session_state.dialog_doc_to_show = None
 
 
 def on_chat_submit():

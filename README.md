@@ -68,11 +68,22 @@
 - (Windows/Linux GPU 사용 시) [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) 설치
 
 ### 2. 실행 방법
-프로젝트 루트 디렉토리에서 아래 명령어를 입력하세요.
-```bash
-# 컨테이너 빌드 및 실행 (백그라운드)
-docker-compose up -d --build
-```
+본인의 하드웨어 환경(CPU 또는 GPU)에 맞는 명령어를 입력하세요.
+
+* **CPU 전용 환경:**
+  ```bash
+  # 컨테이너 빌드 및 실행 (기본 CPU 모드)
+  docker-compose up -d --build
+  ```
+
+* **GPU 환경 (NVIDIA 외장 그래픽 활용 시):**
+  > [!IMPORTANT]
+  > GPU 가속을 사용하기 전, 호스트 시스템에 **NVIDIA Container Toolkit**이 정상적으로 설치되고 Docker 설정에 등록되어 있어야 합니다.
+  
+  ```bash
+  # 기본 서비스에 GPU 설정을 병합하여 CUDA 가속 버전으로 빌드 및 실행
+  docker-compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+  ```
 
 ### 3. 서비스 접속
 - **Streamlit UI:** `http://localhost:8501`
