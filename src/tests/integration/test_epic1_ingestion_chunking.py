@@ -2,6 +2,7 @@ from langchain_core.documents import Document
 
 from src.core.chains import RAGPipeline
 from src.processing.chunking import HierarchicalChunker
+from src.processing.pdf_parser import DoclingPDFParser
 from src.utils.file_utils import generate_file_hash
 
 
@@ -44,6 +45,62 @@ def test_korean_chunker_separators():
     assert len(child_chunks) > 0
     for chunk in child_chunks:
         assert len(chunk["text"]) > 0
+
+
+def test_korean_chunker_sentence_boundary():
+    """청커가 임의 위치가 아닌 문장 종결 기호(`. `) 경계에서 우선 분할하는지 검증."""
+    chunker = HierarchicalChunker(
+        parent_chunk_size=500, parent_chunk_overlap=0,
+        child_chunk_size=12, child_chunk_overlap=0, min_chunk_size=0
+    )
+
+    # 문장 내부에 공백 없음: ". " separator 외에 유효한 분할 지점이 없음
+    text = "첫번째문장입니다. 두번째문장입니다."
+
+    child_chunks = chunker.split_into_children(text, "p1", {"source_id": "s1"})
+
+    # 19자짜리 텍스트가 chunk_size=12 초과 → 반드시 2개 이상으로 분리되어야 함
+    assert len(child_chunks) >= 2, "두 문장이 단일 청크에 병합되면 안 됩니다"
+
+    # 두 문장의 핵심 단어가 유실 없이 보존되어 있는지 검증
+    all_text = "".join(c["text"] for c in child_chunks)
+    assert "첫번째문장" in all_text
+    assert "두번째문장" in all_text
+
+    # 어떤 청크도 두 문장의 핵심 단어를 동시에 포함하지 않아야 함 (문장 경계 분리 검증)
+    for chunk in child_chunks:
+        has_first = "첫번째" in chunk["text"]
+        has_second = "두번째" in chunk["text"]
+        assert not (has_first and has_second), f"단일 청크가 두 문장 모두 포함: '{chunk['text']}'"
+
+
+def test_pdf_noise_filter_removes_patterns():
+    """DoclingPDFParser._clean_pdf_noise가 헤더/푸터/대외비 패턴을 제거하는지 검증."""
+    parser = DoclingPDFParser()
+
+    noisy = (
+        "조선대학교 학칙\n\n"
+        "제1조 이 학칙의 목적입니다.\n\n"
+        "대외비\n\n"
+        "제2조 적용 범위입니다.\n\n"
+        "- 1 -\n\n"
+        "제3조 마지막 조항입니다."
+    )
+
+    cleaned = parser._clean_pdf_noise(noisy)
+
+    # 노이즈 패턴이 제거되었는지 검증
+    assert "조선대학교 학칙" not in cleaned
+    assert "대외비" not in cleaned
+    assert "- 1 -" not in cleaned
+
+    # 본문 내용은 보존되었는지 검증
+    assert "제1조" in cleaned
+    assert "제2조" in cleaned
+    assert "제3조" in cleaned
+
+    # 연속된 빈 줄이 2개 이하로 정리되었는지 검증
+    assert "\n\n\n" not in cleaned
 
 
 def test_parent_document_mapping_in_pipeline(tmp_path, monkeypatch):
