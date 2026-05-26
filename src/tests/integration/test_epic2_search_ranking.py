@@ -140,6 +140,40 @@ def test_chroma_metadata_filter_where_clause():
     assert mock_collection.query.call_args.kwargs["where"] is None
 
 
+@pytest.mark.skipif(not __import__("torch").cuda.is_available(), reason="CUDA 환경 필요")
+def test_bge_reranker_cuda_korean_scoring():
+    """BAAI/bge-reranker-v2-m3가 CUDA에서 정상 로드되고 한국어 쿼리에 의미 있는 점수를 반환하는지 검증."""
+    CrossEncoderReranker.reset_instance()
+    try:
+        reranker = CrossEncoderReranker.get_instance(device="cuda", top_k=3)
+        assert reranker.device == "cuda"
+
+        query = "휴학 신청 기간은 언제인가요?"
+        docs = [
+            Document(page_content="휴학 신청 기간은 매 학기 초 2주간입니다.", metadata={}),
+            Document(page_content="장학금 지급 기준은 직전 학기 성적 기준입니다.", metadata={}),
+            Document(page_content="복학 신청은 개강 2주 전까지 홈페이지에서 가능합니다.", metadata={}),
+        ]
+
+        # 워밍업: 첫 호출 시 모델 로드 시간 포함되므로 결과만 검증
+        result = reranker.rerank(query, docs, top_k=3, threshold=0.0)
+
+        # 1. 모든 점수가 sigmoid 출력 범위 [0, 1] 이내인지 검증
+        assert all(0.0 <= s <= 1.0 for s in result.scores)
+
+        # 2. 점수가 모두 동일하지 않아야 함 (의미 있는 구별)
+        assert len(set(round(s, 3) for s in result.scores)) > 1
+
+        # 3. "휴학 신청 기간" 문서가 최상위 랭크인지 검증
+        assert "휴학" in result.documents[0].page_content
+
+        # 4. 모델 로드 완료 후 두 번째 호출에서 순수 추론 속도가 1초 미만인지 검증
+        result_warm = reranker.rerank(query, docs, top_k=3, threshold=0.0)
+        assert result_warm.elapsed_time_sec < 1.0
+    finally:
+        CrossEncoderReranker.reset_instance()
+
+
 def test_reranker_strict_context_pruning():
     """Reranker가 response latency 사수를 위해 최종 제공 문서를 엄격하게 최대 3개로 제한하는지 검증."""
     reranker = CrossEncoderReranker.get_instance(top_k=5)
