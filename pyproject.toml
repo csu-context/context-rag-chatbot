@@ -35,9 +35,15 @@ line-ending = "auto"
 max-complexity = 10
 
 [tool.pytest.ini_options]
-testpaths = ["src/tests"]
+# 기본 테스트 경로: unit 테스트만 포함
+# e2e 테스트(src/tests/e2e/)는 실서버(ChromaDB) 없이 실행 시 segfault 발생하므로
+# 별도로 `pytest src/tests/e2e/` 명령으로 수동 실행합니다.
+testpaths = ["src/tests/unit"]
 python_files = "test_*.py"
 addopts = "--strict-markers"
+markers = [
+    "e2e: 실서버(ChromaDB) 연동이 필요한 end-to-end 테스트",
+]
 
 [tool.coverage.run]
 source = ["src"]

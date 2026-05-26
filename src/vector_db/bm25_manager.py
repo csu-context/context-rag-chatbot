@@ -7,6 +7,7 @@ import numpy as np
 from kiwipiepy import Kiwi
 
 from src.common.constants import DataFields, MetadataFields
+from src.core.base_retriever import BaseRetriever
 from src.utils.paths import BM25_CACHE_DIR, PROCESSED_DATA_DIR, SYNONYMS_FILE
 from src.vector_db.bm25_index import BM25PlusIndex
 
@@ -16,7 +17,7 @@ _CORPUS_FILE = "corpus.json"
 _MANIFEST_FILE = "manifest.json"
 
 
-class BM25Manager:
+class BM25Manager(BaseRetriever):
     """
     키워드 기반 검색(BM25)을 관리하는 클래스.
     가공된 JSON 데이터를 로드하여 인덱스를 빌드하고, 형태소 분석 기반의 키워드 검색을 수행함.
@@ -219,6 +220,10 @@ class BM25Manager:
             else:
                 results.append(doc)
         return results
+
+    def retrieve(self, query: str, n: int = 5) -> list[dict[str, Any]]:
+        """BaseRetriever 인터페이스 구현. BM25 키워드 검색을 실행합니다."""
+        return self.get_top_n(query=query, n=n, return_scores=True)
 
 
 if __name__ == "__main__":

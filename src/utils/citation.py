@@ -1,13 +1,11 @@
-import unicodedata
-
 from langchain_core.documents import Document
+
+from src.utils.unicode import normalize_to_nfc
 
 
 def normalize_text(text: str) -> str:
     """NFD(자소 분리) 한글을 NFC로 정규화하여 깨짐 현상을 방지합니다."""
-    if not text:
-        return text
-    return unicodedata.normalize("NFC", text)
+    return normalize_to_nfc(text)
 
 
 def format_citations(docs: list[Document]) -> str:

@@ -1,20 +1,28 @@
 import logging
+from typing import Any
 
 from src.common.config import settings
 from src.common.constants import MetadataFields
-from src.vector_db.bm25_manager import BM25Manager
+from src.core.base_retriever import BaseRetriever
 
 logger = logging.getLogger(__name__)
 
 
-class EnsembleRetriever:
+class EnsembleRetriever(BaseRetriever):
     def __init__(self, chroma_manager=None, bm25_manager=None):
         # 중앙 설정(settings) 참조
         self.rrf_k = settings.RRF_K
         self.weight_bm25 = settings.HYBRID_WEIGHT_BM25
         self.weight_vector = settings.HYBRID_WEIGHT_VECTOR
+
+        from src.vector_db.bm25_manager import BM25Manager
+
         self.chroma = chroma_manager
         self.bm25 = bm25_manager if bm25_manager else BM25Manager()
+
+    def retrieve(self, query: str, n: int = 5) -> list[dict[str, Any]]:
+        """BaseRetriever 인터페이스 구현. 하이브리드 RRF 검색을 수행합니다."""
+        return self.get_relevant_documents(query, n)
 
     def get_relevant_documents(self, query: str, n: int = 5) -> list:
         """BM25 + Vector 하이브리드 검색 결과를 RRF로 병합하여 반환."""
@@ -34,8 +42,11 @@ class EnsembleRetriever:
         return self._rrf_fusion(bm25_results, vector_results, n)
 
     def _get_bm25_results(self, query: str, n: int) -> list:
+        if not self.bm25:
+            logger.info("BM25Manager 미연결 -> BM25 검색 생략")
+            return []
         try:
-            return self.bm25.get_top_n(query, n=n, return_scores=True)
+            return self.bm25.retrieve(query, n)
         except Exception as e:
             logger.error(f"BM25 검색 오류: {e}")
             return []
@@ -45,7 +56,7 @@ class EnsembleRetriever:
             logger.info("ChromaManager 미연결 -> Vector 검색 생략")
             return []
         try:
-            return self.chroma.search(query, k=n)
+            return self.chroma.retrieve(query, n)
         except Exception as e:
             logger.error(f"Vector 검색 오류: {e}")
             return []
@@ -110,3 +121,35 @@ class EnsembleRetriever:
             print(f"  - {r.get('content', '')[:50]}  (rrf: {r.get('_rrf_score', '-')})")
 
         print(f"{'=' * 60}\n")
+
+
+class RetrieverFactory:
+    """설정에 따른 Retriever 인스턴스를 동적으로 생성하는 팩토리 클래스"""
+
+    @staticmethod
+    def create_retriever(
+        retriever_type: str | None = None,
+        chroma_manager=None,
+        bm25_manager=None,
+    ) -> BaseRetriever:
+        if retriever_type is None:
+            retriever_type = settings.RETRIEVER_TYPE
+
+        retriever_type = retriever_type.lower()
+
+        from src.vector_db.bm25_manager import BM25Manager
+        from src.vector_db.chroma_manager import ChromaDBManager
+
+        # chroma_manager와 bm25_manager 준비
+        c_manager = chroma_manager if chroma_manager else ChromaDBManager()
+        b_manager = bm25_manager if bm25_manager else BM25Manager()
+
+        if retriever_type == "vector":
+            return c_manager
+        elif retriever_type == "bm25":
+            return b_manager
+        elif retriever_type in ["hybrid", "ensemble"]:
+            return EnsembleRetriever(chroma_manager=c_manager, bm25_manager=b_manager)
+        else:
+            logger.warning(f"알 수 없는 검색 타입 '{retriever_type}'. vector 검색으로 폴백합니다.")
+            return c_manager
