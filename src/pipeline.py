@@ -562,7 +562,7 @@ class PipelineOrchestrator:
 
         return files_to_process, source_ids_to_delete, new_manifest
 
-    def _process_changes(
+    def _process_changes(  # noqa: C901
         self,
         files_to_process: list[Path],
         source_ids_to_delete: list[str],

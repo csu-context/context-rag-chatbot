@@ -438,20 +438,16 @@ def show_admin_dialog(db_manager):  # noqa: C901
             "<hr style='margin: 0px 0px 10px 0px; border: 0.5px solid rgba(151,166,195,0.2);'>",
             unsafe_allow_html=True,
         )
-
-        # ChromaDB에서 실제 메타데이터를 가져와 파서 타입 확인 (캐싱된 헬퍼 사용)
-        file_parser_map = _get_file_parser_map(db_manager)
-
         for i, f in enumerate(current_files):
             r_col1, r_col2, r_col3, r_col4, r_col5, r_col6, r_col7, r_col8 = st.columns(
                 [0.3, 2.0, 0.6, 0.9, 0.9, 0.6, 0.6, 0.6]
             )
             r_col1.write(f"{i + 1}")
-            
+
             # 적용 파서 식별 (매니페스트 우선 조회, 차선으로 ChromaDB 조회)
             import unicodedata
             rel_path = unicodedata.normalize("NFC", str(f.relative_to(RAW_DATA_DIR)))
-            
+
             r_col2.text(rel_path)  # 파일명 대신 상대 경로 표시
             r_col3.write(format_size(f.stat().st_size))
 
@@ -548,33 +544,7 @@ def show_admin_dialog(db_manager):  # noqa: C901
                 st.rerun()
 
             if r_col8.button("🗑️", key=f"del_btn_{i}", help=f"'{f.name}' 삭제") and f.exists():
-=======
-            # 파서 타입 표시
-            parser_type = file_parser_map.get(rel_path, "-")
-            parser_color = "blue" if parser_type == "docling" else "green" if parser_type == "manual" else "gray"
-            r_col4.markdown(f":{parser_color}[{parser_type}]")
 
-            # 청크 수 조회 시에도 상대 경로 또는 파일명 사용 (Legacy 대응)
-            chunk_count = db_manager.get_source_count(f.name)
-            if chunk_count == 0 and rel_path != f.name:
-                # relative_path로 다시 시도
-                # (db_manager.get_source_count가 MetadataFields.SRC_NAME만 볼 경우 대응 필요)
-                pass
-            r_col5.write(f"{chunk_count}")
-
-            # 개별 동기화 버튼
-            if r_col6.button("🔄", key=f"sync_btn_{i}", help=f"'{f.name}' 개별 동기화"):
-                orchestrator = PipelineOrchestrator()
-                with st.spinner(f"{f.name} 동기화 중..."):
-                    if orchestrator.process_single_file(f):
-                        st.toast(f"동기화 완료: {f.name}")
-                        initialize_rag_system.clear()
-                        time.sleep(0.5)
-                        st.rerun()
-
-            # 삭제 버튼
-            if r_col7.button("🗑️", key=f"del_btn_{i}", help=f"'{f.name}' 삭제") and f.exists():
->>>>>>> origin/develop
                 f.unlink()
                 st.toast(f"파일 삭제됨: {f.name}")
                 if auto_sync:
