@@ -96,15 +96,12 @@ def show_document_dialog(doc: dict):
 def initialize_rag_system():
     retriever_type = os.getenv("RETRIEVER_TYPE", "vector").lower()
     from src.vector_db.chroma_manager import ChromaDBManager
+
     db_manager = ChromaDBManager()
     # RetrieverFactory를 사용한 리트리버 동적 생성
-    retriever = RetrieverFactory.create_retriever(
-        retriever_type=retriever_type,
-        chroma_manager=db_manager
-    )
+    retriever = RetrieverFactory.create_retriever(retriever_type=retriever_type, chroma_manager=db_manager)
     rag_chain = get_rag_chain(retriever)
     return db_manager, rag_chain
-
 
 
 try:

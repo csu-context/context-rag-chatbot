@@ -208,7 +208,6 @@ def _check_local_db_mismatch(rel_path: str, local_info: dict, db_chunks: list, a
     active_parser = next(iter(parser_types)) if parser_types else settings.PARSER_TYPE
     current_sid = generate_file_hash(local_info["path"], parser_type=active_parser)
 
-
     if current_sid not in source_ids:
         logger.error(f"  [MISMATCH] {rel_path:30} | 해시 불일치 (Update 필요)")
         anomalies["mismatched_hash"].append(rel_path)
@@ -299,13 +298,10 @@ def repair_integrity(anomalies: dict):
 
             logger.info(f"  재색인 파일 ({rel_path}) | 적용 파서: {parser_type}")
             SyncController.trigger_single_file_sync(
-                file_name=file_name,
-                active_parser=parser_type,
-                clear_cache_callback=lambda: None
+                file_name=file_name, active_parser=parser_type, clear_cache_callback=lambda: None
             )
 
     logger.info("정합성 복구 작업이 완료되었습니다.")
-
 
 
 def run_full_diagnostics(silent: bool = False, check_model: bool = True) -> tuple[bool, dict]:

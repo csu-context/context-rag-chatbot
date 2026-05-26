@@ -84,7 +84,6 @@ class ChromaDBManager(BaseRetriever):
                         self.client = chromadb.PersistentClient(path=str(VECTOR_DB_DIR), settings=common_settings)
                     ChromaDBManager._shared_client = self.client
 
-
                 # 컬렉션 로드 (실질적인 연결 테스트 구간)
                 # hnsw:num_threads=1: Python 3.13 + chromadb Rust 바인딩의 멀티스레드 segfault 방지
                 self.collection = self.client.get_or_create_collection(
