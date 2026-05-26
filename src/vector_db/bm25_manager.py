@@ -1,54 +1,47 @@
 import json
 import logging
-import pickle
+import traceback
 from typing import Any
 
+import numpy as np
 from kiwipiepy import Kiwi
-from rank_bm25 import BM25Plus
 
-from src.common.constants import DataFields
-from src.utils.paths import BM25_CACHE_FILE, PROCESSED_DATA_DIR, SYNONYMS_FILE
+from src.common.constants import DataFields, MetadataFields
+from src.utils.paths import BM25_CACHE_DIR, PROCESSED_DATA_DIR, SYNONYMS_FILE
+from src.vector_db.bm25_index import BM25PlusIndex
 
 logger = logging.getLogger(__name__)
+
+_CORPUS_FILE = "corpus.json"
+_MANIFEST_FILE = "manifest.json"
 
 
 class BM25Manager:
     """
     키워드 기반 검색(BM25)을 관리하는 클래스.
     가공된 JSON 데이터를 로드하여 인덱스를 빌드하고, 형태소 분석 기반의 키워드 검색을 수행함.
+
+    인덱스 캐시 구조 (.cache/bm25_v2/):
+      tf_matrix.npz  — scipy sparse CSC TF 행렬
+      arrays.npz     — numpy: idf 배열, doc_len 배열, 스칼라 파라미터
+      vocab.json     — 단어→열 인덱스 매핑
+      corpus.json    — 슬림 코퍼스 (content + metadata + chunk_id만 보존)
+      manifest.json  — 캐시 유효성 타임스탬프
     """
 
-    def __init__(self, data_dir=PROCESSED_DATA_DIR):
-        """
-        BM25 매니저 초기화.
-
-        Args:
-            data_dir (Path): 가공된 JSON 파일들이 위치한 디렉토리 경로.
-        """
+    def __init__(self, data_dir=PROCESSED_DATA_DIR, cache_dir=BM25_CACHE_DIR):
         self.data_dir = data_dir
+        self.cache_dir = cache_dir
         self.kiwi = Kiwi()
-        self.bm25 = None
-        self.corpus_data = []
-
-        # 중앙 관리되는 캐시 파일 경로 사용
-        self.cache_path = BM25_CACHE_FILE
-
-        # 동의어 사전 로드
+        self.bm25: BM25PlusIndex | None = None
+        self.corpus_data: list[dict] = []
         self.synonyms = self._load_synonyms()
-
         self.load_index()
 
     def _load_synonyms(self) -> dict:
-        """
-        외부 JSON 파일에서 동의어 사전을 로드함.
-
-        Returns:
-            dict: {줄임말: 정식명칭} 구조의 동의어 딕셔너리.
-        """
         if not SYNONYMS_FILE.exists():
             logger.warning(f"동의어 파일을 찾을 수 없습니다: {SYNONYMS_FILE} (빈 사전 사용)")
             return {}
-
         try:
             with open(SYNONYMS_FILE, encoding="utf-8") as f:
                 return json.load(f)
@@ -57,15 +50,6 @@ class BM25Manager:
             return {}
 
     def _apply_synonyms(self, text: str) -> str:
-        """
-        입력 텍스트의 줄임말 등을 정식 명칭으로 치환함.
-
-        Args:
-            text (str): 치환 전 원본 텍스트.
-
-        Returns:
-            str: 동의어가 치환된 텍스트.
-        """
         if not self.synonyms:
             return text
         for k, v in self.synonyms.items():
@@ -73,59 +57,30 @@ class BM25Manager:
         return text
 
     def _tokenizer(self, text: str) -> list[str]:
-        """
-        한국어 형태소 분석을 통해 의미 있는 토큰(명사, 용언 등)만 추출함.
-
-        Args:
-            text (str): 분석할 원본 텍스트.
-
-        Returns:
-            list[str]: 정제된 토큰 리스트.
-        """
+        """한국어 형태소 분석을 통해 의미 있는 토큰(명사, 용언 등)만 추출함."""
         if not text:
             return []
         text = self._apply_synonyms(text)
-
         # N: 명사, V: 용언(동사/형용사), S: 외국어/숫자 추출 및 1글자 노이즈 제거
-        tokens = [t.form for t in self.kiwi.tokenize(text) if t.tag.startswith(("N", "V", "S")) and len(t.form) > 1]
-        return tokens
+        return [t.form for t in self.kiwi.tokenize(text) if t.tag.startswith(("N", "V", "S")) and len(t.form) > 1]
 
     def _get_all_json_files(self) -> list:
-        """
-        데이터 디렉토리 내의 모든 JSON 파일 리스트를 반환함.
-
-        Returns:
-            list[Path]: JSON 파일 경로 리스트.
-        """
         return list(self.data_dir.glob("*.json"))
 
     def _should_rebuild_index(self, json_files: list) -> bool:
-        """
-        캐시 파일의 유효성을 검사하여 인덱스 재빌드 여부를 결정함.
-
-        Args:
-            json_files (list): 현재 디렉토리에 존재하는 소스 JSON 파일 리스트.
-
-        Returns:
-            bool: 재빌드가 필요하면 True, 아니면 False.
-        """
-        if not self.cache_path.exists():
+        """manifest.json 타임스탬프를 기준으로 재빌드 여부를 결정함."""
+        manifest_path = self.cache_dir / _MANIFEST_FILE
+        if not manifest_path.exists():
             return True
-
-        # 소스 파일 중 하나라도 캐시보다 최신이면 재빌드 필요
         last_mtime = max((f.stat().st_mtime for f in json_files), default=0)
-        return last_mtime > self.cache_path.stat().st_mtime
+        return last_mtime > manifest_path.stat().st_mtime
 
     def _flatten_data(self, data: Any) -> list[dict]:
         """
-        계층형 구조(children 리스트 포함)의 데이터를 평탄화하여 리스트로 반환함.
-        'text', 'content', 'parent_text' 필드를 데이터의 본문으로 간주함.
-
-        Args:
-            data (Any): JSON에서 로드된 원본 데이터 (dict 또는 list).
-
-        Returns:
-            list[dict]: 평탄화된 문서 조각 리스트.
+        계층형 구조를 평탄화하며, 검색에 필요한 필드만 보존함.
+          - content  : 검색 본문 (text / content / parent_text 우선순위)
+          - metadata : 출처 메타데이터
+          - chunk_id : RRF 중복 제거용 (최상위 필드에 존재할 경우만)
         """
         flattened = []
 
@@ -135,16 +90,18 @@ class BM25Manager:
             return flattened
 
         if isinstance(data, dict):
-            # 본문 필드 추출 (text 우선, 없으면 content, 그 다음 parent_text)
             text_content = data.get(DataFields.TEXT) or data.get(DataFields.CONTENT) or data.get(DataFields.PARENT_TEXT)
 
-            # 본문이 있는 경우 현재 노드 추가
             if text_content:
-                # content 필드로 통일하여 저장 (기존 코드 호환성)
-                node = {**data, DataFields.CONTENT: text_content}
+                node: dict = {
+                    DataFields.CONTENT: text_content,
+                    DataFields.METADATA: data.get(DataFields.METADATA) or {},
+                }
+                # chunk_id가 최상위에 존재하면 보존 (RRF 중복 제거용)
+                if MetadataFields.CHUNK_ID in data:
+                    node[MetadataFields.CHUNK_ID] = data[MetadataFields.CHUNK_ID]
                 flattened.append(node)
 
-            # 자식 노드가 있는 경우 재귀적으로 탐색
             children = data.get(DataFields.CHILDREN)
             if children and isinstance(children, list):
                 for child in children:
@@ -155,7 +112,7 @@ class BM25Manager:
     def load_index(self):
         """
         가공된 데이터를 로드하여 BM25 인덱스를 빌드함.
-        캐시가 유효하면 캐시를 로드하고, 그렇지 않으면 신규 빌드함.
+        캐시가 유효하면 numpy/scipy 포맷으로 캐시를 로드하고, 그렇지 않으면 신규 빌드함.
         """
         json_files = self._get_all_json_files()
 
@@ -166,12 +123,10 @@ class BM25Manager:
             return
 
         try:
-            # 캐시 로드 시도
             if not self._should_rebuild_index(json_files):
-                with open(self.cache_path, "rb") as f:
-                    cached_data = pickle.load(f)
-                    self.bm25 = cached_data["bm25"]
-                    self.corpus_data = cached_data["corpus_data"]
+                self.bm25 = BM25PlusIndex.load(self.cache_dir)
+                with open(self.cache_dir / _CORPUS_FILE, encoding="utf-8") as f:
+                    self.corpus_data = json.load(f)
                 logger.info(f"통합 인덱스 로드 완료 (Cache): {len(self.corpus_data)} docs")
                 return
 
@@ -181,22 +136,18 @@ class BM25Manager:
             for json_file in json_files:
                 with open(json_file, encoding="utf-8") as f:
                     try:
-                        data = json.load(f)
-                        all_raw_data.append(data)
+                        all_raw_data.append(json.load(f))
                     except json.JSONDecodeError as e:
                         logger.error(f"JSON 파싱 오류 ({json_file.name}): {e}")
 
-            # 데이터 평탄화 및 정제
             self.corpus_data = self._flatten_data(all_raw_data)
 
             if not self.corpus_data:
                 logger.warning("유효한 텍스트 데이터가 없어 인덱스를 생성할 수 없습니다.")
                 return
 
-            # 모든 문서를 토큰화하여 BM25 인덱스 생성
             tokenized_corpus = [self._tokenizer(doc.get(DataFields.CONTENT, "")) for doc in self.corpus_data]
 
-            # 유효한 토큰이 있는 문서만 인덱싱 (BM25Plus 에러 방지)
             valid_indices = [i for i, tokens in enumerate(tokenized_corpus) if tokens]
             if not valid_indices:
                 logger.warning("토큰화된 유효 데이터가 없습니다.")
@@ -205,18 +156,21 @@ class BM25Manager:
             self.corpus_data = [self.corpus_data[i] for i in valid_indices]
             tokenized_corpus = [tokenized_corpus[i] for i in valid_indices]
 
-            self.bm25 = BM25Plus(tokenized_corpus)
+            self.bm25 = BM25PlusIndex()
+            self.bm25.build(tokenized_corpus)
 
-            # 빌드된 인덱스 캐싱
-            self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.cache_path, "wb") as f:
-                pickle.dump({"bm25": self.bm25, "corpus_data": self.corpus_data}, f)
+            # 직렬화 저장 (numpy/scipy 네이티브 포맷)
+            self.cache_dir.mkdir(parents=True, exist_ok=True)
+            self.bm25.save(self.cache_dir)
+            with open(self.cache_dir / _CORPUS_FILE, "w", encoding="utf-8") as f:
+                json.dump(self.corpus_data, f, ensure_ascii=False, separators=(",", ":"))
+            with open(self.cache_dir / _MANIFEST_FILE, "w", encoding="utf-8") as f:
+                json.dump({"docs": len(self.corpus_data)}, f)
+
             logger.info(f"통합 인덱스 빌드 및 저장 완료: {len(self.corpus_data)} docs")
 
         except Exception as e:
             logger.error(f"인덱스 로드 중 오류 발생: {e}")
-            import traceback
-
             logger.error(traceback.format_exc())
             self.bm25 = None
             self.corpus_data = []
@@ -240,14 +194,17 @@ class BM25Manager:
         if not tokenized_query:
             return []
 
-        # BM25 점수 계산
         scores = self.bm25.get_scores(tokenized_query)
-        if not any(scores):
+        if not scores.any():
             return []
 
-        # 상위 N개 인덱스 추출
-        top_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:n]
-        top_scores = [scores[i] for i in top_indices]
+        n_docs = len(scores)
+        if n_docs <= n:
+            top_indices = np.argsort(scores)[::-1].tolist()
+        else:
+            top_k = np.argpartition(scores, -n)[-n:]
+            top_indices = top_k[np.argsort(scores[top_k])[::-1]].tolist()
+        top_scores = [float(scores[i]) for i in top_indices]
 
         # 타 검색 엔진과의 결합을 위한 점수 정규화 (Min-Max Scaling)
         s_max, s_min = max(top_scores), min(top_scores)
@@ -258,7 +215,6 @@ class BM25Manager:
         for rank, (idx, norm_score) in enumerate(zip(top_indices, normalized, strict=False)):
             doc = self.corpus_data[idx]
             if return_scores:
-                # 하이브리드 검색을 위한 메타데이터 추가
                 results.append({**doc, "_bm25_score": round(norm_score, 4), "_rank": rank + 1})
             else:
                 results.append(doc)
