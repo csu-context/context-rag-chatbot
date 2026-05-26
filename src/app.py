@@ -269,8 +269,12 @@ def show_chunks_viewer_dialog(file_name, db_manager):  # noqa: C901
         st.rerun()
 
 
+def reset_doc_dialog():
+    st.session_state.dialog_doc_to_show = None
+
+
 # [문서 원문 보기]
-@st.dialog("문서 원문 보기")
+@st.dialog("문서 원문 보기", on_dismiss=reset_doc_dialog)
 def show_document_dialog(doc: dict):
     source = doc.get("metadata", {}).get(MetadataFields.SRC_NAME, "알 수 없음")
     page = doc.get("metadata", {}).get(MetadataFields.PG_NUM, "-")
@@ -282,9 +286,8 @@ def show_document_dialog(doc: dict):
     st.markdown(f"**관련도 점수:** {score:.4f}")
     st.text_area("원문 내용", content, height=300)
     if st.button("닫기"):
-        # Removed st.rerun() here. Dialog will close when dialog_doc_to_show is set to None
-        # and the main app reruns.
-        pass
+        reset_doc_dialog()
+        st.rerun()
 
 
 def reset_admin_active():
@@ -987,7 +990,6 @@ for msg_idx, msg in enumerate(st.session_state.messages):
 
 if st.session_state.dialog_doc_to_show:
     show_document_dialog(st.session_state.dialog_doc_to_show)
-    st.session_state.dialog_doc_to_show = None
 
 
 def on_chat_submit():
