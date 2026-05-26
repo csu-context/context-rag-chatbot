@@ -205,8 +205,9 @@ def _check_local_db_mismatch(rel_path: str, local_info: dict, db_chunks: list, a
         anomalies["duplicate_parsers"].append(rel_path)
 
     # DB에 저장된 실제 파서 정보를 바탕으로 해시값 다시 동적 계산
-    active_parser = list(parser_types)[0] if parser_types else settings.PARSER_TYPE
+    active_parser = next(iter(parser_types)) if parser_types else settings.PARSER_TYPE
     current_sid = generate_file_hash(local_info["path"], parser_type=active_parser)
+
 
     if current_sid not in source_ids:
         logger.error(f"  [MISMATCH] {rel_path:30} | 해시 불일치 (Update 필요)")
@@ -266,8 +267,8 @@ def repair_integrity(anomalies: dict):
     if not anomalies:
         return
 
-    from src.pipeline import PipelineOrchestrator
     from src.controllers.sync_controller import SyncController
+    from src.pipeline import PipelineOrchestrator
 
     orchestrator = PipelineOrchestrator()
     pipeline = orchestrator.ingestion_pipeline

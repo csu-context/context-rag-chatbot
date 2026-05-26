@@ -75,7 +75,9 @@ class ChromaDBManager(BaseRetriever):
                 else:
                     if chroma_host:
                         logger.info(f"ChromaDB 서버 모드 접속 시도 (Host: {chroma_host}, Port: {chroma_port})")
-                        self.client = chromadb.HttpClient(host=chroma_host, port=int(chroma_port), settings=common_settings)
+                        self.client = chromadb.HttpClient(
+                            host=chroma_host, port=int(chroma_port), settings=common_settings
+                        )
                     else:
                         ensure_directories()
                         logger.info(f"ChromaDB 로컬 모드 활성화 (Path: {VECTOR_DB_DIR})")
