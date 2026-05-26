@@ -47,11 +47,13 @@ class HierarchicalChunker:
         self.parent_splitter = RecursiveCharacterTextSplitter(
             chunk_size=self.parent_chunk_size,
             chunk_overlap=self.parent_chunk_overlap,
-            separators=["\n\n", "\n", " ", ""],
+            separators=["\n\n", "\n", ". ", "? ", "! ", " ", ""],
         )
 
         self.child_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=self.child_chunk_size, chunk_overlap=self.child_chunk_overlap, separators=["\n\n", "\n", " ", ""]
+            chunk_size=self.child_chunk_size,
+            chunk_overlap=self.child_chunk_overlap,
+            separators=["\n\n", "\n", ". ", "? ", "! ", " ", ""],
         )
 
     def _split_markdown_table(self, table_text: str, max_size: int) -> list[str]:

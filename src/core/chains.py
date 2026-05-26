@@ -13,6 +13,7 @@ from src.core.reranker import RerankerFactory
 from src.models.factory import LLMFactory
 from src.utils.citation import format_citations
 from src.utils.logger import TracingLogger
+from src.utils.paths import PROCESSED_DATA_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,42 @@ class RAGPipeline:
         self.reranker = reranker or RerankerFactory.create()
         self.tracing_logger = TracingLogger()
         self.cache = SemanticCache()
+
+    def _resolve_parent_documents(self, docs: list[Document]) -> list[Document]:
+        """자식 청크로 검색된 문서들을 부모 청크의 원문으로 전환합니다."""
+        import json
+        
+        resolved_docs = []
+        # source_id별로 로드된 JSON 데이터를 캐싱하여 반복 로드 최소화
+        loaded_json_cache = {}
+        
+        for doc in docs:
+            parent_id = doc.metadata.get(MetadataFields.PARENT_ID)
+            source_id = doc.metadata.get(MetadataFields.SOURCE_ID)
+            
+            if parent_id and source_id:
+                try:
+                    if source_id not in loaded_json_cache:
+                        json_path = PROCESSED_DATA_DIR / f"{source_id}.json"
+                        if json_path.exists():
+                            with open(json_path, encoding="utf-8") as f:
+                                loaded_json_cache[source_id] = json.load(f)
+                        else:
+                            loaded_json_cache[source_id] = None
+                    
+                    parents_list = loaded_json_cache[source_id]
+                    if parents_list:
+                        for p in parents_list:
+                            if p.get("parent_id") == parent_id:
+                                # 부모 원문으로 교체
+                                doc.page_content = p.get("parent_text", doc.page_content)
+                                break
+                except Exception as e:
+                    logger.error(f"부모 청크 로드 실패: {e}")
+            
+            resolved_docs.append(doc)
+            
+        return resolved_docs
 
     def _perform_retrieval(self, query: str, k: int) -> list[Document]:
         """리트리버 타입에 따른 검색 수행 로직"""
@@ -45,14 +82,15 @@ class RAGPipeline:
                             },
                         )
                     )
-            return docs
+            return self._resolve_parent_documents(docs)
 
         # 기존 ChromaDBManager 호환성 유지
         search_results = self.retriever_or_db.search(query_text=query, k=k)
-        return [
+        docs = [
             Document(page_content=res["content"], metadata={**res["metadata"], "score": res["score"]})
             for res in search_results
         ]
+        return self._resolve_parent_documents(docs)
 
     def _format_docs(self, docs: list[Document]) -> str:
         """프롬프트 주입을 위한 컨텍스트 포맷팅"""

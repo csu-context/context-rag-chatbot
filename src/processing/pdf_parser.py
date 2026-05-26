@@ -52,6 +52,9 @@ class DoclingPDFParser:
         # 1. 전체 마크다운 텍스트 추출
         markdown_text = doc.export_to_markdown()
 
+        # [DataOps] PDF 매 페이지 반복 헤더/푸터 및 대외비 등 노이즈 정제
+        markdown_text = self._clean_pdf_noise(markdown_text)
+
         # 2. 표 구조를 개별 메타데이터로 추출
         tables_metadata = self._extract_tables_metadata(doc)
 
@@ -63,6 +66,24 @@ class DoclingPDFParser:
             "page_count": self._get_page_count(doc),
             "table_count": len(tables_metadata),
         }
+
+    def _clean_pdf_noise(self, text: str) -> str:
+        """PDF 파싱 결과물에서 반복 노이즈 제거"""
+        import re
+        # 매 페이지 상하단에 반복적으로 나오는 대형 노이즈 문구 및 페이지 기호 정제
+        noise_patterns = [
+            r"(?im)^\s*조선대학교\s+학칙\s*$",  # 조선대학교 학칙 단독 라인
+            r"(?im)^\s*-\s*\d+\s*-\s*$",        # 페이지 번호 (- 1 -)
+            r"(?im)^\s*대외비\s*$",              # 대외비 단독 라인
+        ]
+        
+        cleaned_text = text
+        for pattern in noise_patterns:
+            cleaned_text = re.sub(pattern, "", cleaned_text)
+            
+        # 연속된 빈 라인 정리
+        cleaned_text = re.sub(r"\n{3,}", "\n\n", cleaned_text)
+        return cleaned_text.strip()
 
     def _extract_tables_metadata(self, doc) -> list[dict[str, Any]]:
         """Docling Document에서 표 메타데이터를 추출"""

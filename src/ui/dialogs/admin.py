@@ -80,7 +80,7 @@ def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
         if st.button("데이터 파이프라인 가동 (Sync)", key="dialog_sync_btn", use_container_width=True):
             SyncController.trigger_sync(
                 parser_type=parser_type,
-                force=True,
+                force=False,
                 clear_cache_callback=initialize_rag_system_callback,
             )
 
