@@ -25,7 +25,7 @@ def test_reranker_cpu_fallback_on_gpu_error():
     # 첫 번째 predict 호출 시 CUDA RuntimeError 발생, 두 번째 predict는 정상 처리
     call_count = 0
 
-    def mock_predict(pairs):
+    def mock_predict(pairs, batch_size=None):
         nonlocal call_count
         call_count += 1
         if call_count == 1:
