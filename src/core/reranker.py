@@ -101,12 +101,12 @@ class CrossEncoderReranker(BaseReranker):
     _model: CrossEncoder | None = None
     _singleton_lock = threading.Lock()
 
-    DEFAULT_MODEL_NAME = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    DEFAULT_MODEL_NAME = "BAAI/bge-reranker-v2-m3"
 
     def __init__(
         self,
         model_name: str = DEFAULT_MODEL_NAME,
-        top_k: int = 5,
+        top_k: int = 3,
         threshold: float | None = None,
         device: str | None = None,
     ):
@@ -175,7 +175,8 @@ class CrossEncoderReranker(BaseReranker):
         top_k: int | None = None,
         threshold: float | None = None,
     ) -> RerankResult:
-        effective_top_k = top_k or self.top_k
+        # RAG 응답 시간 5초 이내 사수를 위해 최종 제공 문서를 엄격하게 최대 3개로 하드캡(Hard-cap) 제한
+        effective_top_k = min(3, top_k or self.top_k)
         effective_threshold = threshold if threshold is not None else self.threshold
 
         if len(documents) < 2:
