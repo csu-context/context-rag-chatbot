@@ -50,8 +50,7 @@ def test_korean_chunker_separators():
 def test_korean_chunker_sentence_boundary():
     """청커가 임의 위치가 아닌 문장 종결 기호(`. `) 경계에서 우선 분할하는지 검증."""
     chunker = HierarchicalChunker(
-        parent_chunk_size=500, parent_chunk_overlap=0,
-        child_chunk_size=12, child_chunk_overlap=0, min_chunk_size=0
+        parent_chunk_size=500, parent_chunk_overlap=0, child_chunk_size=12, child_chunk_overlap=0, min_chunk_size=0
     )
 
     # 문장 내부에 공백 없음: ". " separator 외에 유효한 분할 지점이 없음
