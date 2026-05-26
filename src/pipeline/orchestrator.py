@@ -126,7 +126,7 @@ class PipelineOrchestrator:
         files_to_process = []
         for rel_path, info in new_files.items():
             old_info = old_files.get(rel_path)
-            # [DataOps] 기존 기록이 없거나, 해시가 다르거나, 
+            # [DataOps] 기존 기록이 없거나, 해시가 다르거나,
             # 혹은 해시에 매핑된 물리 가공 JSON 파일이 유실된 경우 재처리 대상에 포함합니다 (자가 치유).
             json_path = self.storage_manager.get_processed_path(info["hash"])
             if not old_info or old_info.get("hash") != info["hash"] or not json_path.exists():

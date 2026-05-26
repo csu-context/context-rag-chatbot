@@ -70,17 +70,18 @@ class DoclingPDFParser:
     def _clean_pdf_noise(self, text: str) -> str:
         """PDF 파싱 결과물에서 반복 노이즈 제거"""
         import re
+
         # 매 페이지 상하단에 반복적으로 나오는 대형 노이즈 문구 및 페이지 기호 정제
         noise_patterns = [
             r"(?im)^\s*조선대학교\s+학칙\s*$",  # 조선대학교 학칙 단독 라인
-            r"(?im)^\s*-\s*\d+\s*-\s*$",        # 페이지 번호 (- 1 -)
-            r"(?im)^\s*대외비\s*$",              # 대외비 단독 라인
+            r"(?im)^\s*-\s*\d+\s*-\s*$",  # 페이지 번호 (- 1 -)
+            r"(?im)^\s*대외비\s*$",  # 대외비 단독 라인
         ]
-        
+
         cleaned_text = text
         for pattern in noise_patterns:
             cleaned_text = re.sub(pattern, "", cleaned_text)
-            
+
         # 연속된 빈 라인 정리
         cleaned_text = re.sub(r"\n{3,}", "\n\n", cleaned_text)
         return cleaned_text.strip()

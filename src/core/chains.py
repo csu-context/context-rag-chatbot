@@ -31,15 +31,15 @@ class RAGPipeline:
     def _resolve_parent_documents(self, docs: list[Document]) -> list[Document]:
         """자식 청크로 검색된 문서들을 부모 청크의 원문으로 전환합니다."""
         import json
-        
+
         resolved_docs = []
         # source_id별로 로드된 JSON 데이터를 캐싱하여 반복 로드 최소화
         loaded_json_cache = {}
-        
+
         for doc in docs:
             parent_id = doc.metadata.get(MetadataFields.PARENT_ID)
             source_id = doc.metadata.get(MetadataFields.SOURCE_ID)
-            
+
             if parent_id and source_id:
                 try:
                     if source_id not in loaded_json_cache:
@@ -49,7 +49,7 @@ class RAGPipeline:
                                 loaded_json_cache[source_id] = json.load(f)
                         else:
                             loaded_json_cache[source_id] = None
-                    
+
                     parents_list = loaded_json_cache[source_id]
                     if parents_list:
                         for p in parents_list:
@@ -59,9 +59,9 @@ class RAGPipeline:
                                 break
                 except Exception as e:
                     logger.error(f"부모 청크 로드 실패: {e}")
-            
+
             resolved_docs.append(doc)
-            
+
         return resolved_docs
 
     def _perform_retrieval(self, query: str, k: int) -> list[Document]:

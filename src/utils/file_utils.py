@@ -22,7 +22,7 @@ def generate_file_hash(file_path: Path, parser_type: str = "manual") -> str:
             for chunk in iter(lambda: f.read(8192), b""):
                 hasher.update(chunk)
         content_hash = hasher.hexdigest()
-    except Exception as e:
+    except Exception:
         # 에러 발생 시 파일 수정 시간/크기로 안전히 폴백
         stats = file_path.stat()
         content_hash = f"fallback_{stats.st_size}_{stats.st_mtime}"
