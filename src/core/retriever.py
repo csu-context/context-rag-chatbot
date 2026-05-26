@@ -26,7 +26,7 @@ class EnsembleRetriever(BaseRetriever):
 
     def get_relevant_documents(self, query: str, n: int = 5, metadata_filter: dict | None = None) -> list:
         """BM25 + Vector 하이브리드 검색 결과를 RRF로 병합하여 반환."""
-        n_candidates = max(15, n)
+        n_candidates = max(settings.RETRIEVER_CANDIDATE_POOL_MIN, n)
         bm25_results = self._get_bm25_results(query, n_candidates, metadata_filter=metadata_filter)
         vector_results = self._get_vector_results(query, n_candidates, metadata_filter=metadata_filter)
 

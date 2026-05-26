@@ -37,6 +37,8 @@ class Settings(BaseSettings):
     RRF_K: int = 60
     HYBRID_WEIGHT_BM25: float = 0.5
     HYBRID_WEIGHT_VECTOR: float = 0.5
+    RETRIEVER_CANDIDATE_POOL_MIN: int = Field(default=15)
+    RERANKER_MAX_DOCS: int = Field(default=3)
 
     # 4. 파이프라인 및 파싱 설정
     PARSER_TYPE: Literal["manual", "docling"] = Field(default="docling")

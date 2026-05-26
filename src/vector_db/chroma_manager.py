@@ -300,7 +300,7 @@ class ChromaDBManager(BaseRetriever):
             if len(metadata_filter) == 1:
                 where_clause = metadata_filter
             else:
-                where_clause = {"$and": [{k: v} for k, v in metadata_filter.items()]}
+                where_clause = {"$and": [{k: {"$eq": v}} for k, v in metadata_filter.items()]}
         return self.search(query_text=query, k=n, where=where_clause)
 
     def get_count(self) -> int:

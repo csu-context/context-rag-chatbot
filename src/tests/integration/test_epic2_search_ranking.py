@@ -1,4 +1,5 @@
 import json
+from unittest.mock import MagicMock, patch
 
 import pytest
 from langchain_core.documents import Document
@@ -124,8 +125,6 @@ def test_reranker_strict_context_pruning():
 
     # 2. 3개 초과의 문서를 입력하고 top_k=5를 요구하더라도,
     # 최종 결과는 엄격하게 최대 3개(effective_top_k)로 제한되는지 검증
-    from unittest.mock import MagicMock, patch
-
     with patch.object(CrossEncoderReranker, "_load_model") as mock_load:
         mock_model = MagicMock()
         # 10개 문서에 대해 임의의 높은 점수 반환
