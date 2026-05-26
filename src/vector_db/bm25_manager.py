@@ -1,7 +1,7 @@
 import json
 import logging
 import traceback
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
 from kiwipiepy import Kiwi
@@ -57,9 +57,23 @@ class BM25Manager(BaseRetriever):
             text = text.replace(k, v)
         return text
 
-    STOPWORDS = {
-        "대한", "대해", "위해", "통해", "경우", "또한", "모든", "의한", "따라",
-        "기타", "사항", "있거나", "있으며", "의하여", "관하여", "다만"
+    STOPWORDS: ClassVar[set[str]] = {
+        "대한",
+        "대해",
+        "위해",
+        "통해",
+        "경우",
+        "또한",
+        "모든",
+        "의한",
+        "따라",
+        "기타",
+        "사항",
+        "있거나",
+        "있으며",
+        "의하여",
+        "관하여",
+        "다만",
     }
 
     def _tokenizer(self, text: str) -> list[str]:
@@ -227,6 +241,22 @@ class BM25Manager(BaseRetriever):
             self.bm25 = None
             self.corpus_data = []
 
+    def _apply_metadata_filter(self, scores: np.ndarray, metadata_filter: dict) -> list[int]:
+        """주어진 메타데이터 필터에 부합하는 문서의 인덱스 목록을 반환하고 불일치 문서는 점수를 0.0으로 만듭니다."""
+        matching_indices = []
+        for idx, doc in enumerate(self.corpus_data):
+            doc_meta = doc.get("metadata", {})
+            match = True
+            for k, v in metadata_filter.items():
+                if doc_meta.get(k) != v:
+                    match = False
+                    break
+            if not match:
+                scores[idx] = 0.0
+                continue
+            matching_indices.append(idx)
+        return matching_indices
+
     def get_top_n(
         self,
         query: str,
@@ -256,19 +286,10 @@ class BM25Manager(BaseRetriever):
         scores = self.bm25.get_scores(tokenized_query)
 
         # 메타데이터 필터링 적용 및 매칭되는 문서 인덱스 분류
-        matching_indices = []
-        for idx, doc in enumerate(self.corpus_data):
-            if metadata_filter:
-                doc_meta = doc.get("metadata", {})
-                match = True
-                for k, v in metadata_filter.items():
-                    if doc_meta.get(k) != v:
-                        match = False
-                        break
-                if not match:
-                    scores[idx] = 0.0
-                    continue
-            matching_indices.append(idx)
+        if metadata_filter:
+            matching_indices = self._apply_metadata_filter(scores, metadata_filter)
+        else:
+            matching_indices = list(range(len(self.corpus_data)))
 
         if not matching_indices:
             return []
