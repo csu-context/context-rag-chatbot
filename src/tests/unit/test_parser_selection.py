@@ -13,12 +13,14 @@ class TestParserSelection:
         PipelineOrchestrator._instance = None
 
         with (
-            patch("src.pipeline.ChromaDBManager") as mock_chroma_class,
-            patch("src.pipeline.SemanticCache") as mock_cache_class,
-            patch("src.pipeline.settings") as mock_settings,
+            patch("src.pipeline.ingestion.ChromaDBManager") as mock_chroma_class,
+            patch("src.pipeline.orchestrator.SemanticCache") as mock_cache_class,
+            patch("src.pipeline.orchestrator.settings") as mock_settings,
+            patch("src.pipeline.orchestrator.StorageManager") as mock_storage_class,
         ):
             mock_chroma_class.return_value = MagicMock()
             mock_cache_class.return_value = MagicMock()
+            mock_storage_class.return_value = MagicMock()
             mock_settings.PARSER_TYPE = "manual"
 
             orchestrator = PipelineOrchestrator()
@@ -35,7 +37,7 @@ class TestParserSelection:
         orchestrator._load_manifest = MagicMock(return_value={})
 
         # docling 라이브러리가 로드되는 상황을 모킹하기 위해 patch 사용
-        with patch("src.pipeline.DoclingPDFParserStrategy") as mock_docling_strategy:
+        with patch("src.pipeline.orchestrator.DoclingPDFParserStrategy") as mock_docling_strategy:
             mock_docling_strategy.return_value = MagicMock()
 
             # docling으로 전환 호출
@@ -130,7 +132,7 @@ class TestParserSelection:
         }
 
         # generate_file_hash 함수가 호출될 때, 각 파서 타입이 의도대로 넘어가는지 모킹
-        with patch("src.pipeline.generate_file_hash") as mock_hash_gen:
+        with patch("src.pipeline.orchestrator.generate_file_hash") as mock_hash_gen:
             mock_hash_gen.side_effect = lambda f, parser_type: f"hash_of_{f.name}_by_{parser_type}"
 
             _, _, new_manifest = orchestrator._calculate_delta(mock_files, old_manifest)

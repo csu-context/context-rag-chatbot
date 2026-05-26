@@ -10,8 +10,10 @@ from chromadb.config import Settings
 
 from src.common.config import settings
 from src.common.constants import MetadataFields
+from src.core.base_retriever import BaseRetriever
 from src.models.embedder import BGEEmbedder
 from src.utils.paths import VECTOR_DB_DIR, ensure_directories
+from src.utils.unicode import normalize_to_nfc, normalize_to_nfd
 
 # 경고 숨기기 로직 추가
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
@@ -44,7 +46,9 @@ class BGEChromaEmbeddingFunction(EmbeddingFunction):
         return embeddings.tolist()
 
 
-class ChromaDBManager:
+class ChromaDBManager(BaseRetriever):
+    _shared_client = None  # 동일 프로세스 내에서 중복 클라이언트 생성 및 파일 락 충돌 방지를 위한 공유 클라이언트
+
     def __init__(self, collection_name: str = "rag_collection"):
         """
         ChromaDB 클라이언트 및 컬렉션을 초기화합니다.
@@ -66,24 +70,29 @@ class ChromaDBManager:
 
         for attempt in range(max_retries):
             try:
-                if chroma_host:
-                    logger.info(f"ChromaDB 서버 모드 접속 시도 (Host: {chroma_host}, Port: {chroma_port})")
-                    self.client = chromadb.HttpClient(host=chroma_host, port=int(chroma_port), settings=common_settings)
+                if ChromaDBManager._shared_client is not None:
+                    self.client = ChromaDBManager._shared_client
                 else:
-                    ensure_directories()
-                    logger.info(f"ChromaDB 로컬 모드 활성화 (Path: {VECTOR_DB_DIR})")
-                    self.client = chromadb.PersistentClient(path=str(VECTOR_DB_DIR), settings=common_settings)
+                    if chroma_host:
+                        logger.info(f"ChromaDB 서버 모드 접속 시도 (Host: {chroma_host}, Port: {chroma_port})")
+                        self.client = chromadb.HttpClient(
+                            host=chroma_host, port=int(chroma_port), settings=common_settings
+                        )
+                    else:
+                        ensure_directories()
+                        logger.info(f"ChromaDB 로컬 모드 활성화 (Path: {VECTOR_DB_DIR})")
+                        self.client = chromadb.PersistentClient(path=str(VECTOR_DB_DIR), settings=common_settings)
+                    ChromaDBManager._shared_client = self.client
 
                 # 컬렉션 로드 (실질적인 연결 테스트 구간)
+                # hnsw:num_threads=1: Python 3.13 + chromadb Rust 바인딩의 멀티스레드 segfault 방지
                 self.collection = self.client.get_or_create_collection(
                     name=self.collection_name,
                     embedding_function=self.embedding_fn,
-                    metadata={"hnsw:space": "cosine"},
+                    metadata={"hnsw:space": "cosine", "hnsw:num_threads": 1},
                 )
 
-                logger.info(
-                    f"ChromaDB 로드 완료. (컬렉션: {self.collection_name}, 데이터 개수: {self.collection.count()})"
-                )
+                logger.info(f"ChromaDB 로드 완료. (컬렉션: {self.collection_name})")
                 return  # 성공 시 루프 탈출
 
             except Exception as e:
@@ -181,6 +190,10 @@ class ChromaDBManager:
             logger.error(f"DB 검색 중 오류 발생: {e}")
             return []  # 에러 발생 시에도 빈 리스트를 반환하여 프로세스 중단 방지
 
+    def retrieve(self, query: str, n: int = 5) -> list[dict[str, Any]]:
+        """BaseRetriever 인터페이스 구현. ChromaDB 검색을 실행합니다."""
+        return self.search(query_text=query, k=n)
+
     def get_count(self) -> int:
         """현재 컬렉션에 저장된 총 청크 수를 반환합니다."""
         try:
@@ -190,10 +203,8 @@ class ChromaDBManager:
 
     def get_source_count(self, source_name: str) -> int:
         """특정 소스 파일명(metadata.src_name)에 해당하는 청크 수를 반환합니다."""
-        import unicodedata
-
-        nfc_name = unicodedata.normalize("NFC", source_name)
-        nfd_name = unicodedata.normalize("NFD", source_name)
+        nfc_name = normalize_to_nfc(source_name)
+        nfd_name = normalize_to_nfd(source_name)
         try:
             results = self.collection.get(
                 where={MetadataFields.SRC_NAME: {"$in": [nfc_name, nfd_name]}},
@@ -211,7 +222,7 @@ class ChromaDBManager:
                     self.collection = self.client.get_or_create_collection(
                         name=self.collection_name,
                         embedding_function=self.embedding_fn,
-                        metadata={"hnsw:space": "cosine"},
+                        metadata={"hnsw:space": "cosine", "hnsw:num_threads": 1},
                     )
                     results = self.collection.get(
                         where={MetadataFields.SRC_NAME: {"$in": [nfc_name, nfd_name]}},
@@ -227,10 +238,8 @@ class ChromaDBManager:
 
     def get_source_chunks(self, source_name: str) -> list[dict[str, Any]]:
         """특정 소스 파일명(metadata.src_name)에 해당하는 청크 텍스트와 메타데이터 목록을 반환합니다."""
-        import unicodedata
-
-        nfc_name = unicodedata.normalize("NFC", source_name)
-        nfd_name = unicodedata.normalize("NFD", source_name)
+        nfc_name = normalize_to_nfc(source_name)
+        nfd_name = normalize_to_nfd(source_name)
         try:
             results = self.collection.get(
                 where={MetadataFields.SRC_NAME: {"$in": [nfc_name, nfd_name]}},

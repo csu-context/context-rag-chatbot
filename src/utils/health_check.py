@@ -204,8 +204,10 @@ def _check_local_db_mismatch(rel_path: str, local_info: dict, db_chunks: list, a
         logger.error(f"  [DUP_PARSER] {rel_path:30} | 여러 파서 공존: {parser_types}")
         anomalies["duplicate_parsers"].append(rel_path)
 
-    # 현재 설정된 파서의 해시와 일치하는지 확인
-    current_sid = local_info["hash"]
+    # DB에 저장된 실제 파서 정보를 바탕으로 해시값 다시 동적 계산
+    active_parser = next(iter(parser_types)) if parser_types else settings.PARSER_TYPE
+    current_sid = generate_file_hash(local_info["path"], parser_type=active_parser)
+
     if current_sid not in source_ids:
         logger.error(f"  [MISMATCH] {rel_path:30} | 해시 불일치 (Update 필요)")
         anomalies["mismatched_hash"].append(rel_path)
@@ -259,10 +261,12 @@ def repair_integrity(anomalies: dict):
     탐지된 정합성 오류를 복구합니다.
     - ghost_chunks: DB에서 삭제
     - duplicate_parsers: 현재 설정 이외의 파서 데이터 삭제
+    - mismatched_hash: 해시 불일치 파일 재색인 및 업데이트
     """
     if not anomalies:
         return
 
+    from src.controllers.sync_controller import SyncController
     from src.pipeline import PipelineOrchestrator
 
     orchestrator = PipelineOrchestrator()
@@ -277,6 +281,25 @@ def repair_integrity(anomalies: dict):
     duplicates = anomalies.get("duplicate_parsers", [])
     if duplicates:
         _repair_duplicate_parsers(pipeline, duplicates)
+
+    # 3. 해시 불일치 파일 재색인 및 업데이트
+    mismatches = anomalies.get("mismatched_hash", [])
+    if mismatches:
+        logger.info(f"해시 불일치 파일 {len(mismatches)}개 동기화 및 재색인 실행 중...")
+        for rel_path in mismatches:
+            file_name = Path(rel_path).name
+            # DB에 현재 적재되어 있던 파서 정보 확인
+            db_data = pipeline.db_manager.collection.get(
+                where={MetadataFields.SRC_NAME: file_name}, include=["metadatas"]
+            )
+            parser_type = settings.PARSER_TYPE
+            if db_data and db_data["metadatas"]:
+                parser_type = _get_parser_type(db_data["metadatas"][0])
+
+            logger.info(f"  재색인 파일 ({rel_path}) | 적용 파서: {parser_type}")
+            SyncController.trigger_single_file_sync(
+                file_name=file_name, active_parser=parser_type, clear_cache_callback=lambda: None
+            )
 
     logger.info("정합성 복구 작업이 완료되었습니다.")
 
