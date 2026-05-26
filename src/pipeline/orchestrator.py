@@ -127,9 +127,16 @@ class PipelineOrchestrator:
         for rel_path, info in new_files.items():
             old_info = old_files.get(rel_path)
             # [DataOps] 기존 기록이 없거나, 해시가 다르거나,
-            # 혹은 해시에 매핑된 물리 가공 JSON 파일이 유실된 경우 재처리 대상에 포함합니다 (자가 치유).
+            # 혹은 해시에 매핑된 물리 가공 JSON 파일이 유실되었거나,
+            # 또는 DB(ChromaDB) 내 청크가 전혀 검색되지 않는 경우(유실) 재처리 대상에 포함합니다 (자가 치유).
             json_path = self.storage_manager.get_processed_path(info["hash"])
-            if not old_info or old_info.get("hash") != info["hash"] or not json_path.exists():
+            db_count = self.ingestion_pipeline.db_manager.get_source_count(Path(rel_path).name)
+            if (
+                not old_info
+                or old_info.get("hash") != info["hash"]
+                or not json_path.exists()
+                or db_count == 0
+            ):
                 files_to_process.append(RAW_DATA_DIR / rel_path)
 
         source_ids_to_delete = []

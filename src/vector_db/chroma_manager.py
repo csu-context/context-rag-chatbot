@@ -310,35 +310,15 @@ class ChromaDBManager(BaseRetriever):
         nfc_name = normalize_to_nfc(source_name)
         nfd_name = normalize_to_nfd(source_name)
         try:
-            results = self.collection.get(
+            collection = self._get_valid_collection()
+            results = collection.get(
                 where={MetadataFields.SRC_NAME: {"$in": [nfc_name, nfd_name]}},
                 include=[],  # 실제 데이터는 필요 없으므로 빈 리스트
             )
             return len(results["ids"])
         except Exception as e:
-            if "does not exist" in str(e):
-                logger.warning(
-                    f"Collection '{self.collection_name}' not found during count. "
-                    f"It might have been reset. Attempting to refetch and retry."
-                )
-                try:
-                    # 컬렉션 객체를 다시 가져와서 재시도
-                    self.collection = self.client.get_or_create_collection(
-                        name=self.collection_name,
-                        embedding_function=self.embedding_fn,
-                        metadata={"hnsw:space": "cosine", "hnsw:num_threads": 1},
-                    )
-                    results = self.collection.get(
-                        where={MetadataFields.SRC_NAME: {"$in": [nfc_name, nfd_name]}},
-                        include=[],
-                    )
-                    return len(results["ids"])
-                except Exception as retry_e:
-                    logger.error(f"소스별 카운트 조회 재시도 중 오류 발생 ({source_name}): {retry_e}")
-                    return 0
-            else:
-                logger.error(f"소스별 카운트 조회 중 오류 발생 ({source_name}): {e}")
-                return 0
+            logger.error(f"소스별 카운트 조회 중 오류 발생 ({source_name}): {e}")
+            return 0
 
     def get_source_chunks(self, source_name: str) -> list[dict[str, Any]]:
         """특정 소스 파일명(metadata.src_name)에 해당하는 청크 텍스트와 메타데이터 목록을 반환합니다."""
