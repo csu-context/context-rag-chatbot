@@ -1,16 +1,16 @@
 import json
-import numpy as np
+
 import pytest
 from langchain_core.documents import Document
 
-from src.vector_db.bm25_manager import BM25Manager
-from src.core.retriever import EnsembleRetriever
 from src.core.reranker import CrossEncoderReranker
-from src.vector_db.chroma_manager import ChromaDBManager
+from src.core.retriever import EnsembleRetriever
+from src.vector_db.bm25_manager import BM25Manager
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 def _make_manager(tmp_path, json_files: dict) -> BM25Manager:
     """데이터 디렉토리와 캐시 디렉토리를 분리하여 BM25Manager를 생성함."""
@@ -53,16 +53,17 @@ def temp_bm25_manager(tmp_path):
 # Epic 2: Search & Ranking Refactoring Tests
 # ---------------------------------------------------------------------------
 
+
 def test_bm25_stopwords(temp_bm25_manager):
     """BM25 형태소 분석에서 한국어 불용어가 올바르게 필터링되는지 검증."""
     # STOPWORDS = {"대한", "대해", "위해", "통해", "경우", "또한", "모든", "의한", "따라", "기타", "사항"}
     text = "휴학에 대한 복학과 장학금 지급의 경우 모든 사항에 대해"
     tokens = temp_bm25_manager._tokenizer(text)
-    
+
     # 불용어 단어들이 토큰 목록에 포함되지 않았는지 검증
     for stopword in temp_bm25_manager.STOPWORDS:
         assert stopword not in tokens
-    
+
     # 유효한 형태소는 포함되었는지 검증 (명사, 용언, 1글자 초과)
     assert "휴학" in tokens
     assert "복학" in tokens
@@ -74,12 +75,12 @@ def test_bm25_global_min_max_scaling(temp_bm25_manager):
     """BM25 결과 스코어가 Global Min-Max Scaling으로 올바르게 정규화되는지 검증."""
     # return_scores=True로 검색 수행
     results = temp_bm25_manager.get_top_n("휴학", n=3, return_scores=True)
-    
+
     assert len(results) > 0
     # 최고 점수를 가진 문서의 스코어가 1.0으로 정규화되었는지 검증
     # (NP.MAX(SCORES)가 양수일 때 분모가 s_max - 0.0이 되므로 최고 스코어는 1.0이 됨)
     assert results[0]["_bm25_score"] == pytest.approx(1.0, abs=1e-4)
-    
+
     # 다른 결과들의 스코어도 0.0 이상 1.0 이하인지 검증
     for r in results:
         assert 0.0 <= r["_bm25_score"] <= 1.0
@@ -88,17 +89,13 @@ def test_bm25_global_min_max_scaling(temp_bm25_manager):
 def test_bm25_metadata_filtering(temp_bm25_manager):
     """BM25Manager에서 사전 메타데이터 필터링이 정확하게 동작하는지 검증."""
     # 1. 특정 소스 파일로 필터링
-    results_a = temp_bm25_manager.get_top_n(
-        "신청", n=3, metadata_filter={"src_name": "manual_a.pdf"}
-    )
+    results_a = temp_bm25_manager.get_top_n("신청", n=3, metadata_filter={"src_name": "manual_a.pdf"})
     assert len(results_a) == 1
     assert results_a[0]["metadata"]["src_name"] == "manual_a.pdf"
     assert "휴학" in results_a[0]["content"]
 
     # 2. 카테고리로 필터링
-    results_academic = temp_bm25_manager.get_top_n(
-        "신청", n=3, metadata_filter={"category": "academic"}
-    )
+    results_academic = temp_bm25_manager.get_top_n("신청", n=3, metadata_filter={"category": "academic"})
     assert len(results_academic) == 2
     for r in results_academic:
         assert r["metadata"]["category"] == "academic"
@@ -107,7 +104,7 @@ def test_bm25_metadata_filtering(temp_bm25_manager):
 def test_retriever_candidate_pool_expansion(temp_bm25_manager):
     """EnsembleRetriever가 RRF fusion을 위해 최소 15개 이상의 후보 풀(n_candidates)을 요청하는지 검증."""
     retriever = EnsembleRetriever(bm25_manager=temp_bm25_manager)
-    
+
     # retrieve 시 n_candidates가 15로 강제 설정되는지 확인하기 위해 _get_bm25_results 호출 시 전달된 n 값 모니터링
     # get_relevant_documents에서 n_candidates = max(15, n) 적용됨
     results = retriever.get_relevant_documents("휴학", n=2)
@@ -117,25 +114,24 @@ def test_retriever_candidate_pool_expansion(temp_bm25_manager):
 def test_reranker_strict_context_pruning():
     """Reranker가 response latency 사수를 위해 최종 제공 문서를 엄격하게 최대 3개로 제한하는지 검증."""
     reranker = CrossEncoderReranker.get_instance(top_k=5)
-    
-    docs = [
-        Document(page_content=f"테스트 문서 내용 {i}", metadata={"src_name": "test.pdf"})
-        for i in range(10)
-    ]
-    
+
+    docs = [Document(page_content=f"테스트 문서 내용 {i}", metadata={"src_name": "test.pdf"}) for i in range(10)]
+
     # 1. 2개 미만의 문서는 그대로 반환하는지 체크
     short_docs = docs[:1]
     res_short = reranker.rerank("질문", short_docs)
     assert len(res_short.documents) == 1
 
-    # 2. 3개 초과의 문서를 입력하고 top_k=5를 요구하더라도, 최종 결과는 엄격하게 최대 3개(effective_top_k)로 제한되는지 검증
+    # 2. 3개 초과의 문서를 입력하고 top_k=5를 요구하더라도,
+    # 최종 결과는 엄격하게 최대 3개(effective_top_k)로 제한되는지 검증
     from unittest.mock import MagicMock, patch
+
     with patch.object(CrossEncoderReranker, "_load_model") as mock_load:
         mock_model = MagicMock()
         # 10개 문서에 대해 임의의 높은 점수 반환
         mock_model.predict.return_value = [5.0] * 10
         mock_load.return_value = mock_model
-        
+
         res = reranker.rerank("질문", docs, top_k=5, threshold=0.1)
         assert len(res.documents) == 3
         assert res.filtered_count == 7
