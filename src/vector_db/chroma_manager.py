@@ -121,9 +121,7 @@ class ChromaDBManager(BaseRetriever):
     def _create_client(self, chroma_host, chroma_port, common_settings):
         if chroma_host:
             logger.info(f"ChromaDB 서버 모드 접속 시도 (Host: {chroma_host}, Port: {chroma_port})")
-            return chromadb.HttpClient(
-                host=chroma_host, port=int(chroma_port), settings=common_settings
-            )
+            return chromadb.HttpClient(host=chroma_host, port=int(chroma_port), settings=common_settings)
 
         ensure_directories()
         logger.info(f"ChromaDB 로컬 모드 활성화 (Path: {VECTOR_DB_DIR})")
@@ -144,6 +142,7 @@ class ChromaDBManager(BaseRetriever):
             current_model = self.embedding_fn.model_name
 
             from src.processing.chunking import HierarchicalChunker
+
             chunker = HierarchicalChunker()
             current_parent_size = chunker.parent_chunk_size
             current_child_size = chunker.child_chunk_size
@@ -183,9 +182,7 @@ class ChromaDBManager(BaseRetriever):
             new_metadata["child_chunk_size"] = current_child_size
 
             # 메타데이터에 변화가 있는 경우에만 modify 호출
-            if not existing_metadata or any(
-                new_metadata.get(k) != existing_metadata.get(k) for k in new_metadata
-            ):
+            if not existing_metadata or any(new_metadata.get(k) != existing_metadata.get(k) for k in new_metadata):
                 # ChromaDB는 컬렉션 생성 후 hnsw: 관련 메타데이터 변경을 지원하지 않으므로 제외하고 수정함
                 modify_metadata = {k: v for k, v in new_metadata.items() if not k.startswith("hnsw:")}
                 self.collection.modify(metadata=modify_metadata)

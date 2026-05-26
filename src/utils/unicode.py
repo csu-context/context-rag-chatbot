@@ -22,4 +22,3 @@ def normalize_path_to_nfc(path_val: str | Path) -> str:
         return ""
     path_str = path_val.as_posix() if isinstance(path_val, Path) else str(path_val).replace("\\", "/")
     return unicodedata.normalize("NFC", path_str)
-
