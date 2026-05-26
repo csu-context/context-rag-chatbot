@@ -206,6 +206,23 @@ class ChromaDBManager(BaseRetriever):
             # 빈 리스트를 반환하지 않고 에러를 명시적으로 발생시킴
             raise RuntimeError(f"Failed to embed query: '{query_text}'") from e
 
+    def _get_valid_collection(self):
+        """
+        ChromaDB 서버 리셋 등으로 컬렉션 레퍼런스가 만료되었을 때
+        'does not exist' 에러를 방지하기 위해 유효성을 검증하고 필요시 재로딩합니다.
+        """
+        try:
+            self.collection.count()
+        except Exception as e:
+            if "does not exist" in str(e):
+                logger.warning(f"컬렉션 '{self.collection_name}'이 존재하지 않아 재초기화합니다.")
+                self.collection = self.client.get_or_create_collection(
+                    name=self.collection_name,
+                    embedding_function=self.embedding_fn,
+                    metadata={"hnsw:space": "cosine", "hnsw:num_threads": 1},
+                )
+        return self.collection
+
     def upsert_documents(
         self,
         ids: list[str],
@@ -230,7 +247,8 @@ class ChromaDBManager(BaseRetriever):
                 cleaned_metadatas.append(cleaned)
 
         try:
-            self.collection.upsert(ids=ids, documents=documents, metadatas=cleaned_metadatas)
+            collection = self._get_valid_collection()
+            collection.upsert(ids=ids, documents=documents, metadatas=cleaned_metadatas)
             logger.info(f"{len(ids)}개의 문서 청크가 ChromaDB에 성공적으로 업서트되었습니다.")
         except Exception as e:
             logger.error(f"문서 업서트 중 오류 발생: {e}")
@@ -241,8 +259,9 @@ class ChromaDBManager(BaseRetriever):
         하이브리드 리트리버와 호환되는 표준화된 dict 리스트 형태로 반환합니다.
         """
         try:
+            collection = self._get_valid_collection()
             # ChromaDB query 호출
-            results = self.collection.query(query_texts=[query_text], n_results=k)
+            results = collection.query(query_texts=[query_text], n_results=k)
 
             # 검색 결과가 없는 경우 빈 리스트 반환 (에러 전파 방지)
             if not results or not results.get("documents") or len(results["documents"][0]) == 0:
@@ -281,7 +300,8 @@ class ChromaDBManager(BaseRetriever):
     def get_count(self) -> int:
         """현재 컬렉션에 저장된 총 청크 수를 반환합니다."""
         try:
-            return self.collection.count()
+            collection = self._get_valid_collection()
+            return collection.count()
         except Exception:
             return 0
 
@@ -325,7 +345,8 @@ class ChromaDBManager(BaseRetriever):
         nfc_name = normalize_to_nfc(source_name)
         nfd_name = normalize_to_nfd(source_name)
         try:
-            results = self.collection.get(
+            collection = self._get_valid_collection()
+            results = collection.get(
                 where={MetadataFields.SRC_NAME: {"$in": [nfc_name, nfd_name]}},
                 include=["documents", "metadatas"],
             )
@@ -354,8 +375,9 @@ class ChromaDBManager(BaseRetriever):
             return
 
         try:
+            collection = self._get_valid_collection()
             # 1. where 필터를 사용해 삭제 대상 문서들의 ID를 먼저 조회
-            results_to_delete = self.collection.get(where=where, include=[])
+            results_to_delete = collection.get(where=where, include=[])
             ids_to_delete = results_to_delete["ids"]
 
             if not ids_to_delete:
@@ -364,7 +386,7 @@ class ChromaDBManager(BaseRetriever):
 
             # 2. 조회된 ID 리스트를 기반으로 명시적 삭제
             logger.info(f"ChromaDB에서 {len(ids_to_delete)}개 도큐먼트 삭제 시도 (조건: {where})")
-            self.collection.delete(ids=ids_to_delete)
+            collection.delete(ids=ids_to_delete)
             logger.info("삭제 작업 완료.")
 
         except Exception as e:
@@ -374,12 +396,13 @@ class ChromaDBManager(BaseRetriever):
     def reset_collection(self):
         """컬렉션의 모든 문서를 삭제하여 초기화합니다."""
         try:
+            collection = self._get_valid_collection()
             # delete_collection() + create_collection() 방식은 Windows에서
             # 다른 클라이언트가 세그먼트 파일을 열고 있을 때 WinError 32가 발생하므로,
             # 문서 전체를 ID 기반으로 삭제하는 방식을 사용합니다.
-            all_ids = self.collection.get(include=[])["ids"]
+            all_ids = collection.get(include=[])["ids"]
             if all_ids:
-                self.collection.delete(ids=all_ids)
+                collection.delete(ids=all_ids)
             logger.info(f"ChromaDB 컬렉션 '{self.collection_name}' 초기화 완료. ({len(all_ids)}개 문서 삭제)")
         except Exception as e:
             logger.error(f"ChromaDB 컬렉션 초기화 중 오류 발생: {e}")
