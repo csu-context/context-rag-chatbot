@@ -190,9 +190,13 @@ class ChromaDBManager:
 
     def get_source_count(self, source_name: str) -> int:
         """특정 소스 파일명(metadata.src_name)에 해당하는 청크 수를 반환합니다."""
+        import unicodedata
+
+        nfc_name = unicodedata.normalize("NFC", source_name)
+        nfd_name = unicodedata.normalize("NFD", source_name)
         try:
             results = self.collection.get(
-                where={MetadataFields.SRC_NAME: source_name},
+                where={MetadataFields.SRC_NAME: {"$in": [nfc_name, nfd_name]}},
                 include=[],  # 실제 데이터는 필요 없으므로 빈 리스트
             )
             return len(results["ids"])
@@ -210,7 +214,7 @@ class ChromaDBManager:
                         metadata={"hnsw:space": "cosine"},
                     )
                     results = self.collection.get(
-                        where={MetadataFields.SRC_NAME: source_name},
+                        where={MetadataFields.SRC_NAME: {"$in": [nfc_name, nfd_name]}},
                         include=[],
                     )
                     return len(results["ids"])
@@ -220,6 +224,32 @@ class ChromaDBManager:
             else:
                 logger.error(f"소스별 카운트 조회 중 오류 발생 ({source_name}): {e}")
                 return 0
+
+    def get_source_chunks(self, source_name: str) -> list[dict[str, Any]]:
+        """특정 소스 파일명(metadata.src_name)에 해당하는 청크 텍스트와 메타데이터 목록을 반환합니다."""
+        import unicodedata
+
+        nfc_name = unicodedata.normalize("NFC", source_name)
+        nfd_name = unicodedata.normalize("NFD", source_name)
+        try:
+            results = self.collection.get(
+                where={MetadataFields.SRC_NAME: {"$in": [nfc_name, nfd_name]}},
+                include=["documents", "metadatas"],
+            )
+            chunks = []
+            if results and "ids" in results:
+                for i in range(len(results["ids"])):
+                    chunks.append(
+                        {
+                            "id": results["ids"][i],
+                            "content": results["documents"][i] if results["documents"] else "",
+                            "metadata": results["metadatas"][i] if results["metadatas"] else {},
+                        }
+                    )
+            return chunks
+        except Exception as e:
+            logger.error(f"소스별 청크 데이터 조회 중 오류 발생 ({source_name}): {e}")
+            return []
 
     def delete_documents(self, where: dict[str, Any]):
         """

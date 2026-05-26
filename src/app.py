@@ -1,7 +1,9 @@
+import json
 import logging
 import math
 import os
 import time
+from pathlib import Path
 
 import streamlit as st
 from dotenv import load_dotenv
@@ -63,6 +65,10 @@ if "admin_active" not in st.session_state:
     st.session_state.admin_active = False
 if "dialog_doc_to_show" not in st.session_state:
     st.session_state.dialog_doc_to_show = None
+if "dialog_chunks_file_to_show" not in st.session_state:
+    st.session_state.dialog_chunks_file_to_show = None
+if "parser_change_pending" not in st.session_state:
+    st.session_state.parser_change_pending = None
 if "is_generating" not in st.session_state:
     st.session_state.is_generating = False
 if "should_rerun_app" not in st.session_state:
@@ -88,6 +94,179 @@ if "show_expert_mode" not in st.session_state:
 
 
 # --- 3. 팝업 다이얼로그 정의 ---
+
+
+def reset_chunks_viewer():
+    st.session_state.dialog_chunks_file_to_show = None
+    if "chunk_viewer_page" in st.session_state:
+        st.session_state.chunk_viewer_page = 0
+    st.session_state.admin_active = True
+    st.session_state.should_rerun_app = True
+
+
+@st.dialog("문서 청크 목록 및 메타데이터 상세", width="large", on_dismiss=reset_chunks_viewer)
+def show_chunks_viewer_dialog(file_name, db_manager):  # noqa: C901
+    st.subheader(f"문서명: {file_name}")
+
+    # 1. 파일명에 해당하는 해시(source_id) 구하기
+    import unicodedata
+
+    orchestrator = PipelineOrchestrator()
+    manifest = orchestrator._load_manifest()
+    manifest_files = manifest.get("files", {})
+
+    target_hash = None
+    normalized_file_name = unicodedata.normalize("NFC", file_name)
+    for rel_path, info in manifest_files.items():
+        normalized_rel_name = unicodedata.normalize("NFC", Path(rel_path).name)
+        if normalized_rel_name == normalized_file_name:
+            target_hash = info.get("hash")
+            break
+
+    # 2. 전처리 JSON 파일에서 자식 chunk_id와 부모 parent_text의 맵 빌드
+    parent_text_map = {}
+    if target_hash:
+        from src.utils.paths import PROCESSED_DATA_DIR
+
+        json_path = PROCESSED_DATA_DIR / f"{target_hash}.json"
+        if json_path.exists():
+            try:
+                with open(json_path, encoding="utf-8") as jf:
+                    processed_data = json.load(jf)
+                for parent_item in processed_data:
+                    p_text = parent_item.get("parent_text", "")
+                    for child in parent_item.get("children", []):
+                        c_id = child.get("chunk_id")
+                        if c_id:
+                            parent_text_map[c_id] = p_text
+            except Exception as json_e:
+                logger.error(f"전처리 JSON 파일 로드 실패: {json_e}")
+
+    # 3. ChromaDB 청크 목록 조회 및 페이징 구성
+    chunks = db_manager.get_source_chunks(file_name)
+    total_chunks = len(chunks)
+    st.write(f"총 청크 수: {total_chunks}개")
+
+    with st.container(height=550):
+        if not chunks:
+            st.info("이 문서에 저장된 청크 데이터가 없습니다.")
+        else:
+            page_size = 5
+            total_pages = max(1, math.ceil(total_chunks / page_size))
+
+            if "chunk_viewer_page" not in st.session_state:
+                st.session_state.chunk_viewer_page = 0
+
+            current_page = st.session_state.chunk_viewer_page
+            if current_page >= total_pages:
+                current_page = total_pages - 1
+                st.session_state.chunk_viewer_page = current_page
+            elif current_page < 0:
+                current_page = 0
+                st.session_state.chunk_viewer_page = current_page
+
+            start_idx = current_page * page_size
+            end_idx = min(start_idx + page_size, total_chunks)
+
+            st.write(f"표시 중: {start_idx + 1} ~ {end_idx} 번 청크")
+
+            for idx in range(start_idx, end_idx):
+                chunk = chunks[idx]
+                c_id = chunk["id"]
+                st.markdown(f"### Chunk {idx + 1} (ID: `{c_id}`)")
+                st.write("**청크 내용 (자식 텍스트)**")
+                import html
+
+                escaped_content = html.escape(chunk["content"])
+                st.markdown(
+                    f"""<div style="
+                        background-color: rgba(151,166,195,0.08);
+                        padding: 12px;
+                        border-radius: 6px;
+                        border: 1px solid rgba(151,166,195,0.2);
+                        max-height: 180px;
+                        overflow-y: auto;
+                        white-space: pre-wrap;
+                        font-size: 0.95rem;
+                        line-height: 1.5;
+                        color: #f0f2f6;
+                        margin-bottom: 10px;
+                    ">{escaped_content}</div>""",
+                    unsafe_allow_html=True,
+                )
+
+                # 매핑된 상위 부모 텍스트가 있을 경우 익스팬더로 표시
+                parent_text = parent_text_map.get(c_id)
+                if parent_text:
+                    with st.expander("상위 부모 문맥 (Parent Context)"):
+                        escaped_parent = html.escape(parent_text)
+                        st.markdown(
+                            f"""<div style="
+                                background-color: rgba(151,166,195,0.04);
+                                padding: 12px;
+                                border-radius: 6px;
+                                border: 1px solid rgba(151,166,195,0.15);
+                                max-height: 250px;
+                                overflow-y: auto;
+                                white-space: pre-wrap;
+                                font-size: 0.95rem;
+                                line-height: 1.5;
+                                color: #e0e2e6;
+                            ">{escaped_parent}</div>""",
+                            unsafe_allow_html=True,
+                        )
+
+                # 메타데이터 상세 정보는 기본으로 접힌 상태로 렌더링
+                with st.expander("청크 메타데이터 상세 (Metadata)"):
+                    st.json(chunk["metadata"])
+
+                st.divider()
+
+            # 숫자 버튼형 페이징 네비게이션 구성 (최대 10개 표시 슬라이딩 윈도우)
+            max_visible = 10
+            start_page = max(0, current_page - max_visible // 2)
+            end_page = min(total_pages, start_page + max_visible)
+            if end_page - start_page < max_visible:
+                start_page = max(0, end_page - max_visible)
+
+            cols_width = [1.2] + [1.0] * (end_page - start_page) + [1.2]
+            cols = st.columns(cols_width)
+
+            with cols[0]:
+                if st.button(
+                    "이전",
+                    disabled=(current_page == 0),
+                    use_container_width=True,
+                    key="chunk_prev_btn",
+                ):
+                    st.session_state.chunk_viewer_page = current_page - 1
+                    st.rerun()
+
+            for idx, page_idx in enumerate(range(start_page, end_page)):
+                with cols[idx + 1]:
+                    btn_type = "primary" if page_idx == current_page else "secondary"
+                    if st.button(
+                        f"{page_idx + 1}",
+                        type=btn_type,
+                        use_container_width=True,
+                        key=f"chunk_page_btn_{page_idx}",
+                    ):
+                        st.session_state.chunk_viewer_page = page_idx
+                        st.rerun()
+
+            with cols[-1]:
+                if st.button(
+                    "다음",
+                    disabled=(current_page == total_pages - 1),
+                    use_container_width=True,
+                    key="chunk_next_btn",
+                ):
+                    st.session_state.chunk_viewer_page = current_page + 1
+                    st.rerun()
+
+    if st.button("닫기", use_container_width=True, key="close_chunks_viewer_btn"):
+        reset_chunks_viewer()
+        st.rerun()
 
 
 # [문서 원문 보기]
@@ -136,27 +315,51 @@ def show_admin_dialog(db_manager):  # noqa: C901
     st.markdown("지식 베이스(RAW_DATA) 관리 및 데이터베이스 동기화를 수행합니다.")
 
     # 상단 옵션 영역
-    col_opt1, _ = st.columns([1, 1])
+    col_opt1, col_opt2 = st.columns([1, 1])
     with col_opt1:
         auto_sync = st.checkbox(
             "파일 업로드/삭제 후 자동 동기화 실행",
             value=True,
             help="체크 시 별도의 Sync 버튼 클릭 없이 즉시 DB에 반영합니다.",
         )
+    with col_opt2:
+        default_parser_idx = 0 if settings.PARSER_TYPE.lower() == "manual" else 1
+        parser_type = st.radio(
+            "적용 파서 선택",
+            options=["manual", "docling"],
+            index=default_parser_idx,
+            horizontal=True,
+            help="동기화 파이프라인에서 사용할 PDF 파서 전략을 지정합니다.",
+        )
 
     st.divider()
 
     # 공통 동기화 로직 함수
     def trigger_sync(force=False):
+        progress_bar = st.progress(0)
+
         with st.status("데이터베이스 동기화 중...", expanded=True) as status:
+
+            def sync_callback(current, total, file_name, pb=progress_bar, st_status=status):
+                if total > 0:
+                    percent = int((current / total) * 100)
+                    percent = min(100, max(0, percent))
+                    pb.progress(percent, text=f"[{current}/{total}] {file_name} 처리 중... ({percent}%)")
+                    st_status.update(label=f"진행 중: {file_name}", state="running")
+                    st.write(f"[{current}/{total}] {file_name} 처리 완료 ({percent}%)")
+                else:
+                    pb.progress(0, text="대기 중...")
+
             # 싱글톤 인스턴스 사용 (불필요한 모델 로드 방지)
             orchestrator = PipelineOrchestrator()
-            orchestrator.run_ingestion(force=force)
+            orchestrator.run_ingestion(force=force, parser_type=parser_type, progress_callback=sync_callback)
+            progress_bar.progress(100, text="모든 파일 처리 완료 (100%)")
             status.update(label="동기화 완료", state="complete", expanded=False)
         # 캐시된 RAG 시스템(db_manager, rag_chain)을 재초기화하여 리셋된 컬렉션을 반영
         initialize_rag_system.clear()
         st.success("DB 동기화 완료")
         time.sleep(0.5)
+        progress_bar.empty()
         st.rerun()
 
     # 상단 영역: 업로드 및 동기화
@@ -216,63 +419,188 @@ def show_admin_dialog(db_manager):  # noqa: C901
     if not current_files:
         st.info("현재 등록된 문서가 없습니다.")
     else:
-        # 컬럼 레이아웃 조정 (파서 타입 및 개별 동기화 추가)
-        h_col1, h_col2, h_col3, h_col4, h_col5, h_col6, h_col7 = st.columns([0.2, 2.5, 0.8, 0.8, 0.6, 0.6, 0.6])
+        orchestrator = PipelineOrchestrator()
+        manifest = orchestrator._load_manifest()
+        manifest_files = manifest.get("files", {})
+
+        h_col1, h_col2, h_col3, h_col4, h_col5, h_col6, h_col7, h_col8 = st.columns(
+            [0.3, 2.0, 0.6, 0.9, 0.9, 0.6, 0.6, 0.6]
+        )
         h_col1.write("**No**")
         h_col2.write("**파일명**")
         h_col3.write("**크기**")
-        h_col4.write("**파서**")
-        h_col5.write("**청크**")
-        h_col6.write("**동기화**")
-        h_col7.write("**삭제**")
+        h_col4.write("**상태**")
+        h_col5.write("**적용 파서**")
+        h_col6.write("**청크**")
+        h_col7.write("**동기화**")
+        h_col8.write("**삭제**")
         st.markdown(
             "<hr style='margin: 0px 0px 10px 0px; border: 0.5px solid rgba(151,166,195,0.2);'>",
             unsafe_allow_html=True,
         )
-
-        # ChromaDB에서 실제 메타데이터를 가져와 파서 타입 확인 (캐싱된 헬퍼 사용)
-        file_parser_map = _get_file_parser_map(db_manager)
-
         for i, f in enumerate(current_files):
-            # 상대 경로 계산
-            rel_path = str(f.relative_to(RAW_DATA_DIR))
-            r_col1, r_col2, r_col3, r_col4, r_col5, r_col6, r_col7 = st.columns([0.2, 2.5, 0.8, 0.8, 0.6, 0.6, 0.6])
+            r_col1, r_col2, r_col3, r_col4, r_col5, r_col6, r_col7, r_col8 = st.columns(
+                [0.3, 2.0, 0.6, 0.9, 0.9, 0.6, 0.6, 0.6]
+            )
             r_col1.write(f"{i + 1}")
+
+            # 적용 파서 식별 (매니페스트 우선 조회, 차선으로 ChromaDB 조회)
+            import unicodedata
+
+            rel_path = unicodedata.normalize("NFC", str(f.relative_to(RAW_DATA_DIR)))
+
             r_col2.text(rel_path)  # 파일명 대신 상대 경로 표시
             r_col3.write(format_size(f.stat().st_size))
 
-            # 파서 타입 표시
-            parser_type = file_parser_map.get(rel_path, "-")
-            parser_color = "blue" if parser_type == "docling" else "green" if parser_type == "manual" else "gray"
-            r_col4.markdown(f":{parser_color}[{parser_type}]")
+            normalized_manifest_files = {unicodedata.normalize("NFC", k): v for k, v in manifest_files.items()}
+            file_manifest_info = normalized_manifest_files.get(rel_path, {})
+            parser_name = file_manifest_info.get("parser_type")
 
-            # 청크 수 조회 시에도 상대 경로 또는 파일명 사용 (Legacy 대응)
-            chunk_count = db_manager.get_source_count(f.name)
-            if chunk_count == 0 and rel_path != f.name:
-                # relative_path로 다시 시도
-                # (db_manager.get_source_count가 MetadataFields.SRC_NAME만 볼 경우 대응 필요)
-                pass
-            r_col5.write(f"{chunk_count}")
+            chunks = db_manager.get_source_chunks(f.name)
+            chunk_count = len(chunks)
+            if not parser_name:
+                parser_name = parser_type
+                if chunks:
+                    parser_name = chunks[0].get("metadata", {}).get("parser", parser_type)
 
-            # 개별 동기화 버튼
-            if r_col6.button("🔄", key=f"sync_btn_{i}", help=f"'{f.name}' 개별 동기화"):
-                orchestrator = PipelineOrchestrator()
-                with st.spinner(f"{f.name} 동기화 중..."):
-                    if orchestrator.process_single_file(f):
-                        st.toast(f"동기화 완료: {f.name}")
-                        initialize_rag_system.clear()
-                        time.sleep(0.5)
-                        st.rerun()
+            parser_options = ["manual", "docling"]
 
-            # 삭제 버튼
-            if r_col7.button("🗑️", key=f"del_btn_{i}", help=f"'{f.name}' 삭제") and f.exists():
+            # 청크 개수가 0개이면 미동기화, 0보다 크면 동기화 완료 배지 표시
+            pending = st.session_state.get("parser_change_pending") or {}
+            if chunk_count == 0:
+                r_col4.markdown(
+                    "<div style='color: #ff4b4b; font-size: 0.8rem; "
+                    "font-weight: bold; white-space: nowrap; margin-top: 6px;'>미동기화 (대기)</div>",
+                    unsafe_allow_html=True,
+                )
+                display_parser = pending.get(f.name, parser_name or parser_type)
+            else:
+                r_col4.markdown(
+                    "<div style='color: #00cc66; font-size: 0.8rem; "
+                    "font-weight: bold; white-space: nowrap; margin-top: 6px;'>동기화 완료</div>",
+                    unsafe_allow_html=True,
+                )
+                display_parser = pending.get(f.name, parser_name)
+
+            try:
+                selected_idx = parser_options.index(display_parser.lower())
+            except ValueError:
+                selected_idx = 0
+
+            selected_parser = r_col5.selectbox(
+                "파서 선택",
+                options=parser_options,
+                index=selected_idx,
+                key=f"parser_select_{i}_{display_parser}",
+                label_visibility="collapsed",
+                disabled=False,
+            )
+
+            if selected_parser != parser_name:
+                if f.name not in pending or pending[f.name] != selected_parser:
+                    if st.session_state.parser_change_pending is None:
+                        st.session_state.parser_change_pending = {}
+                    st.session_state.parser_change_pending[f.name] = selected_parser
+                    st.rerun()
+            elif f.name in pending:
+                st.session_state.parser_change_pending.pop(f.name, None)
+                if not st.session_state.parser_change_pending:
+                    st.session_state.parser_change_pending = None
+                st.rerun()
+
+            if r_col6.button(f"{chunk_count} 🔍", key=f"view_chunks_{i}", help="청크 상세 내용 보기"):
+                st.session_state.dialog_chunks_file_to_show = f.name
+                st.session_state.admin_active = False
+                st.session_state.should_rerun_app = True
+                st.rerun()
+
+            # 개별 동기화/재색인 실행
+            if r_col7.button("🔄", key=f"sync_btn_{i}", help="개별 동기화 및 재색인 실행"):
+                active_parser = selected_parser
+                if pending and f.name in pending:
+                    st.session_state.parser_change_pending.pop(f.name, None)
+                    if not st.session_state.parser_change_pending:
+                        st.session_state.parser_change_pending = None
+
+                progress_bar = st.progress(0)
+                with st.status(f"{f.name} 개별 동기화 중...", expanded=True) as status:
+
+                    def single_file_sync_callback(current, total, name, pb=progress_bar, st_status=status):
+                        if total > 0:
+                            percent = int((current / total) * 100)
+                            percent = min(100, max(0, percent))
+                            pb.progress(percent, text=f"[{current}/{total}] {name} 처리 중... ({percent}%)")
+                            st_status.update(label=f"진행 중: {name}", state="running")
+                            st.write(f"[{current}/{total}] {name} 처리 완료 ({percent}%)")
+
+                    orchestrator = PipelineOrchestrator()
+                    orchestrator.update_file_parser(f.name, active_parser, progress_callback=single_file_sync_callback)
+                    progress_bar.progress(100, text="동기화 완료")
+                    status.update(label="개별 동기화 및 재색인 완료", state="complete", expanded=False)
+
+                initialize_rag_system.clear()
+                st.toast(f"동기화 완료: {f.name}")
+                time.sleep(0.5)
+                progress_bar.empty()
+                st.rerun()
+
+            if r_col8.button("🗑️", key=f"del_btn_{i}", help=f"'{f.name}' 삭제") and f.exists():
                 f.unlink()
                 st.toast(f"파일 삭제됨: {f.name}")
                 if auto_sync:
                     trigger_sync(force=False)
                 else:
                     time.sleep(0.5)
-                    st.session_state.should_rerun_app = True  # Set flag instead of direct rerun
+                    st.rerun()
+
+    pending = st.session_state.get("parser_change_pending")
+    if pending:
+        st.warning(
+            "파서 변경 확인: 다음 파일들의 파서를 변경하시겠습니까? "
+            "변경 시 해당 파일들은 새로운 파서 규격으로 즉시 재색인됩니다."
+        )
+
+        change_details = []
+        for file_name, new_parser in pending.items():
+            file_chunks = db_manager.get_source_chunks(file_name)
+            old_parser = "manual"
+            if file_chunks:
+                old_parser = file_chunks[0].get("metadata", {}).get("parser", "manual")
+            change_details.append(f"- {file_name}: {old_parser} -> {new_parser}")
+
+        st.markdown("\n".join(change_details))
+
+        col_confirm, col_cancel = st.columns(2)
+        with col_confirm:
+            if st.button("예, 변경 및 재색인 실행", key="confirm_parser_change_btn", use_container_width=True):
+                pending_copy = pending.copy()
+                st.session_state.parser_change_pending = None
+                progress_bar = st.progress(0)
+
+                with st.status("지정된 파일들의 파서 전환 및 재색인 중...", expanded=True) as status:
+
+                    def multi_file_sync_callback(current, total, name, pb=progress_bar, st_status=status):
+                        if total > 0:
+                            percent = int((current / total) * 100)
+                            percent = min(100, max(0, percent))
+                            pb.progress(percent, text=f"[{current}/{total}] {name} 처리 중... ({percent}%)")
+                            st_status.update(label=f"진행 중: {name}", state="running")
+
+                    orchestrator = PipelineOrchestrator()
+                    orchestrator.update_multiple_file_parsers(pending_copy, progress_callback=multi_file_sync_callback)
+                    progress_bar.progress(100, text="파서 전환 완료")
+                    status.update(label="파서 전환 및 재색인 완료", state="complete", expanded=False)
+
+                initialize_rag_system.clear()
+                st.toast("선택한 파일들의 파서가 성공적으로 전환되었습니다.")
+                time.sleep(0.5)
+                progress_bar.empty()
+                st.rerun()
+
+        with col_cancel:
+            if st.button("취소", key="cancel_parser_change_btn", use_container_width=True):
+                st.session_state.parser_change_pending = None
+                st.rerun()
 
     st.divider()
 
@@ -315,7 +643,7 @@ def show_admin_dialog(db_manager):  # noqa: C901
     st.divider()
     if st.button("관리 시스템 종료 (닫기)", use_container_width=True):
         st.session_state.admin_active = False
-        st.session_state.should_rerun_app = True  # Set flag instead of direct rerun
+        st.rerun()
 
 
 # --- 4. RAG 시스템 초기화 (캐싱) ---
@@ -451,6 +779,9 @@ with st.sidebar:
 # --- 6. 다이얼로그 활성화 제어 ---
 if st.session_state.get("admin_active", False):
     show_admin_dialog(db_manager)
+
+if st.session_state.get("dialog_chunks_file_to_show"):
+    show_chunks_viewer_dialog(st.session_state.dialog_chunks_file_to_show, db_manager)
 
 
 # --- UI 스트리밍 핸들러 ---
