@@ -1,7 +1,9 @@
 import logging
 import os
+import shutil
 import time
 import warnings
+from pathlib import Path
 from typing import Any
 
 import chromadb
@@ -12,7 +14,7 @@ from src.common.config import settings
 from src.common.constants import MetadataFields
 from src.core.base_retriever import BaseRetriever
 from src.models.embedder import BGEEmbedder
-from src.utils.paths import VECTOR_DB_DIR, ensure_directories
+from src.utils.paths import CACHE_DIR, PROCESSED_DATA_DIR, VECTOR_DB_DIR, ensure_directories
 from src.utils.unicode import normalize_to_nfc, normalize_to_nfd
 
 # 경고 숨기기 로직 추가
@@ -73,15 +75,7 @@ class ChromaDBManager(BaseRetriever):
                 if ChromaDBManager._shared_client is not None:
                     self.client = ChromaDBManager._shared_client
                 else:
-                    if chroma_host:
-                        logger.info(f"ChromaDB 서버 모드 접속 시도 (Host: {chroma_host}, Port: {chroma_port})")
-                        self.client = chromadb.HttpClient(
-                            host=chroma_host, port=int(chroma_port), settings=common_settings
-                        )
-                    else:
-                        ensure_directories()
-                        logger.info(f"ChromaDB 로컬 모드 활성화 (Path: {VECTOR_DB_DIR})")
-                        self.client = chromadb.PersistentClient(path=str(VECTOR_DB_DIR), settings=common_settings)
+                    self.client = self._create_client(chroma_host, chroma_port, common_settings)
                     ChromaDBManager._shared_client = self.client
 
                 # 컬렉션 로드 (실질적인 연결 테스트 구간)
@@ -92,10 +86,28 @@ class ChromaDBManager(BaseRetriever):
                     metadata={"hnsw:space": "cosine", "hnsw:num_threads": 1},
                 )
 
+                self._check_config_and_auto_reset()
                 logger.info(f"ChromaDB 로드 완료. (컬렉션: {self.collection_name})")
                 return  # 성공 시 루프 탈출
 
             except Exception as e:
+                # DB 손상 또는 메타데이터 에러 감지 시 자가 치유 시도
+                if not chroma_host and attempt < max_retries - 1:
+                    logger.warning(
+                        f"[자가 치유] ChromaDB 초기화 중 오류 감지 (DB 손상 또는 버전 불일치 가능성): {e}. "
+                        "로컬 DB 디렉토리를 완전히 삭제하고 자동 재구성을 수행합니다."
+                    )
+                    ChromaDBManager._shared_client = None
+                    self.client = None
+                    if VECTOR_DB_DIR.exists():
+                        try:
+                            shutil.rmtree(VECTOR_DB_DIR)
+                        except Exception as rm_e:
+                            logger.error(f"로컬 DB 디렉토리 삭제 실패: {rm_e}")
+                    ensure_directories()
+                    time.sleep(retry_delay)
+                    continue
+
                 if attempt < max_retries - 1:
                     logger.warning(
                         f"ChromaDB 연결 실패. {retry_delay}초 후 재시도합니다. "
@@ -104,8 +116,83 @@ class ChromaDBManager(BaseRetriever):
                     time.sleep(retry_delay)
                 else:
                     logger.error("ChromaDB 연결에 최종적으로 실패했습니다. DB 상태를 확인하시기 바랍니다.")
-                    # 재시도 최종 실패 시 빈 컬렉션 객체 방지 처리가 필요할 수 있으나, 여기서는 에러를 발생시킵니다.
                     raise RuntimeError("ChromaDB initialization failed.") from e
+
+    def _create_client(self, chroma_host, chroma_port, common_settings):
+        if chroma_host:
+            logger.info(f"ChromaDB 서버 모드 접속 시도 (Host: {chroma_host}, Port: {chroma_port})")
+            return chromadb.HttpClient(
+                host=chroma_host, port=int(chroma_port), settings=common_settings
+            )
+
+        ensure_directories()
+        logger.info(f"ChromaDB 로컬 모드 활성화 (Path: {VECTOR_DB_DIR})")
+        try:
+            return chromadb.PersistentClient(path=str(VECTOR_DB_DIR), settings=common_settings)
+        except Exception as e:
+            logger.error(f"ChromaDB PersistentClient 초기화 실패 (DB 파일 손상 가능성): {e}")
+            logger.info("기존 DB 폴더를 삭제하고 재생성하여 자동 초기화를 시도합니다.")
+            if VECTOR_DB_DIR.exists():
+                shutil.rmtree(VECTOR_DB_DIR)
+            ensure_directories()
+            return chromadb.PersistentClient(path=str(VECTOR_DB_DIR), settings=common_settings)
+
+    def _check_config_and_auto_reset(self):
+        """임베딩 모델 및 청크 크기 변경을 감지하여 자동 리셋을 수행합니다."""
+        try:
+            existing_metadata = self.collection.metadata
+            current_model = self.embedding_fn.model_name
+
+            from src.processing.chunking import HierarchicalChunker
+            chunker = HierarchicalChunker()
+            current_parent_size = chunker.parent_chunk_size
+            current_child_size = chunker.child_chunk_size
+
+            needs_reset = False
+            reset_reason = ""
+
+            if existing_metadata:
+                existing_model = existing_metadata.get("embedding_model")
+                existing_parent = existing_metadata.get("parent_chunk_size")
+                existing_child = existing_metadata.get("child_chunk_size")
+
+                if existing_model is not None and existing_model != current_model:
+                    needs_reset = True
+                    reset_reason = f"임베딩 모델 변경 ({existing_model} -> {current_model})"
+                elif existing_parent is not None and int(existing_parent) != current_parent_size:
+                    needs_reset = True
+                    reset_reason = f"부모 청크 크기 변경 ({existing_parent} -> {current_parent_size})"
+                elif existing_child is not None and int(existing_child) != current_child_size:
+                    needs_reset = True
+                    reset_reason = f"자식 청크 크기 변경 ({existing_child} -> {current_child_size})"
+
+            if needs_reset:
+                logger.warning(
+                    f"[자가 치유] {reset_reason} 감지. "
+                    "데이터 정합성 및 무결성 유지를 위해 기존 데이터를 자동 초기화하고 전체 재색인을 유도합니다."
+                )
+                self.reset_collection()
+                self._clear_processed_and_cache_files()
+
+            # 메타데이터 업데이트 (120자 라인 한도 준수하여 가로 분할)
+            new_metadata = dict(existing_metadata or {})
+            new_metadata["hnsw:space"] = "cosine"
+            new_metadata["hnsw:num_threads"] = 1
+            new_metadata["embedding_model"] = current_model
+            new_metadata["parent_chunk_size"] = current_parent_size
+            new_metadata["child_chunk_size"] = current_child_size
+
+            # 메타데이터에 변화가 있는 경우에만 modify 호출
+            if not existing_metadata or any(
+                new_metadata.get(k) != existing_metadata.get(k) for k in new_metadata
+            ):
+                # ChromaDB는 컬렉션 생성 후 hnsw: 관련 메타데이터 변경을 지원하지 않으므로 제외하고 수정함
+                modify_metadata = {k: v for k, v in new_metadata.items() if not k.startswith("hnsw:")}
+                self.collection.modify(metadata=modify_metadata)
+
+        except Exception as e:
+            logger.error(f"설정 검증 및 자동 초기화 중 오류 발생: {e}")
+            raise
 
     def embed_query(self, query_text: str) -> list[float]:
         """
@@ -300,6 +387,39 @@ class ChromaDBManager(BaseRetriever):
         except Exception as e:
             logger.error(f"ChromaDB 컬렉션 초기화 중 오류 발생: {e}")
             raise
+
+    def _clear_processed_and_cache_files(self):
+        """임베딩 모델 또는 설정 변경 시, 로컬 가공 및 캐시 파일들을 제거합니다."""
+
+        logger.info("가공 데이터(processed) 및 파서 캐시(cache) 초기화 중...")
+
+        if PROCESSED_DATA_DIR.exists():
+            for f in PROCESSED_DATA_DIR.glob("*.json"):
+                self._safe_unlink(f)
+            self._safe_unlink(PROCESSED_DATA_DIR / "manifest.json")
+
+        if CACHE_DIR.exists():
+            for f in CACHE_DIR.glob("*.pkl"):
+                self._safe_unlink(f)
+
+        self._clear_bm25_cache_directory()
+        logger.info("가공 및 캐시 파일 물리적 삭제 완료.")
+
+    def _safe_unlink(self, file_path: Path):
+        """안전하게 파일을 삭제합니다."""
+        try:
+            file_path.unlink(missing_ok=True)
+        except Exception as ex:
+            logger.error(f"파일 {file_path.name} 삭제 실패: {ex}")
+
+    def _clear_bm25_cache_directory(self):
+        """BM25 캐시 디렉토리를 안전하게 삭제합니다."""
+        bm25_cache_dir = Path(".cache/bm25_v2")
+        if bm25_cache_dir.exists():
+            try:
+                shutil.rmtree(bm25_cache_dir)
+            except Exception as ex:
+                logger.error(f"BM25 캐시 디렉토리 삭제 실패: {ex}")
 
 
 if __name__ == "__main__":
