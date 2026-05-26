@@ -17,7 +17,9 @@ def normalize_to_nfd(text: str) -> str:
 
 
 def normalize_path_to_nfc(path_val: str | Path) -> str:
-    """경로 객체 또는 경로 문자열을 NFC 형식의 문자열로 정규화하여 반환합니다."""
+    """경로 객체 또는 경로 문자열을 NFC 형식의 문자열(포워드 슬래시)로 정규화하여 반환합니다."""
     if not path_val:
         return ""
-    return unicodedata.normalize("NFC", str(path_val))
+    path_str = path_val.as_posix() if isinstance(path_val, Path) else str(path_val).replace("\\", "/")
+    return unicodedata.normalize("NFC", path_str)
+
