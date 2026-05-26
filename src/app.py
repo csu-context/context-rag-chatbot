@@ -446,6 +446,7 @@ def show_admin_dialog(db_manager):  # noqa: C901
 
             # 적용 파서 식별 (매니페스트 우선 조회, 차선으로 ChromaDB 조회)
             import unicodedata
+
             rel_path = unicodedata.normalize("NFC", str(f.relative_to(RAW_DATA_DIR)))
 
             r_col2.text(rel_path)  # 파일명 대신 상대 경로 표시
@@ -544,7 +545,6 @@ def show_admin_dialog(db_manager):  # noqa: C901
                 st.rerun()
 
             if r_col8.button("🗑️", key=f"del_btn_{i}", help=f"'{f.name}' 삭제") and f.exists():
-
                 f.unlink()
                 st.toast(f"파일 삭제됨: {f.name}")
                 if auto_sync:

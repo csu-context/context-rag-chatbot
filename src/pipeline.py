@@ -321,7 +321,7 @@ class IngestionPipeline:
         self,
         source_ids_to_delete: list[str] | None = None,
         relative_paths_to_delete: list[str] | None = None,
-        filenames_to_delete: list[str] | None = None
+        filenames_to_delete: list[str] | None = None,
     ):
         """
         DB, 캐시 및 가공된 JSON 파일에서 삭제된 데이터를 제거합니다.
