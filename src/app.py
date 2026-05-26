@@ -202,7 +202,7 @@ def format_doc_status(docs_list):
         return "0개 문서 (0개 청크)"
     unique_files = set()
     for d in docs_list:
-        src_name = get_doc_field(d, MetadataFields.SRC_NAME, "알 수 없음")
+        src_name = str(get_doc_field(d, MetadataFields.SRC_NAME, "알 수 없음"))
         unique_files.add(src_name)
     return f"{len(unique_files)}개 문서 ({len(docs_list)}개 청크)"
 
