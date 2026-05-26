@@ -87,7 +87,6 @@ class ManualParser:
                     MetadataFields.PG_NUM: page,
                     MetadataFields.DOC_TYPE: self.extension,
                     MetadataFields.CATEGORY: self.category,
-                    MetadataFields.PARSER: self.parser_type,
                 },
             }
         )
