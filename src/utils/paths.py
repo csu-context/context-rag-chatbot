@@ -26,7 +26,8 @@ EVAL_LOGS_DIR = (LOGS_DIR / "eval").resolve()
 # 4. 설정 및 사전 파일 경로
 SYNONYMS_FILE = (BASE_DIR / "src" / "common" / "synonyms.json").resolve()
 CACHE_DIR = (BASE_DIR / ".cache").resolve()
-BM25_CACHE_FILE = CACHE_DIR / "bm25_index.pkl"
+BM25_CACHE_FILE = CACHE_DIR / "bm25_index.pkl"  # legacy — kept for reference only
+BM25_CACHE_DIR = CACHE_DIR / "bm25_v2"
 CROSS_ENCODER_CACHE_DIR = CACHE_DIR / "cross-encoder"
 
 

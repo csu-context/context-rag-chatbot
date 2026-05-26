@@ -82,6 +82,8 @@ class ManualParser:
                 "metadata": {
                     MetadataFields.SOURCE_ID: self.source_id,
                     MetadataFields.SRC_NAME: self.file_name,
+                    MetadataFields.RELATIVE_PATH: str(self.file_path.relative_to(RAW_DATA_DIR)),
+                    MetadataFields.PARSER_TYPE: self.parser_type,
                     MetadataFields.PG_NUM: page,
                     MetadataFields.DOC_TYPE: self.extension,
                     MetadataFields.CATEGORY: self.category,

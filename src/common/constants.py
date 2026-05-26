@@ -8,6 +8,8 @@ class MetadataFields:
 
     SOURCE_ID: Final[str] = "source_id"
     SRC_NAME: Final[str] = "src_name"
+    RELATIVE_PATH: Final[str] = "relative_path"
+    PARSER_TYPE: Final[str] = "parser_type"
     DOC_TYPE: Final[str] = "doc_type"
     PG_NUM: Final[str] = "pg_num"
     CATEGORY: Final[str] = "category"

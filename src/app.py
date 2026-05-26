@@ -13,6 +13,7 @@ from src.common.constants import MetadataFields
 from src.core.chains import get_rag_chain
 from src.models.factory import LLMFactory
 from src.pipeline import PipelineOrchestrator
+from src.utils.health_check import repair_integrity, run_full_diagnostics
 from src.utils.logger import PerformanceLogger, setup_global_logging
 from src.utils.monitoring import get_system_stats
 from src.utils.paths import RAW_DATA_DIR, ensure_directories
@@ -290,6 +291,24 @@ def reset_admin_active():
     st.session_state.admin_active = False
 
 
+@st.cache_data(ttl=30)  # 30초 캐싱
+def _get_file_parser_map(_db_manager) -> dict[str, str]:
+    """ChromaDB에서 파일별 파서 타입을 조회하여 캐싱합니다."""
+    try:
+        all_metas = _db_manager.collection.get(include=["metadatas"])["metadatas"]
+        result = {}
+        for m in all_metas:
+            # relative_path가 있으면 우선 사용, 없으면 파일명(src_name) 사용
+            rel_path = m.get(MetadataFields.RELATIVE_PATH) or m.get(MetadataFields.SRC_NAME)
+            if rel_path and rel_path not in result:
+                # 구 스키마('parser') 호환성 유지
+                result[rel_path] = m.get(MetadataFields.PARSER_TYPE) or m.get("parser", "manual")
+        return result
+    except Exception as e:
+        logger.warning(f"파서 맵 로드 중 오류: {e}")
+        return {}
+
+
 # [데이터 관리 시스템 (Admin)]
 @st.dialog("데이터 관리 시스템", width="large", on_dismiss=reset_admin_active)
 def show_admin_dialog(db_manager):  # noqa: C901
@@ -380,9 +399,9 @@ def show_admin_dialog(db_manager):  # noqa: C901
     st.divider()
 
     # 하단 영역: 문서 목록 및 행 단위 삭제
-    st.subheader("등록된 문서 목록 및 삭제")
+    st.subheader("등록된 문서 목록 및 관리")
     if not auto_sync:
-        st.caption("주의: 자동 동기화가 꺼져 있습니다. 삭제 후 반드시 'Sync'를 실행해야 DB에서 제거됩니다.")
+        st.caption("주의: 자동 동기화가 꺼져 있습니다. 변경 후 반드시 'Sync'를 실행해야 DB에 반영됩니다.")
 
     def format_size(size_bytes):
         if size_bytes == 0:
@@ -393,8 +412,9 @@ def show_admin_dialog(db_manager):  # noqa: C901
         return f"{round(size_bytes / p, 2)} {size_name[i]}"
 
     current_files = []
+    # 하위 디렉토리까지 포함하여 재귀적으로 스캔
     for ext in ["*.pdf", "*.md", "*.markdown"]:
-        current_files.extend(list(RAW_DATA_DIR.glob(ext)))
+        current_files.extend(list(RAW_DATA_DIR.glob(f"**/{ext}")))
 
     if not current_files:
         st.info("현재 등록된 문서가 없습니다.")
@@ -419,18 +439,22 @@ def show_admin_dialog(db_manager):  # noqa: C901
             unsafe_allow_html=True,
         )
 
+        # ChromaDB에서 실제 메타데이터를 가져와 파서 타입 확인 (캐싱된 헬퍼 사용)
+        file_parser_map = _get_file_parser_map(db_manager)
+
         for i, f in enumerate(current_files):
             r_col1, r_col2, r_col3, r_col4, r_col5, r_col6, r_col7, r_col8 = st.columns(
                 [0.3, 2.0, 0.6, 0.9, 0.9, 0.6, 0.6, 0.6]
             )
             r_col1.write(f"{i + 1}")
-            r_col2.text(f.name)
-            r_col3.write(format_size(f.stat().st_size))
-
+            
             # 적용 파서 식별 (매니페스트 우선 조회, 차선으로 ChromaDB 조회)
             import unicodedata
-
             rel_path = unicodedata.normalize("NFC", str(f.relative_to(RAW_DATA_DIR)))
+            
+            r_col2.text(rel_path)  # 파일명 대신 상대 경로 표시
+            r_col3.write(format_size(f.stat().st_size))
+
             normalized_manifest_files = {unicodedata.normalize("NFC", k): v for k, v in manifest_files.items()}
             file_manifest_info = normalized_manifest_files.get(rel_path, {})
             parser_name = file_manifest_info.get("parser_type")
@@ -487,7 +511,6 @@ def show_admin_dialog(db_manager):  # noqa: C901
                     st.session_state.parser_change_pending = None
                 st.rerun()
 
-            chunk_count = len(chunks)
             if r_col6.button(f"{chunk_count} 🔍", key=f"view_chunks_{i}", help="청크 상세 내용 보기"):
                 st.session_state.dialog_chunks_file_to_show = f.name
                 st.session_state.admin_active = False
@@ -525,6 +548,33 @@ def show_admin_dialog(db_manager):  # noqa: C901
                 st.rerun()
 
             if r_col8.button("🗑️", key=f"del_btn_{i}", help=f"'{f.name}' 삭제") and f.exists():
+=======
+            # 파서 타입 표시
+            parser_type = file_parser_map.get(rel_path, "-")
+            parser_color = "blue" if parser_type == "docling" else "green" if parser_type == "manual" else "gray"
+            r_col4.markdown(f":{parser_color}[{parser_type}]")
+
+            # 청크 수 조회 시에도 상대 경로 또는 파일명 사용 (Legacy 대응)
+            chunk_count = db_manager.get_source_count(f.name)
+            if chunk_count == 0 and rel_path != f.name:
+                # relative_path로 다시 시도
+                # (db_manager.get_source_count가 MetadataFields.SRC_NAME만 볼 경우 대응 필요)
+                pass
+            r_col5.write(f"{chunk_count}")
+
+            # 개별 동기화 버튼
+            if r_col6.button("🔄", key=f"sync_btn_{i}", help=f"'{f.name}' 개별 동기화"):
+                orchestrator = PipelineOrchestrator()
+                with st.spinner(f"{f.name} 동기화 중..."):
+                    if orchestrator.process_single_file(f):
+                        st.toast(f"동기화 완료: {f.name}")
+                        initialize_rag_system.clear()
+                        time.sleep(0.5)
+                        st.rerun()
+
+            # 삭제 버튼
+            if r_col7.button("🗑️", key=f"del_btn_{i}", help=f"'{f.name}' 삭제") and f.exists():
+>>>>>>> origin/develop
                 f.unlink()
                 st.toast(f"파일 삭제됨: {f.name}")
                 if auto_sync:
@@ -581,6 +631,44 @@ def show_admin_dialog(db_manager):  # noqa: C901
             if st.button("취소", key="cancel_parser_change_btn", use_container_width=True):
                 st.session_state.parser_change_pending = None
                 st.rerun()
+
+    st.divider()
+
+    # --- 자가 진단 및 정합성 리포트 영역 ---
+    st.subheader("데이터 정합성 자가 진단")
+    if st.button("진단 리포트 생성", key="health_check_btn", use_container_width=True):
+        with st.spinner("시스템 진단 중..."):
+            _is_healthy, report = run_full_diagnostics(silent=True, check_model=False)
+            st.session_state.health_report = report
+
+    if "health_report" in st.session_state:
+        report = st.session_state.health_report
+        anomalies = report["db"].get("anomalies", {})
+
+        ghosts = anomalies.get("ghost_chunks", [])
+        mismatches = anomalies.get("mismatched_hash", [])
+        duplicates = anomalies.get("duplicate_parsers", [])
+
+        has_issue = ghosts or mismatches or duplicates
+
+        if not has_issue:
+            st.success("✅ 모든 데이터가 정합성을 유지하고 있습니다.")
+        else:
+            if ghosts:
+                st.error(f"⚠️ 유령 청크 감지: {len(ghosts)}개 파일의 데이터가 DB에 남아있습니다.")
+            if mismatches:
+                st.warning(f"⚠️ 업데이트 필요: {len(mismatches)}개 파일의 내용이 DB와 다릅니다.")
+            if duplicates:
+                st.error(f"⚠️ 중복 적재 감지: {len(duplicates)}개 파일에 여러 파서 데이터가 공존합니다.")
+
+            if st.button("정합성 자동 복구 (Repair)", type="primary", use_container_width=True):
+                with st.spinner("복구 작업 진행 중..."):
+                    repair_integrity(anomalies)
+                    st.success("복구가 완료되었습니다. 상태를 재확인하세요.")
+                    del st.session_state.health_report
+                    initialize_rag_system.clear()
+                    time.sleep(0.5)
+                    st.rerun()
 
     st.divider()
     if st.button("관리 시스템 종료 (닫기)", use_container_width=True):
