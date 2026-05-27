@@ -29,7 +29,7 @@ _TOKEN_RATIO: dict[str, float] = {
     "claude": 1.2,
 }
 
-_HISTORY_WINDOW = 6  # 슬라이딩 윈도우: 최근 N개 메시지(= K턴 × 2)
+_HISTORY_WINDOW = 6  # 슬라이딩 윈도우: 최근 N개 메시지(= K턴 * 2)
 
 logger = logging.getLogger(__name__)
 
@@ -156,9 +156,7 @@ class RAGPipeline:
         """대화 맥락에 따른 캐시 오염을 방지하기 위해 최근 대화 이력을 쿼리에 결합합니다."""
         if not history:
             return query
-        history_str = "\n".join(
-            f"{m.get('role', '')}: {m.get('content', '')}" for m in history[-_HISTORY_WINDOW:]
-        )
+        history_str = "\n".join(f"{m.get('role', '')}: {m.get('content', '')}" for m in history[-_HISTORY_WINDOW:])
         return f"[History]\n{history_str}\n\n[Current Query]\n{query}"
 
     def _stream_generation(
