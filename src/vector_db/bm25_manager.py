@@ -17,19 +17,89 @@ _CORPUS_FILE = "corpus.json"
 _MANIFEST_FILE = "manifest.json"
 
 
+class BM25CacheManager:
+    def __init__(self, cache_dir):
+        self.cache_dir = cache_dir
+
+    def should_rebuild_index(self, json_files: list) -> bool:
+        """manifest.json 타임스탬프를 기준으로 재빌드 여부를 결정함."""
+        manifest_path = self.cache_dir / _MANIFEST_FILE
+        if not manifest_path.exists():
+            return True
+        last_mtime = max((f.stat().st_mtime for f in json_files), default=0)
+        return last_mtime > manifest_path.stat().st_mtime
+
+    def load_cache(self) -> tuple:
+        bm25 = BM25PlusIndex.load(self.cache_dir)
+        with open(self.cache_dir / _CORPUS_FILE, encoding="utf-8") as f:
+            corpus_data = json.load(f)
+        return bm25, corpus_data
+
+    def save_cache(self, bm25: BM25PlusIndex, corpus_data: list[dict]):
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        bm25.save(self.cache_dir)
+        with open(self.cache_dir / _CORPUS_FILE, "w", encoding="utf-8") as f:
+            json.dump(corpus_data, f, ensure_ascii=False, separators=(",", ":"))
+        with open(self.cache_dir / _MANIFEST_FILE, "w", encoding="utf-8") as f:
+            json.dump({"docs": len(corpus_data)}, f)
+
+
+class BM25IndexBuilder:
+    @staticmethod
+    def flatten_data(data: Any) -> list[dict]:
+        """계층형 구조를 평탄화하며, 검색에 필요한 필드만 보존함."""
+        flattened = []
+        if isinstance(data, list):
+            for item in data:
+                flattened.extend(BM25IndexBuilder.flatten_data(item))
+            return flattened
+
+        if isinstance(data, dict):
+            text_content = data.get(DataFields.TEXT) or data.get(DataFields.CONTENT) or data.get(DataFields.PARENT_TEXT)
+            if text_content:
+                node: dict = {
+                    DataFields.CONTENT: text_content,
+                    DataFields.METADATA: data.get(DataFields.METADATA) or {},
+                }
+                if MetadataFields.CHUNK_ID in data:
+                    node[MetadataFields.CHUNK_ID] = data[MetadataFields.CHUNK_ID]
+                flattened.append(node)
+
+            children = data.get(DataFields.CHILDREN)
+            if children and isinstance(children, list):
+                for child in children:
+                    flattened.extend(BM25IndexBuilder.flatten_data(child))
+
+        return flattened
+
+    @staticmethod
+    def build_from_files(json_files: list, tokenizer) -> tuple:
+        all_raw_data = []
+        for json_file in json_files:
+            with open(json_file, encoding="utf-8") as f:
+                try:
+                    all_raw_data.append(json.load(f))
+                except json.JSONDecodeError as e:
+                    logger.error(f"JSON 파싱 오류 ({json_file.name}): {e}")
+
+        corpus_data = BM25IndexBuilder.flatten_data(all_raw_data)
+        if not corpus_data:
+            return None, []
+
+        tokenized_corpus = [tokenizer(doc.get(DataFields.CONTENT, "")) for doc in corpus_data]
+        valid_indices = [i for i, tokens in enumerate(tokenized_corpus) if tokens]
+        if not valid_indices:
+            return None, []
+
+        corpus_data = [corpus_data[i] for i in valid_indices]
+        tokenized_corpus = [tokenized_corpus[i] for i in valid_indices]
+
+        bm25 = BM25PlusIndex()
+        bm25.build(tokenized_corpus)
+        return bm25, corpus_data
+
+
 class BM25Manager(BaseRetriever):
-    """
-    키워드 기반 검색(BM25)을 관리하는 클래스.
-    가공된 JSON 데이터를 로드하여 인덱스를 빌드하고, 형태소 분석 기반의 키워드 검색을 수행함.
-
-    인덱스 캐시 구조 (.cache/bm25_v2/):
-      tf_matrix.npz  — scipy sparse CSC TF 행렬
-      arrays.npz     — numpy: idf 배열, doc_len 배열, 스칼라 파라미터
-      vocab.json     — 단어→열 인덱스 매핑
-      corpus.json    — 슬림 코퍼스 (content + metadata + chunk_id만 보존)
-      manifest.json  — 캐시 유효성 타임스탬프
-    """
-
     def __init__(self, data_dir=PROCESSED_DATA_DIR, cache_dir=BM25_CACHE_DIR):
         self.data_dir = data_dir
         self.cache_dir = cache_dir
@@ -88,53 +158,8 @@ class BM25Manager(BaseRetriever):
     def _get_all_json_files(self) -> list:
         return list(self.data_dir.glob("*.json"))
 
-    def _should_rebuild_index(self, json_files: list) -> bool:
-        """manifest.json 타임스탬프를 기준으로 재빌드 여부를 결정함."""
-        manifest_path = self.cache_dir / _MANIFEST_FILE
-        if not manifest_path.exists():
-            return True
-        last_mtime = max((f.stat().st_mtime for f in json_files), default=0)
-        return last_mtime > manifest_path.stat().st_mtime
-
-    def _flatten_data(self, data: Any) -> list[dict]:
-        """
-        계층형 구조를 평탄화하며, 검색에 필요한 필드만 보존함.
-          - content  : 검색 본문 (text / content / parent_text 우선순위)
-          - metadata : 출처 메타데이터
-          - chunk_id : RRF 중복 제거용 (최상위 필드에 존재할 경우만)
-        """
-        flattened = []
-
-        if isinstance(data, list):
-            for item in data:
-                flattened.extend(self._flatten_data(item))
-            return flattened
-
-        if isinstance(data, dict):
-            text_content = data.get(DataFields.TEXT) or data.get(DataFields.CONTENT) or data.get(DataFields.PARENT_TEXT)
-
-            if text_content:
-                node: dict = {
-                    DataFields.CONTENT: text_content,
-                    DataFields.METADATA: data.get(DataFields.METADATA) or {},
-                }
-                # chunk_id가 최상위에 존재하면 보존 (RRF 중복 제거용)
-                if MetadataFields.CHUNK_ID in data:
-                    node[MetadataFields.CHUNK_ID] = data[MetadataFields.CHUNK_ID]
-                flattened.append(node)
-
-            children = data.get(DataFields.CHILDREN)
-            if children and isinstance(children, list):
-                for child in children:
-                    flattened.extend(self._flatten_data(child))
-
-        return flattened
-
     def load_index(self):
-        """
-        가공된 데이터를 로드하여 BM25 인덱스를 빌드함.
-        캐시가 유효하면 numpy/scipy 포맷으로 캐시를 로드하고, 그렇지 않으면 신규 빌드함.
-        """
+        """가공된 데이터를 로드하여 BM25 인덱스를 빌드함."""
         json_files = self._get_all_json_files()
 
         if not json_files:
@@ -143,51 +168,22 @@ class BM25Manager(BaseRetriever):
             self.corpus_data = []
             return
 
+        cache_manager = BM25CacheManager(self.cache_dir)
+
         try:
-            if not self._should_rebuild_index(json_files):
-                self.bm25 = BM25PlusIndex.load(self.cache_dir)
-                with open(self.cache_dir / _CORPUS_FILE, encoding="utf-8") as f:
-                    self.corpus_data = json.load(f)
+            if not cache_manager.should_rebuild_index(json_files):
+                self.bm25, self.corpus_data = cache_manager.load_cache()
                 logger.info(f"통합 인덱스 로드 완료 (Cache): {len(self.corpus_data)} docs")
                 return
 
-            # 신규 빌드
             logger.info(f"신규 통합 인덱스 빌드 시작 ({len(json_files)} files)")
-            all_raw_data = []
-            for json_file in json_files:
-                with open(json_file, encoding="utf-8") as f:
-                    try:
-                        all_raw_data.append(json.load(f))
-                    except json.JSONDecodeError as e:
-                        logger.error(f"JSON 파싱 오류 ({json_file.name}): {e}")
+            self.bm25, self.corpus_data = BM25IndexBuilder.build_from_files(json_files, self._tokenizer)
 
-            self.corpus_data = self._flatten_data(all_raw_data)
-
-            if not self.corpus_data:
+            if not self.bm25:
                 logger.warning("유효한 텍스트 데이터가 없어 인덱스를 생성할 수 없습니다.")
                 return
 
-            tokenized_corpus = [self._tokenizer(doc.get(DataFields.CONTENT, "")) for doc in self.corpus_data]
-
-            valid_indices = [i for i, tokens in enumerate(tokenized_corpus) if tokens]
-            if not valid_indices:
-                logger.warning("토큰화된 유효 데이터가 없습니다.")
-                return
-
-            self.corpus_data = [self.corpus_data[i] for i in valid_indices]
-            tokenized_corpus = [tokenized_corpus[i] for i in valid_indices]
-
-            self.bm25 = BM25PlusIndex()
-            self.bm25.build(tokenized_corpus)
-
-            # 직렬화 저장 (numpy/scipy 네이티브 포맷)
-            self.cache_dir.mkdir(parents=True, exist_ok=True)
-            self.bm25.save(self.cache_dir)
-            with open(self.cache_dir / _CORPUS_FILE, "w", encoding="utf-8") as f:
-                json.dump(self.corpus_data, f, ensure_ascii=False, separators=(",", ":"))
-            with open(self.cache_dir / _MANIFEST_FILE, "w", encoding="utf-8") as f:
-                json.dump({"docs": len(self.corpus_data)}, f)
-
+            cache_manager.save_cache(self.bm25, self.corpus_data)
             logger.info(f"통합 인덱스 빌드 및 저장 완료: {len(self.corpus_data)} docs")
 
         except Exception as e:
@@ -211,18 +207,6 @@ class BM25Manager(BaseRetriever):
         return_scores: bool = False,
         metadata_filter: dict | None = None,
     ) -> list[dict]:
-        """
-        질의어와 가장 유사한 상위 N개의 문서 조각을 반환함.
-
-        Args:
-            query (str): 검색할 사용자 질의어.
-            n (int): 반환할 결과 개수.
-            return_scores (bool): 점수(정규화됨)를 포함하여 반환할지 여부.
-            metadata_filter (dict): 선택적인 메타데이터 필터링 조건.
-
-        Returns:
-            list[dict]: 검색된 문서 조각 및 메타데이터 리스트.
-        """
         if not self.bm25 or not self.corpus_data:
             return []
 

@@ -46,32 +46,20 @@ class BGEChromaEmbeddingFunction(EmbeddingFunction):
         return embeddings.tolist()
 
 
-class ChromaDBManager(BaseRetriever):
-    _shared_client = None  # 동일 프로세스 내에서 중복 클라이언트 생성 및 파일 락 충돌 방지를 위한 공유 클라이언트
+class ChromaConnectionMixin:
+    """ChromaDB 연결, 재시도 및 클라이언트 세션 관리를 담당하는 Mixin 클래스"""
 
-    def __init__(self, collection_name: str = "rag_collection"):
-        """
-        ChromaDB 클라이언트 및 컬렉션을 초기화합니다.
-        환경 변수 CHROMA_SERVER_HOST 존재 여부에 따라 로컬(Persistent) 또는 서버(Http) 모드로 동작하며,
-        DB 연결 실패 시 재시도(Retry) 로직을 수행합니다.
-        """
-        self.collection_name = collection_name
-        self.embedding_fn = BGEChromaEmbeddingFunction()
-
-        # 클라이언트 초기화 및 DB 연결 재시도 로직
-        self._initialize_client_with_retry()
+    _shared_client = None
 
     def _initialize_client_with_retry(self, max_retries: int = 3, retry_delay: int = 2):
         chroma_host = os.getenv("CHROMA_SERVER_HOST")
         chroma_port = os.getenv("CHROMA_SERVER_PORT", "8000")
-
-        # 공통 설정 변수로 추출 (DRY 원칙 적용)
         common_settings = Settings(anonymized_telemetry=False)
 
         for attempt in range(max_retries):
             try:
-                if ChromaDBManager._shared_client is not None:
-                    self.client = ChromaDBManager._shared_client
+                if self.__class__._shared_client is not None:
+                    self.client = self.__class__._shared_client
                 else:
                     if chroma_host:
                         logger.info(f"ChromaDB 서버 모드 접속 시도 (Host: {chroma_host}, Port: {chroma_port})")
@@ -82,18 +70,15 @@ class ChromaDBManager(BaseRetriever):
                         ensure_directories()
                         logger.info(f"ChromaDB 로컬 모드 활성화 (Path: {VECTOR_DB_DIR})")
                         self.client = chromadb.PersistentClient(path=str(VECTOR_DB_DIR), settings=common_settings)
-                    ChromaDBManager._shared_client = self.client
+                    self.__class__._shared_client = self.client
 
-                # 컬렉션 로드 (실질적인 연결 테스트 구간)
-                # hnsw:num_threads=1: Python 3.13 + chromadb Rust 바인딩의 멀티스레드 segfault 방지
                 self.collection = self.client.get_or_create_collection(
                     name=self.collection_name,
                     embedding_function=self.embedding_fn,
                     metadata={"hnsw:space": "cosine", "hnsw:num_threads": 1},
                 )
-
                 logger.info(f"ChromaDB 로드 완료. (컬렉션: {self.collection_name})")
-                return  # 성공 시 루프 탈출
+                return
 
             except Exception as e:
                 if attempt < max_retries - 1:
@@ -106,6 +91,18 @@ class ChromaDBManager(BaseRetriever):
                     logger.error("ChromaDB 연결에 최종적으로 실패했습니다. DB 상태를 확인하시기 바랍니다.")
                     # 재시도 최종 실패 시 빈 컬렉션 객체 방지 처리가 필요할 수 있으나, 여기서는 에러를 발생시킵니다.
                     raise RuntimeError("ChromaDB initialization failed.") from e
+
+
+class ChromaDBManager(ChromaConnectionMixin, BaseRetriever):
+    def __init__(self, collection_name: str = "rag_collection"):
+        """
+        ChromaDB 클라이언트 및 컬렉션을 초기화합니다.
+        환경 변수 CHROMA_SERVER_HOST 존재 여부에 따라 로컬(Persistent) 또는 서버(Http) 모드로 동작하며,
+        DB 연결 실패 시 재시도(Retry) 로직을 수행합니다.
+        """
+        self.collection_name = collection_name
+        self.embedding_fn = BGEChromaEmbeddingFunction()
+        self._initialize_client_with_retry()
 
     def embed_query(self, query_text: str) -> list[float]:
         """
