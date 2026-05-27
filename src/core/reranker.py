@@ -104,7 +104,7 @@ class CrossEncoderReranker(BaseReranker):
     def __init__(
         self,
         model_name: str | None = None,
-        top_k: int = 3,
+        top_k: int = 5,
         threshold: float | None = None,
         device: str | None = None,
     ):
@@ -166,6 +166,28 @@ class CrossEncoderReranker(BaseReranker):
                 raise
         return self._model
 
+    def _predict_with_cpu_fallback(self, pairs: list) -> list:
+        try:
+            model = self._load_model()
+            scores_pred = model.predict(pairs)
+            return scores_pred.tolist() if hasattr(scores_pred, "tolist") else list(scores_pred)
+        except RuntimeError as e:
+            err_msg = str(e).lower()
+            if self.device != "cpu" and any(x in err_msg for x in ["cuda", "mps", "device", "out of memory", "oom"]):
+                logger.warning(f"[{self.name}] GPU/MPS error detected: {e}. Falling back to CPU mode...")
+                self.device = "cpu"
+                with self._singleton_lock:
+                    self._model = None
+                try:
+                    model = self._load_model()
+                    scores_pred = model.predict(pairs)
+                    return scores_pred.tolist() if hasattr(scores_pred, "tolist") else list(scores_pred)
+                except Exception as cpu_err:
+                    logger.error(f"[{self.name}] Failed to run even on CPU fallback: {cpu_err}")
+                    raise cpu_err
+            else:
+                raise
+
     def rerank(
         self,
         query: str,
@@ -188,27 +210,7 @@ class CrossEncoderReranker(BaseReranker):
         pairs = [(query, doc.page_content) for doc in documents]
 
         start_time = time.time()
-        try:
-            model = self._load_model()
-            scores_pred = model.predict(pairs)
-            raw_scores = scores_pred.tolist() if hasattr(scores_pred, "tolist") else list(scores_pred)
-        except RuntimeError as e:
-            err_msg = str(e).lower()
-            # CUDA, MPS, OOM, Device 관련 에러가 발생한 경우 CPU로 폴백
-            if self.device != "cpu" and any(x in err_msg for x in ["cuda", "mps", "device", "out of memory", "oom"]):
-                logger.warning(f"[{self.name}] GPU/MPS error detected: {e}. Falling back to CPU mode...")
-                self.device = "cpu"
-                with self._singleton_lock:
-                    self._model = None  # 기존 GPU 모델 언로드 유도
-                try:
-                    model = self._load_model()
-                    scores_pred = model.predict(pairs)
-                    raw_scores = scores_pred.tolist() if hasattr(scores_pred, "tolist") else list(scores_pred)
-                except Exception as cpu_err:
-                    logger.error(f"[{self.name}] Failed to run even on CPU fallback: {cpu_err}")
-                    raise cpu_err
-            else:
-                raise
+        raw_scores = self._predict_with_cpu_fallback(pairs)
 
         elapsed_time = time.time() - start_time
         # ms-marco 등 raw logit(범위 -10~15)을 [0, 1]로 정규화

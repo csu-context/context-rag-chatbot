@@ -293,15 +293,17 @@ class ChromaDBManager(BaseRetriever):
             logger.error(f"DB 검색 중 오류 발생: {e}")
             return []  # 에러 발생 시에도 빈 리스트를 반환하여 프로세스 중단 방지
 
+    @staticmethod
+    def _build_where_clause(metadata_filter: dict | None) -> dict | None:
+        if not metadata_filter:
+            return None
+        if len(metadata_filter) == 1:
+            return metadata_filter
+        return {"$and": [{k: {"$eq": v}} for k, v in metadata_filter.items()]}
+
     def retrieve(self, query: str, n: int = 5, metadata_filter: dict | None = None) -> list[dict[str, Any]]:
         """BaseRetriever 인터페이스 구현. ChromaDB 검색을 실행합니다."""
-        where_clause = None
-        if metadata_filter:
-            if len(metadata_filter) == 1:
-                where_clause = metadata_filter
-            else:
-                where_clause = {"$and": [{k: {"$eq": v}} for k, v in metadata_filter.items()]}
-        return self.search(query_text=query, k=n, where=where_clause)
+        return self.search(query_text=query, k=n, where=self._build_where_clause(metadata_filter))
 
     def get_count(self) -> int:
         """현재 컬렉션에 저장된 총 청크 수를 반환합니다."""
