@@ -73,33 +73,68 @@ def test_korean_chunker_sentence_boundary():
         assert not (has_first and has_second), f"단일 청크가 두 문장 모두 포함: '{chunk['text']}'"
 
 
-def test_pdf_noise_filter_removes_patterns():
-    """DoclingPDFParser._clean_pdf_noise가 헤더/푸터/대외비 패턴을 제거하는지 검증."""
+def test_pdf_noise_filter_removes_page_number_pattern():
+    """_clean_pdf_noise가 범용 페이지 번호 패턴(- N -)을 제거하는지 검증."""
     parser = DoclingPDFParser()
 
-    noisy = (
-        "조선대학교 학칙\n\n"
-        "제1조 이 학칙의 목적입니다.\n\n"
-        "대외비\n\n"
-        "제2조 적용 범위입니다.\n\n"
-        "- 1 -\n\n"
-        "제3조 마지막 조항입니다."
-    )
-
+    noisy = "제1조 이 학칙의 목적입니다.\n\n- 1 -\n\n제2조 적용 범위입니다.\n\n- 2 -\n\n제3조 마지막 조항입니다."
     cleaned = parser._clean_pdf_noise(noisy)
 
-    # 노이즈 패턴이 제거되었는지 검증
-    assert "조선대학교 학칙" not in cleaned
-    assert "대외비" not in cleaned
     assert "- 1 -" not in cleaned
+    assert "- 2 -" not in cleaned
+    assert "제1조" in cleaned
+    assert "제2조" in cleaned
+    assert "제3조" in cleaned
+    assert "\n\n\n" not in cleaned
 
-    # 본문 내용은 보존되었는지 검증
+
+def test_dynamic_repeated_lines_removed_across_pages():
+    """_remove_repeated_lines가 임계치 이상 반복 출현하는 헤더/푸터를 동적으로 제거하는지 검증."""
+    parser = DoclingPDFParser()
+
+    # 3페이지 문서 시뮬레이션: "문서 제목"이 매 페이지 첫 줄에 반복
+    page1 = "문서 제목\n제1조 목적입니다."
+    page2 = "문서 제목\n제2조 적용 범위입니다."
+    page3 = "문서 제목\n제3조 마지막 조항입니다."
+    text = "\n<!-- page break -->\n".join([page1, page2, page3])
+
+    cleaned = parser._remove_repeated_lines(text, threshold=0.8)
+
+    # 3/3 페이지 반복 → 제거
+    assert "문서 제목" not in cleaned
+    # 본문은 보존
     assert "제1조" in cleaned
     assert "제2조" in cleaned
     assert "제3조" in cleaned
 
-    # 연속된 빈 줄이 2개 이하로 정리되었는지 검증
-    assert "\n\n\n" not in cleaned
+
+def test_dynamic_repeated_lines_preserves_unique_content():
+    """페이지마다 다른 푸터(예: 페이지 번호 텍스트)는 제거되지 않는지 검증."""
+    parser = DoclingPDFParser()
+
+    # "1 / 3", "2 / 3", "3 / 3" 은 서로 다른 문자열 → 반복 아님
+    page1 = "제1조 목적입니다.\n1 / 3"
+    page2 = "제2조 범위입니다.\n2 / 3"
+    page3 = "제3조 마지막입니다.\n3 / 3"
+    text = "\n<!-- page break -->\n".join([page1, page2, page3])
+
+    cleaned = parser._remove_repeated_lines(text, threshold=0.8)
+
+    # 각 페이지 본문은 그대로 보존
+    assert "제1조" in cleaned
+    assert "제2조" in cleaned
+    assert "제3조" in cleaned
+
+
+def test_dynamic_repeated_lines_single_page_passthrough():
+    """단일 페이지 문서는 page break 마커만 제거하고 내용은 그대로 반환하는지 검증."""
+    parser = DoclingPDFParser()
+
+    text = "문서 제목\n제1조 목적입니다.\n본문 내용."
+    cleaned = parser._remove_repeated_lines(text, threshold=0.8)
+
+    assert "문서 제목" in cleaned
+    assert "제1조" in cleaned
 
 
 def test_parent_document_mapping_in_pipeline(tmp_path, monkeypatch):
