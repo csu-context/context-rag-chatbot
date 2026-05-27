@@ -160,7 +160,9 @@ class RAGPipeline:
         """대화 맥락에 따른 캐시 오염을 방지하기 위해 최근 대화 이력을 쿼리에 결합합니다."""
         if not history:
             return query
-        history_str = "\n".join(f"{m.get('role', '')}: {m.get('content', '')}" for m in history[-_MAX_HISTORY_MESSAGES:])
+        history_str = "\n".join(
+            f"{m.get('role', '')}: {m.get('content', '')}" for m in history[-_MAX_HISTORY_MESSAGES:]
+        )
         return f"[History]\n{history_str}\n\n[Current Query]\n{query}"
 
     def _stream_generation(
