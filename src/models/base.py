@@ -37,7 +37,6 @@ class LLMResponse(BaseModel):
         input_tokens = self.usage.get("input_tokens", 0)
         output_tokens = self.usage.get("output_tokens", 0)
 
-        # 1M 토큰 당 단가 적용
         cost = (input_tokens * pricing["input"] / 1_000_000) + (output_tokens * pricing["output"] / 1_000_000)
         return cost
 

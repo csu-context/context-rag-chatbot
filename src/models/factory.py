@@ -15,13 +15,6 @@ class LLMFactory:
 
     @staticmethod
     def create_llm(model_type: str | None = None, model_name: str | None = None, **kwargs) -> BaseLLM:
-        """
-        설정된 타입에 따라 모델 인스턴스를 반환합니다.
-
-        Args:
-            model_type: 'gemini', 'claude', 'ollama' 등 (기본값: settings.MODEL_TYPE)
-            model_name: 구체적인 모델 명 (기본값: settings.MODEL_NAME)
-        """
         type_ = (model_type or settings.MODEL_TYPE).lower()
         name_ = model_name or settings.MODEL_NAME
         temp_ = kwargs.get("temperature", settings.TEMPERATURE)
@@ -75,10 +68,7 @@ class LLMFactory:
 
     @staticmethod
     def create_llm_with_fallback(model_type: str | None = None, model_name: str | None = None, **kwargs):
-        """Fallback 체인이 적용된 LangChain 모델을 반환합니다 (Ollama → Gemini → Claude).
-
-        LLM_FALLBACK_ENABLED=False 또는 ALLOW_EXTERNAL_API=False이면 primary 모델만 반환합니다.
-        """
+        """Fallback 체인(Ollama → Gemini → Claude). FALLBACK_ENABLED=False 또는 외부API 비허용 시 primary만 반환."""
         primary = LLMFactory.create_llm(model_type, model_name, **kwargs)
         primary_model = primary.get_model()
 

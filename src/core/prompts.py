@@ -89,7 +89,6 @@ class PromptManager:
         return self._cache_value
 
 
-# 전역 싱글톤 인스턴스
 prompt_manager = PromptManager()
 get_system_prompt = prompt_manager.get_system_prompt
 RAG_SYSTEM_PROMPT: str = get_system_prompt()
