@@ -19,7 +19,6 @@ _VOCAB_FILE = "vocab.json"
 
 
 class BM25PlusIndex:
-
     def __init__(self, k1: float = _K1, b: float = _B, delta: float = _DELTA):
         self.k1 = k1
         self.b = b
