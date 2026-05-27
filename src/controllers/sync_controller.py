@@ -22,7 +22,7 @@ class SyncController:
             anomalies = report.get("db", {}).get("anomalies", {})
             if anomalies and any(anomalies.values()):
                 st.write("이상 데이터 감지: 자동 복구를 진행합니다.")
-                repair_integrity(anomalies)
+                repair_integrity(anomalies, target_parser=parser_type)
                 st.write("정합성 복구 완료.")
             else:
                 st.write("데이터 정합성 이상 없음.")
