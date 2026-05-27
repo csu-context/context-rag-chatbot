@@ -1,5 +1,4 @@
 import logging
-import re
 from collections.abc import Iterator
 from typing import Any
 
@@ -7,16 +6,14 @@ from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda
 
-from src.common.config import settings
 from src.common.constants import MetadataFields
 from src.core.cache import SemanticCache
+from src.core.nodes import _MAX_HISTORY_MESSAGES, ContextBuilderNode
 from src.core.prompts import get_system_prompt
 from src.core.reranker import RerankerFactory
 from src.models.factory import LLMFactory
 from src.utils.citation import format_citations
 from src.utils.logger import TracingLogger
-
-from src.core.nodes import ContextBuilderNode, _MAX_HISTORY_MESSAGES
 
 logger = logging.getLogger(__name__)
 
@@ -58,8 +55,6 @@ class RAGPipeline:
             for res in search_results
         ]
 
-
-
     def _do_retrieval(self, query: str, k: int, session: Any) -> list[Document]:
         with session.trace_step("retrieval") as step:
             docs = self._perform_retrieval(query, k)
@@ -97,8 +92,6 @@ class RAGPipeline:
                 }
             )
             return final_docs, scores
-
-
 
     def _stream_generation(
         self, query: str, final_docs: list[Document], history: list[dict[str, Any]], session: Any

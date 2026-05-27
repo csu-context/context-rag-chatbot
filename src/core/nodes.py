@@ -49,9 +49,7 @@ class ContextBuilderNode:
         return "\n\n".join(formatted)
 
     @staticmethod
-    def trim_docs_to_token_limit(
-        docs: list[Document], system_prompt: str, history: list[dict]
-    ) -> list[Document]:
+    def trim_docs_to_token_limit(docs: list[Document], system_prompt: str, history: list[dict]) -> list[Document]:
         """토큰 한도 초과 시 낮은 점수 문서부터 제거합니다."""
         limit = int(settings.OLLAMA_NUM_CTX * _CTX_USAGE_RATIO)
         ratio = _TOKEN_RATIO.get(settings.MODEL_TYPE, 1.5)

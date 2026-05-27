@@ -47,6 +47,7 @@ _BUILTIN_FALLBACK = """당신은 사내 문서를 기반으로 정확한 정보�
 {context}
 </Context>"""
 
+
 class PromptManager:
     """프롬프트 파일 로드 및 TTL 캐싱을 관리하는 클래스"""
 
@@ -86,6 +87,7 @@ class PromptManager:
                 self._cache_value = self._load_prompt()
                 self._cache_ts = now
         return self._cache_value
+
 
 # 전역 싱글톤 인스턴스
 prompt_manager = PromptManager()

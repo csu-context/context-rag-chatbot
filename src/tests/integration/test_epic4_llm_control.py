@@ -26,6 +26,7 @@ class TestPromptInjectionDefense:
             metadata={MetadataFields.SRC_NAME: "test.pdf", MetadataFields.PG_NUM: 1},
         )
         from src.core.nodes import ContextBuilderNode
+
         result = ContextBuilderNode.format_docs([doc])
 
         assert "### System:" not in result
@@ -38,6 +39,7 @@ class TestPromptInjectionDefense:
             metadata={MetadataFields.SRC_NAME: "test.pdf", MetadataFields.PG_NUM: 1},
         )
         from src.core.nodes import ContextBuilderNode
+
         result = ContextBuilderNode.format_docs([doc])
         assert "[Assistant:]" in result
         assert "[Human:]" in result
@@ -49,14 +51,19 @@ class TestPromptInjectionDefense:
             Document(page_content="내용B", metadata={MetadataFields.SRC_NAME: "b.pdf", MetadataFields.PG_NUM: 2}),
         ]
         from src.core.nodes import ContextBuilderNode
+
         result = ContextBuilderNode.format_docs(docs)
         assert '<document index="1">' in result
         assert '<document index="2">' in result
         assert "</document>" in result
 
     def test_normal_content_preserved(self):
-        doc = Document(page_content="졸업 요건은 총 130학점입니다.", metadata={MetadataFields.SRC_NAME: "규정.pdf", MetadataFields.PG_NUM: 5})
+        doc = Document(
+            page_content="졸업 요건은 총 130학점입니다.",
+            metadata={MetadataFields.SRC_NAME: "규정.pdf", MetadataFields.PG_NUM: 5},
+        )
         from src.core.nodes import ContextBuilderNode
+
         result = ContextBuilderNode.format_docs([doc])
         assert "졸업 요건은 총 130학점입니다." in result
 
@@ -69,17 +76,20 @@ class TestPromptInjectionDefense:
 class TestSystemPromptContent:
     def test_language_alignment_instruction_present(self):
         from src.core.prompts import prompt_manager
+
         prompt = prompt_manager.get_system_prompt()
         assert "한국어" in prompt
         assert "언어" in prompt
 
     def test_injection_defense_instruction_present(self):
         from src.core.prompts import prompt_manager
+
         prompt = prompt_manager.get_system_prompt()
         assert "시스템 명령" in prompt or "지시" in prompt
 
     def test_required_elements_present(self):
         from src.core.prompts import prompt_manager
+
         prompt = prompt_manager.get_system_prompt()
 
         required = ["사내 규정 전문 어시스턴트", "팩트 체크", "출처 제시", "근거 최우선", "<Context>"]
@@ -94,6 +104,7 @@ class TestSystemPromptContent:
         with patch("src.common.config.settings") as mock_settings:
             mock_settings.PROMPT_FILE = str(custom_file)
             from src.core.prompts import prompt_manager
+
             loaded = prompt_manager._load_prompt()
         assert "커스텀 페르소나" in loaded
 
@@ -121,11 +132,13 @@ class TestContextTrimming:
     def test_no_trimming_when_within_limit(self):
         docs = self._make_docs(3, content_size=100)
         from src.core.nodes import ContextBuilderNode
+
         result = ContextBuilderNode.trim_docs_to_token_limit(docs, "시스템 프롬프트", [])
         assert len(result) == 3
 
     def test_trimming_removes_low_score_docs_first(self):
         from src.core.nodes import ContextBuilderNode
+
         with patch("src.core.nodes.settings") as mock_s:
             mock_s.OLLAMA_NUM_CTX = 200
             docs = self._make_docs(5, content_size=100)
@@ -138,7 +151,9 @@ class TestContextTrimming:
 
     def test_trimming_logs_warning(self, caplog):
         import logging
+
         from src.core.nodes import ContextBuilderNode
+
         with patch("src.core.nodes.settings") as mock_s:
             mock_s.OLLAMA_NUM_CTX = 100
             docs = self._make_docs(10, content_size=200)
