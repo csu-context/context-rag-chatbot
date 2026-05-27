@@ -10,7 +10,7 @@ from langchain_core.runnables import RunnableLambda
 from src.common.config import settings
 from src.common.constants import MetadataFields
 from src.core.cache import SemanticCache
-from src.core.prompts import RAG_SYSTEM_PROMPT
+from src.core.prompts import get_system_prompt
 from src.core.reranker import RerankerFactory
 from src.models.factory import LLMFactory
 from src.utils.citation import format_citations
@@ -20,6 +20,16 @@ _INJECTION_PATTERN = re.compile(
     r"(###|---+|\bSystem:|\bAssistant:|\bHuman:|\[INST\]|\[/INST\]|<\|system\|>|<\|user\|>)",
     re.IGNORECASE,
 )
+
+# 모델 계열별 한국어 토크나이저 실측 평균 (chars / token).
+# tiktoken/transformers 미연동 상태에서 모델 타입별 정적 근사값 사용.
+_TOKEN_RATIO: dict[str, float] = {
+    "ollama": 1.5,  # Llama/Qwen 계열
+    "gemini": 1.3,
+    "claude": 1.2,
+}
+
+_HISTORY_WINDOW = 6  # 슬라이딩 윈도우: 최근 N개 메시지(= K턴 × 2)
 
 logger = logging.getLogger(__name__)
 
@@ -80,13 +90,14 @@ class RAGPipeline:
     def _trim_docs_to_token_limit(
         self, docs: list[Document], system_prompt: str, history: list[dict]
     ) -> list[Document]:
-        """토큰 한도 초과 시 낮은 점수 문서부터 제거합니다. 추정: 2자 ≈ 1토큰(한국어)."""
+        """토큰 한도 초과 시 낮은 점수 문서부터 제거합니다."""
         limit = int(settings.OLLAMA_NUM_CTX * 0.75)
+        ratio = _TOKEN_RATIO.get(settings.MODEL_TYPE, 1.5)
 
         def _est(text: str) -> int:
-            return max(1, len(text) // 2)
+            return max(1, int(len(text) / ratio))
 
-        fixed_tokens = _est(system_prompt) + sum(_est(m.get("content", "")) for m in history[-6:])
+        fixed_tokens = _est(system_prompt) + sum(_est(m.get("content", "")) for m in history[-_HISTORY_WINDOW:])
         available = limit - fixed_tokens
 
         ranked = sorted(docs, key=lambda d: d.metadata.get("rerank_score", d.metadata.get("score", 0.0)), reverse=True)
@@ -145,28 +156,22 @@ class RAGPipeline:
         """대화 맥락에 따른 캐시 오염을 방지하기 위해 최근 대화 이력을 쿼리에 결합합니다."""
         if not history:
             return query
-        recent_history = history[-6:]
-        history_parts = []
-        for msg in recent_history:
-            role = msg.get("role", "")
-            content = msg.get("content", "")
-            history_parts.append(f"{role}: {content}")
-        history_str = "\n".join(history_parts)
+        history_str = "\n".join(
+            f"{m.get('role', '')}: {m.get('content', '')}" for m in history[-_HISTORY_WINDOW:]
+        )
         return f"[History]\n{history_str}\n\n[Current Query]\n{query}"
 
     def _stream_generation(
         self, query: str, final_docs: list[Document], history: list[dict[str, Any]], session: Any
     ) -> Iterator[str]:
         with session.trace_step("generation") as step:
-            trimmed_docs = self._trim_docs_to_token_limit(final_docs, RAG_SYSTEM_PROMPT, history)
+            system_prompt = get_system_prompt()
+            trimmed_docs = self._trim_docs_to_token_limit(final_docs, system_prompt, history)
             context = self._format_docs(trimmed_docs)
 
-            # system 메시지는 RAG_SYSTEM_PROMPT 템플릿 유지
-            messages = [("system", RAG_SYSTEM_PROMPT)]
+            messages = [("system", system_prompt)]
 
-            # history 슬라이딩 윈도우 K=3 적용 (마지막 6개 메시지)
-            recent_history = history[-6:]
-            for msg in recent_history:
+            for msg in history[-_HISTORY_WINDOW:]:
                 role = msg.get("role")
                 content = msg.get("content", "")
                 if role == "user":
@@ -180,8 +185,9 @@ class RAGPipeline:
             prompt_template = ChatPromptTemplate.from_messages(messages)
             prompt_val = prompt_template.invoke({"question": query, "context": context})
 
+            model_id = str(getattr(self.llm, "model_name", "unknown"))
             llm_params = {
-                "model": str(getattr(self.llm, "model_name", "unknown")),
+                "model": model_id,
                 "temperature": str(getattr(self.llm, "temperature", "unknown")),
             }
 
@@ -195,10 +201,20 @@ class RAGPipeline:
             )
 
             full_answer = ""
-            for chunk in self.llm.stream(prompt_val):
-                content = self._extract_answer(chunk)
-                full_answer += content
-                yield content
+            try:
+                for chunk in self.llm.stream(prompt_val):
+                    content = self._extract_answer(chunk)
+                    full_answer += content
+                    yield content
+            except Exception as exc:
+                logger.error(
+                    "스트리밍 중 LLM 오류 — 모델: %s, 출력된 토큰: %d자, 예외: %s",
+                    model_id,
+                    len(full_answer),
+                    exc,
+                    exc_info=True,
+                )
+                raise
 
             step.update({"answer_length": len(full_answer)})
             session.data["final_answer"] = full_answer
@@ -228,13 +244,11 @@ class RAGPipeline:
                 session.data["cache_hit"] = True
                 yield {"stage": "cache", "status": "hit"}
 
-                # Stream cached answer
                 answer = cached_result["answer"]
                 for char in answer:
                     yield {"stage": "generation", "status": "streaming", "output": char}
                 yield {"stage": "generation", "status": "complete"}
 
-                # Yield cached sources for citation
                 sources = cached_result["sources"]
                 yield {"stage": "citation", "status": "complete", "output": "from cache", "source_documents": sources}
                 return
@@ -267,15 +281,14 @@ class RAGPipeline:
             citations_str = format_citations(final_docs)
 
             # Cache the actual document data, not the formatted string
-            docs_for_cache = []
-            for doc in final_docs:
-                docs_for_cache.append(
-                    {
-                        "content": doc.page_content,
-                        "metadata": doc.metadata,
-                        "score": doc.metadata.get("rerank_score", doc.metadata.get("score", 0.0)),
-                    }
-                )
+            docs_for_cache = [
+                {
+                    "content": doc.page_content,
+                    "metadata": doc.metadata,
+                    "score": doc.metadata.get("rerank_score", doc.metadata.get("score", 0.0)),
+                }
+                for doc in final_docs
+            ]
 
             if use_cache:
                 self.cache.add(cache_query, full_answer, docs_for_cache)

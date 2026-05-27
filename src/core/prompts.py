@@ -1,29 +1,11 @@
 import logging
+import time
 from pathlib import Path
+from threading import Lock
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_PROMPT_FILE = Path(__file__).resolve().parent.parent.parent / "prompts" / "rag_system_prompt.txt"
-
-
-def _load_prompt() -> str:
-    from src.common.config import settings
-
-    custom_path = Path(settings.PROMPT_FILE) if settings.PROMPT_FILE else None
-    candidates = [p for p in [custom_path, _DEFAULT_PROMPT_FILE] if p]
-
-    for path in candidates:
-        if path.exists():
-            try:
-                text = path.read_text(encoding="utf-8").strip()
-                logger.debug(f"시스템 프롬프트 로드: {path}")
-                return text
-            except Exception as e:
-                logger.warning(f"프롬프트 파일 읽기 실패 ({path}): {e}")
-
-    logger.warning("프롬프트 파일을 찾을 수 없어 내장 기본값을 사용합니다.")
-    return _BUILTIN_FALLBACK
-
 
 _BUILTIN_FALLBACK = """당신은 사내 문서를 기반으로 정확한 정보를 제공하는 '사내 규정 전문 어시스턴트'입니다.
 본 프로젝트의 핵심 목표는 100% 팩트 체크와 명확한 출처 제시입니다.
@@ -54,4 +36,44 @@ _BUILTIN_FALLBACK = """당신은 사내 문서를 기반으로 정확한 정보�
 {context}
 </Context>"""
 
-RAG_SYSTEM_PROMPT: str = _load_prompt()
+_PROMPT_TTL: float = 60.0
+_cache_value: str | None = None
+_cache_ts: float = 0.0
+_cache_lock = Lock()
+
+
+def _load_prompt() -> str:
+    from src.common.config import settings
+
+    custom_path = Path(settings.PROMPT_FILE) if settings.PROMPT_FILE else None
+    candidates = [p for p in [custom_path, _DEFAULT_PROMPT_FILE] if p]
+
+    for path in candidates:
+        if path.exists():
+            try:
+                text = path.read_text(encoding="utf-8").strip()
+                logger.debug(f"시스템 프롬프트 로드: {path}")
+                return text
+            except Exception as e:
+                logger.warning(f"프롬프트 파일 읽기 실패 ({path}): {e}")
+
+    logger.warning("프롬프트 파일을 찾을 수 없어 내장 기본값을 사용합니다.")
+    return _BUILTIN_FALLBACK
+
+
+def get_system_prompt() -> str:
+    """TTL 캐시 기반 시스템 프롬프트 반환. 60초 경과 시 파일 재읽기(프로세스 재시작 불필요)."""
+    global _cache_value, _cache_ts
+    now = time.monotonic()
+    if _cache_value is not None and now - _cache_ts < _PROMPT_TTL:
+        return _cache_value
+    with _cache_lock:
+        # double-checked locking: 락 획득 후 재확인
+        if _cache_value is None or now - _cache_ts >= _PROMPT_TTL:
+            _cache_value = _load_prompt()
+            _cache_ts = now
+    return _cache_value
+
+
+# 하위 호환성 유지 (테스트 및 외부 임포트)
+RAG_SYSTEM_PROMPT: str = get_system_prompt()
