@@ -28,7 +28,81 @@ def _safe_invoke_progress(callback, current: int, total: int, name: str) -> None
             logger.error(f"진행 상황 콜백 호출 실패: {cb_e}")
 
 
-def _process_single_file_helper(  # noqa: C901
+def _get_parser_strategy_for_file(file_path: Path, file_parser_types: dict[str, str] | None) -> ParserStrategy:
+    """파일 경로와 매니페스트 설정을 기반으로 적절한 파서 전략을 반환합니다."""
+    if file_path.suffix.lower() != ".pdf":
+        return MarkdownParserStrategy()
+
+    from src.utils.paths import RAW_DATA_DIR
+    from src.utils.unicode import normalize_to_nfc
+
+    rel_path = normalize_path_to_nfc(file_path.relative_to(RAW_DATA_DIR))
+    normalized_parser_types = {normalize_to_nfc(k): v for k, v in (file_parser_types or {}).items()}
+    file_parser = normalized_parser_types.get(rel_path, "manual").lower()
+
+    if file_parser == "docling":
+        try:
+            import docling  # noqa: F401
+
+            return DoclingPDFParserStrategy()
+        except ImportError:
+            logger.error("docling 라이브러리가 없어 manual 전략으로 대체합니다.")
+            return ManualParserStrategy()
+
+    return ManualParserStrategy()
+
+
+def _chunk_sections(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """파싱된 섹션들을 계층적 청크 구조로 변환합니다."""
+    if not sections:
+        return []
+
+    file_chunks_accum = []
+
+    if sections[0].get("is_raw_markdown"):
+        return create_parent_child_chunks(sections[0]["content"], sections[0]["metadata"])
+
+    if sections[0].get("is_combined"):
+        for sec in sections:
+            file_chunks_accum.extend(create_parent_child_chunks(sec["content"], sec["metadata"]))
+        return file_chunks_accum
+
+    # 기존 ManualParser PDF 처리 방식 (Fallback 호환성)
+    chunker = HierarchicalChunker()
+    for sec in sections:
+        parent_id = str(uuid.uuid4())
+        meta_for_children = sec["metadata"].copy()
+        sec_title = f"{sec.get('chapter', '기본 섹션')} > {sec.get('article', '기본 섹션')}"
+        meta_for_children[MetadataFields.SEC_TITLE] = sec_title
+        meta_for_children[MetadataFields.HEADER_PATH] = sec_title
+
+        children = chunker.split_into_children(sec["content"], parent_id, meta_for_children)
+
+        if children:
+            parent_metadata = {
+                MetadataFields.SOURCE_ID: sec["metadata"].get(MetadataFields.SOURCE_ID, "UNKNOWN"),
+                MetadataFields.SRC_NAME: sec["metadata"].get(MetadataFields.SRC_NAME, "UNKNOWN"),
+                MetadataFields.DOC_TYPE: sec["metadata"].get(MetadataFields.DOC_TYPE, "pdf"),
+                MetadataFields.PG_NUM: sec["metadata"].get(MetadataFields.PG_NUM, 1),
+                MetadataFields.SEC_TITLE: sec_title,
+                MetadataFields.CHUNK_ID: parent_id,
+                MetadataFields.PARENT_ID: None,
+                MetadataFields.HEADER_PATH: sec_title,
+                MetadataFields.IS_TABLE: False,
+                MetadataFields.RELATIVE_PATH: sec["metadata"].get(MetadataFields.RELATIVE_PATH, "UNKNOWN"),
+            }
+            file_chunks_accum.append(
+                {
+                    "parent_id": parent_id,
+                    "parent_text": sec["content"],
+                    "metadata": parent_metadata,
+                    "children": children,
+                }
+            )
+    return file_chunks_accum
+
+
+def _process_single_file_helper(
     file_path: Path,
     file_parser_types: dict[str, str] | None,
     processed_dir: Path,
@@ -36,86 +110,18 @@ def _process_single_file_helper(  # noqa: C901
 ) -> list[dict[str, Any]]:
     import logging
 
-    from src.common.constants import MetadataFields
     from src.core.storage import StorageManager
-    from src.processing.chunking import HierarchicalChunker
-    from src.utils.paths import RAW_DATA_DIR
-    from src.utils.unicode import normalize_to_nfc
 
     logger = logging.getLogger(__name__)
-    file_chunks_accum = []
 
     try:
         storage_manager = StorageManager(processed_dir, cache_dir)
-        chunker = HierarchicalChunker()
-
-        # 1. 파일 확장자에 따른 전략 동적 선택 및 파싱
-        if file_path.suffix.lower() == ".pdf":
-            rel_path = normalize_path_to_nfc(file_path.relative_to(RAW_DATA_DIR))
-            normalized_parser_types = {normalize_to_nfc(k): v for k, v in (file_parser_types or {}).items()}
-            file_parser = normalized_parser_types.get(rel_path, "manual").lower()
-
-            if file_parser == "docling":
-                try:
-                    import docling  # noqa: F401
-
-                    active_strategy = DoclingPDFParserStrategy()
-                except ImportError:
-                    logger.error("docling 라이브러리가 없어 manual 전략으로 대체합니다.")
-                    active_strategy = ManualParserStrategy()
-            else:
-                active_strategy = ManualParserStrategy()
-        else:
-            active_strategy = MarkdownParserStrategy()
-
+        active_strategy = _get_parser_strategy_for_file(file_path, file_parser_types)
         sections = active_strategy.parse(file_path, storage_manager=storage_manager)
-
-        if not sections:
-            return []
-
-        # 2. 계층적 청킹 (결과 타입별 분기 처리)
-        if sections[0].get("is_raw_markdown"):
-            file_chunks = create_parent_child_chunks(sections[0]["content"], sections[0]["metadata"])
-            file_chunks_accum.extend(file_chunks)
-        elif sections[0].get("is_combined"):
-            for sec in sections:
-                file_chunks = create_parent_child_chunks(sec["content"], sec["metadata"])
-                file_chunks_accum.extend(file_chunks)
-        else:
-            # 기존 ManualParser PDF 처리 방식 (Fallback 호환성)
-            for sec in sections:
-                parent_id = str(uuid.uuid4())
-                meta_for_children = sec["metadata"].copy()
-                sec_title = f"{sec.get('chapter', '기본 섹션')} > {sec.get('article', '기본 섹션')}"
-                meta_for_children[MetadataFields.SEC_TITLE] = sec_title
-                meta_for_children[MetadataFields.HEADER_PATH] = sec_title
-
-                children = chunker.split_into_children(sec["content"], parent_id, meta_for_children)
-
-                if children:
-                    parent_metadata = {
-                        MetadataFields.SOURCE_ID: sec["metadata"].get(MetadataFields.SOURCE_ID, "UNKNOWN"),
-                        MetadataFields.SRC_NAME: sec["metadata"].get(MetadataFields.SRC_NAME, "UNKNOWN"),
-                        MetadataFields.DOC_TYPE: sec["metadata"].get(MetadataFields.DOC_TYPE, "pdf"),
-                        MetadataFields.PG_NUM: sec["metadata"].get(MetadataFields.PG_NUM, 1),
-                        MetadataFields.SEC_TITLE: sec_title,
-                        MetadataFields.CHUNK_ID: parent_id,
-                        MetadataFields.PARENT_ID: None,
-                        MetadataFields.HEADER_PATH: sec_title,
-                        MetadataFields.IS_TABLE: False,
-                    }
-                    file_chunks_accum.append(
-                        {
-                            "parent_id": parent_id,
-                            "parent_text": sec["content"],
-                            "metadata": parent_metadata,
-                            "children": children,
-                        }
-                    )
+        return _chunk_sections(sections)
     except Exception as e:
         logger.error(f"파일 처리 실패: {file_path.name} - {e!s}")
-
-    return file_chunks_accum
+        return []
 
 
 class IngestionPipeline:
@@ -324,6 +330,11 @@ class IngestionPipeline:
             for rel_path in relative_paths_to_delete:
                 logger.info(f"   - 상대 경로 기준 삭제: {rel_path}")
                 self.db_manager.delete_documents(where={MetadataFields.RELATIVE_PATH: rel_path})
+
+                # 윈도우/리눅스 경로 구분자 불일치 대응 (메타데이터 저장 시 경로가 다를 수 있음)
+                alt_rel_path = rel_path.replace("\\", "/") if "\\" in rel_path else rel_path.replace("/", "\\")
+                if alt_rel_path != rel_path:
+                    self.db_manager.delete_documents(where={MetadataFields.RELATIVE_PATH: alt_rel_path})
 
         # Source ID 기반 삭제 (하위 호환성)
         if source_ids_to_delete:

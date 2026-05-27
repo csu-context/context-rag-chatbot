@@ -225,7 +225,7 @@ class RAGPipeline:
 
         # 대화 이력이 병합된 고유 캐시 쿼리 생성
         cache_query = self._build_cache_query(query, history)
-        use_cache = len(history) == 0
+        use_cache = True
 
         with self.tracing_logger.start_session(query=query) as session:
             # 1. Semantic Cache Check
