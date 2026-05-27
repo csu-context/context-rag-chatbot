@@ -99,14 +99,6 @@ class HierarchicalChunker:
         child_chunk_overlap: int = 50,
         min_chunk_size: int = 50,
     ):
-        """
-        계층적 청킹을 수행하는 클래스
-        :param parent_chunk_size: 부모 청크 최대 문자 수
-        :param parent_chunk_overlap: 부모 청크 중복 문자 수
-        :param child_chunk_size: 자식 청크 최대 문자 수 (토큰 한계 최적화)
-        :param child_chunk_overlap: 자식 청크 중복 문자 수
-        :param min_chunk_size: 자식 청크 최소 문자 수 (짧은 문단 병합)
-        """
         self.parent_chunk_size = parent_chunk_size
         self.parent_chunk_overlap = parent_chunk_overlap
         self.child_chunk_size = child_chunk_size

@@ -278,7 +278,10 @@ class PipelineOrchestrator:
 
             # 3. 매니페스트 업데이트
             manifest = self._load_manifest()
-            manifest[relative_path] = generate_file_hash(file_path, self.parser_type)
+            manifest["files"][relative_path] = {
+                "hash": generate_file_hash(file_path, self.parser_type),
+                "parser_type": self.parser_type,
+            }
             self._save_manifest(manifest)
 
         logger.info(f"단일 파일 개별 동기화 완료: {relative_path}")

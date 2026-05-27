@@ -1,5 +1,7 @@
 import logging
+import os
 import uuid
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -108,12 +110,6 @@ def _process_single_file_helper(
     processed_dir: Path,
     cache_dir: Path,
 ) -> list[dict[str, Any]]:
-    import logging
-
-    from src.core.storage import StorageManager
-
-    logger = logging.getLogger(__name__)
-
     try:
         storage_manager = StorageManager(processed_dir, cache_dir)
         active_strategy = _get_parser_strategy_for_file(file_path, file_parser_types)
@@ -159,9 +155,6 @@ class IngestionPipeline:
     def process_and_chunk(
         self, files: list[Path], progress_callback=None, file_parser_types: dict[str, str] | None = None
     ) -> list[dict[str, Any]]:
-        import os
-        from concurrent.futures import ProcessPoolExecutor, as_completed
-
         all_hierarchical_data = []
         total_files = len(files)
         if total_files == 0:
@@ -259,7 +252,7 @@ class IngestionPipeline:
     def _prepare_cleanup_targets(
         self, source_ids_to_delete: list[str] | None, filenames_to_delete: list[str] | None
     ) -> tuple[list[str], list[str]]:
-        valid_ids = list(set([sid for sid in (source_ids_to_delete or []) if sid]))
+        valid_ids = list({sid for sid in (source_ids_to_delete or []) if sid})
 
         target_filenames = []
         if filenames_to_delete:

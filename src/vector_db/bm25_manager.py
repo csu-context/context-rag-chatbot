@@ -68,40 +68,6 @@ class BM25Manager(BaseRetriever):
     def _get_all_json_files(self) -> list:
         return [f for f in self.data_dir.glob("*.json") if f.name != "manifest.json"]
 
-    def _flatten_data(self, data: Any) -> list[dict]:
-        """
-        계층형 구조를 평탄화하며, 검색에 필요한 필드만 보존함.
-          - content  : 검색 본문 (text / content / parent_text 우선순위)
-          - metadata : 출처 메타데이터
-          - chunk_id : RRF 중복 제거용 (최상위 필드에 존재할 경우만)
-        """
-        flattened = []
-
-        if isinstance(data, list):
-            for item in data:
-                flattened.extend(self._flatten_data(item))
-            return flattened
-
-        if isinstance(data, dict):
-            text_content = data.get(DataFields.TEXT) or data.get(DataFields.CONTENT) or data.get(DataFields.PARENT_TEXT)
-
-            if text_content:
-                node: dict = {
-                    DataFields.CONTENT: text_content,
-                    DataFields.METADATA: data.get(DataFields.METADATA) or {},
-                }
-                # chunk_id가 최상위에 존재하면 보존 (RRF 중복 제거용)
-                if MetadataFields.CHUNK_ID in data:
-                    node[MetadataFields.CHUNK_ID] = data[MetadataFields.CHUNK_ID]
-                flattened.append(node)
-
-            children = data.get(DataFields.CHILDREN)
-            if children and isinstance(children, list):
-                for child in children:
-                    flattened.extend(self._flatten_data(child))
-
-        return flattened
-
     def load_index(self):  # noqa: C901
         """
         가공된 데이터를 로드하여 BM25 인덱스를 빌드함.
@@ -184,7 +150,7 @@ class BM25Manager(BaseRetriever):
                         except json.JSONDecodeError as e:
                             logger.error(f"JSON 파싱 오류 ({f.name}): {e}")
 
-            new_flattened = self._flatten_data(new_raw_data)
+            new_flattened = BM25IndexBuilder.flatten_data(new_raw_data)
             updated_corpus.extend(new_flattened)
 
             self.corpus_data = updated_corpus
