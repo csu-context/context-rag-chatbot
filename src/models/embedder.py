@@ -34,6 +34,9 @@ class BGEEmbedder:
             )
 
         # 2. 모델 로드 및 장치 할당
+        model_kwargs = (
+            {"torch_dtype": torch.float16} if settings.EMBEDDER_USE_FP16 and self.device in ("cuda", "mps") else {}
+        )
         self.model = SentenceTransformer(
             model_name, cache_folder=str(MODELS_DIR), local_files_only=not settings.ALLOW_EXTERNAL_API
         )

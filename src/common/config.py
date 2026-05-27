@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     # 3. 벡터 DB 및 검색 설정
     RETRIEVER_TYPE: Literal["vector", "hybrid"] = Field(default="hybrid")
     RERANKER_TYPE: Literal["local", "cohere", "jina"] = Field(default="local")
+    RERANKER_USE_FP16: bool = Field(default=True)
+    EMBEDDER_USE_FP16: bool = Field(default=True)
     ALLOW_EXTERNAL_RERANKER: bool = Field(default=False)
     ALLOW_EXTERNAL_API: bool = Field(default=True)
     CHROMA_SERVER_HOST: str | None = None

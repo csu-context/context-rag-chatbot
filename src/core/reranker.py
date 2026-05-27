@@ -158,6 +158,11 @@ class CrossEncoderReranker(BaseReranker):
             if self._model is not None:
                 return self._model
             try:
+                automodel_args = (
+                    {"torch_dtype": torch.float16}
+                    if settings.RERANKER_USE_FP16 and self.device in ("cuda", "mps")
+                    else {}
+                )
                 self._model = CrossEncoder(
                     self.model_name,
                     device=self.device,
