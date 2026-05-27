@@ -256,7 +256,7 @@ def _repair_duplicate_parsers(pipeline, duplicates: list[str]):
             pipeline.cleanup_db(source_ids_to_delete=list(set(sids_to_delete)))
 
 
-def repair_integrity(anomalies: dict, target_parser: str = None):
+def repair_integrity(anomalies: dict, target_parser: str | None = None):
     """
     탐지된 이상 징후를 바탕으로 DB 정합성을 자동 복구합니다.
     - ghost_chunks: DB에서만 존재하는 찌꺼기 삭제
