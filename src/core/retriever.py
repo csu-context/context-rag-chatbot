@@ -10,7 +10,6 @@ logger = logging.getLogger(__name__)
 
 class EnsembleRetriever(BaseRetriever):
     def __init__(self, chroma_manager=None, bm25_manager=None):
-        # 중앙 설정(settings) 참조
         self.rrf_k = settings.RRF_K
         self.weight_bm25 = settings.HYBRID_WEIGHT_BM25
         self.weight_vector = settings.HYBRID_WEIGHT_VECTOR
@@ -83,18 +82,14 @@ class EnsembleRetriever(BaseRetriever):
         ]
 
     def _get_doc_id(self, doc: dict) -> str:
-        """문서 고유 ID 생성 (상수 활용 및 방어 로직 적용)."""
-        # 최상위 chunk_id 확인
         if MetadataFields.CHUNK_ID in doc:
             return str(doc[MetadataFields.CHUNK_ID])
 
         metadata = doc.get("metadata", {})
 
-        # metadata 내부 chunk_id 확인 (Vector 결과 대응 방어 로직)
         if MetadataFields.CHUNK_ID in metadata:
             return str(metadata[MetadataFields.CHUNK_ID])
 
-        # fallback 처리
         src = metadata.get(MetadataFields.SRC_NAME, "unknown")
         pg = metadata.get(MetadataFields.PG_NUM, "0")
         return f"{src}::p{pg}"

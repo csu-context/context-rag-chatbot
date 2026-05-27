@@ -1,21 +1,4 @@
-"""
-Memory-efficient BM25Plus index using scipy sparse matrices.
-
-Replaces rank_bm25.BM25Plus:
-  - TF matrix  : scipy CSC sparse (n_docs x vocab_size)  — replaces list[dict] doc_freqs
-  - IDF        : numpy float32 array (vocab_size,)        — replaces Python dict
-  - doc_len    : numpy float32 array (n_docs,)            — replaces list[int]
-  - vocab      : plain dict[str, int]                     — word → column index
-
-CSC (Compressed Sparse Column) is chosen over CSR because get_scores accesses
-the matrix column-by-column (one column per query token). CSC stores each column
-contiguously in indptr/indices/data, so a column slice is a zero-copy O(1) view.
-
-Serialization uses numpy/scipy native binary formats instead of pickle:
-  tf_matrix.npz  — scipy sparse save_npz (CSC preserved)
-  arrays.npz     — numpy savez_compressed (idf, doc_len, scalar params)
-  vocab.json     — compact JSON (no whitespace)
-"""
+"""BM25Plus index backed by scipy CSC sparse matrix + numpy arrays (replaces rank_bm25.BM25Plus)."""
 
 import json
 import logging
@@ -36,13 +19,6 @@ _VOCAB_FILE = "vocab.json"
 
 
 class BM25PlusIndex:
-    """
-    Vectorized BM25Plus backed by a scipy CSC sparse TF matrix.
-
-    Scoring formula (per query term q, document d):
-        score(q, d) = IDF(q) * (tf(q,d)*(k1+1) / (tf(q,d) + k1*(1-b+b*|d|/avgdl)) + delta)
-    where IDF(q) = log((N+1) / df(q)).
-    """
 
     def __init__(self, k1: float = _K1, b: float = _B, delta: float = _DELTA):
         self.k1 = k1
@@ -60,7 +36,6 @@ class BM25PlusIndex:
         n_docs = len(tokenized_corpus)
         self.corpus_size = n_docs
 
-        # --- vocabulary ---
         vocab: dict[str, int] = {}
         for tokens in tokenized_corpus:
             for t in tokens:
@@ -69,14 +44,12 @@ class BM25PlusIndex:
         self.vocab = vocab
         vocab_size = len(vocab)
 
-        # --- document lengths ---
         doc_len = np.array([len(tokens) for tokens in tokenized_corpus], dtype=np.float32)
         self.doc_len = doc_len
         self.avgdl = float(doc_len.mean()) if n_docs > 0 else 1.0
 
-        # --- build sparse TF matrix (COO → CSC) ---
         rows, cols, vals = [], [], []
-        nd = np.zeros(vocab_size, dtype=np.int32)  # document frequency per term
+        nd = np.zeros(vocab_size, dtype=np.int32)
 
         for doc_id, tokens in enumerate(tokenized_corpus):
             freq: dict[int, int] = {}
@@ -90,17 +63,10 @@ class BM25PlusIndex:
                 nd[wi] += 1
 
         self.tf_matrix = csc_matrix((vals, (rows, cols)), shape=(n_docs, vocab_size), dtype=np.float32)
-
-        # --- IDF: log((N+1) / df) ---
         self.idf = np.log((n_docs + 1.0) / nd.astype(np.float32)).astype(np.float32)
 
     def get_scores(self, query_tokens: list[str]) -> np.ndarray:
-        """Return BM25Plus scores (float32) for all documents.
-
-        Uses CSC column slicing to process only non-zero (doc, term) pairs,
-        avoiding a full toarray() dense expansion that would spike to
-        O(n_docs x n_query_terms) memory regardless of corpus sparsity.
-        """
+        """Return BM25Plus scores (float32) for all documents."""
         if self.tf_matrix is None or not query_tokens:
             return np.zeros(self.corpus_size, dtype=np.float32)
 
