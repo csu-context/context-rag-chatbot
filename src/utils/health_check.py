@@ -191,8 +191,8 @@ def _analyze_anomalies(local_files_info: dict, db_rel_path_map: dict) -> dict:
 
 
 def _get_parser_type(meta: dict) -> str:
-    """메타데이터에서 파서 타입을 추출"""
-    return meta.get(MetadataFields.PARSER_TYPE) or "manual"
+    """메타데이터에서 파서 타입을 추출 (구 스키마 호환)"""
+    return meta.get(MetadataFields.PARSER_TYPE) or meta.get("parser") or settings.PARSER_TYPE
 
 
 def _check_local_db_mismatch(rel_path: str, local_info: dict, db_chunks: list, anomalies: dict):
