@@ -47,8 +47,14 @@ class TestPromptInjectionDefense:
 
     def test_documents_wrapped_in_xml_tags(self):
         docs = [
-            Document(page_content="내용A", metadata={MetadataFields.SRC_NAME: "a.pdf", MetadataFields.PG_NUM: 1}),
-            Document(page_content="내용B", metadata={MetadataFields.SRC_NAME: "b.pdf", MetadataFields.PG_NUM: 2}),
+            Document(
+                page_content="내용A",
+                metadata={MetadataFields.SRC_NAME: "a.pdf", MetadataFields.PG_NUM: 1},
+            ),
+            Document(
+                page_content="내용B",
+                metadata={MetadataFields.SRC_NAME: "b.pdf", MetadataFields.PG_NUM: 2},
+            ),
         ]
         from src.core.nodes import ContextBuilderNode
 
