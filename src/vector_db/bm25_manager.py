@@ -100,6 +100,7 @@ class BM25IndexBuilder:
 
 
 class BM25Manager(BaseRetriever):
+
     def __init__(self, data_dir=PROCESSED_DATA_DIR, cache_dir=BM25_CACHE_DIR):
         self.data_dir = data_dir
         self.cache_dir = cache_dir
