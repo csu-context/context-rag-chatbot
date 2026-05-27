@@ -66,7 +66,7 @@ class BM25Manager(BaseRetriever):
         return [t.form for t in self.kiwi.tokenize(text) if t.tag.startswith(("N", "V", "S")) and len(t.form) > 1]
 
     def _get_all_json_files(self) -> list:
-        return list(self.data_dir.glob("*.json"))
+        return [f for f in self.data_dir.glob("*.json") if f.name != "manifest.json"]
 
     def _flatten_data(self, data: Any) -> list[dict]:
         """
