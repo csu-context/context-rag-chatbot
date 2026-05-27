@@ -58,7 +58,7 @@ class Settings(BaseSettings):
     SEMANTIC_CACHE_THRESHOLD: float = Field(default=0.90)
 
     # 8. Ollama 추론 제어
-    OLLAMA_KEEP_ALIVE: str = Field(default="-1")
+    OLLAMA_KEEP_ALIVE: int | str = Field(default=-1)
     OLLAMA_NUM_PREDICT: int = Field(default=2048)
     OLLAMA_REPEAT_PENALTY: float = Field(default=1.05)
     OLLAMA_NUM_CTX: int = Field(default=4096)
