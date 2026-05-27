@@ -5,6 +5,7 @@ from typing import Any
 from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda
+from src.core.nodes import ContextBuilderNode
 
 from src.common.constants import MetadataFields
 from src.core.cache import SemanticCache

@@ -29,7 +29,6 @@ def init_session_state():
             st.session_state[key] = val
 
 
-
 def get_session_val(key: str, default: Any = None) -> Any:
     return st.session_state.get(key, default)
 
