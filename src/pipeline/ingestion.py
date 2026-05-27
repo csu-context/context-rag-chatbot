@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from src.common.constants import MetadataFields
+from src.core.chains import invalidate_source_json_cache
 from src.core.storage import StorageManager
 from src.pipeline.strategies import (
     DoclingPDFParserStrategy,
@@ -173,39 +174,59 @@ class IngestionPipeline:
                     logger.error(f"진행 상황 콜백 호출 실패: {cb_e}")
             return all_hierarchical_data
 
-        # 다중 파일 병렬 처리
-        # [DataOps] PDF(Docling) 파일이 포함되어 있는 경우, 동시 프로세스 가동 시 heavy AI 모델 로딩으로 인한
-        # 메모리 고갈 OOM(std::bad_alloc)을 방지하기 위해 단일 프로세스(max_workers=1)로 강제 조정합니다.
-        has_pdf = any(f.suffix.lower() == ".pdf" for f in files)
-        if has_pdf:
-            max_workers = 1
-            logger.info(
-                "PDF 파일이 감지되어 메모리 보호(OOM 방지)를 위해 단일 스레드 순차 모드로 전환합니다. (Workers: 1)"
-            )
-        else:
-            max_workers = min(total_files, os.cpu_count() or 4)
-            logger.info(f"병렬 파싱 활성화 (Workers: {max_workers})")
+        # 하이브리드 처리: MD 파일은 프로세스 풀 병렬, PDF 파일은 OOM 방지를 위해 순차 처리
+        pdf_files = [f for f in files if f.suffix.lower() == ".pdf"]
+        non_pdf_files = [f for f in files if f.suffix.lower() != ".pdf"]
+        completed_count = 0
 
-        futures_map = {}
-        with ProcessPoolExecutor(max_workers=max_workers) as executor:
-            for idx, file_path in enumerate(files):
-                future = executor.submit(
-                    _process_single_file_helper,
-                    file_path,
-                    file_parser_types,
-                    self.storage_manager.processed_dir,
-                    self.storage_manager.cache_dir,
-                )
-                futures_map[future] = (idx, file_path)
+        # Phase 1: 비-PDF 파일 병렬 처리
+        if non_pdf_files:
+            max_workers = min(len(non_pdf_files), os.cpu_count() or 4)
+            logger.info(f"비-PDF 파일 병렬 파싱 활성화 ({len(non_pdf_files)}개 파일, Workers: {max_workers})")
 
-            for completed_count, future in enumerate(as_completed(futures_map), 1):
-                idx, file_path = futures_map[future]
+            futures_map = {}
+            with ProcessPoolExecutor(max_workers=max_workers) as executor:
+                for file_path in non_pdf_files:
+                    future = executor.submit(
+                        _process_single_file_helper,
+                        file_path,
+                        file_parser_types,
+                        self.storage_manager.processed_dir,
+                        self.storage_manager.cache_dir,
+                    )
+                    futures_map[future] = file_path
+
+                for future in as_completed(futures_map):
+                    file_path = futures_map[future]
+                    completed_count += 1
+                    try:
+                        res = future.result()
+                        all_hierarchical_data.extend(res)
+                    except Exception as e:
+                        logger.error(f"병렬 파일 처리 실패: {file_path.name} - {e}")
+
+                    if progress_callback:
+                        try:
+                            progress_callback(completed_count, total_files, file_path.name)
+                        except Exception as cb_e:
+                            logger.error(f"진행 상황 콜백 호출 실패: {cb_e}")
+
+        # Phase 2: PDF 파일 순차 처리 (Docling heavy AI 모델 OOM 방지)
+        if pdf_files:
+            logger.info(f"PDF 파일 순차 처리 시작 ({len(pdf_files)}개 파일, 메모리 보호 모드)")
+            for file_path in pdf_files:
                 try:
-                    res = future.result()
+                    res = _process_single_file_helper(
+                        file_path,
+                        file_parser_types,
+                        self.storage_manager.processed_dir,
+                        self.storage_manager.cache_dir,
+                    )
                     all_hierarchical_data.extend(res)
                 except Exception as e:
-                    logger.error(f"병렬 파일 처리 실패: {file_path.name} - {e}")
+                    logger.error(f"PDF 파일 처리 실패: {file_path.name} - {e}")
 
+                completed_count += 1
                 if progress_callback:
                     try:
                         progress_callback(completed_count, total_files, file_path.name)
@@ -233,6 +254,8 @@ class IngestionPipeline:
             saved_paths.append(save_path)
             logger.info(f"   - 전처리 결과 저장: {save_path.name}")
 
+        # JSON 파일이 갱신되었으므로 RAG 파이프라인의 LRU 캐시 무효화
+        invalidate_source_json_cache()
         return saved_paths
 
     def _prepare_cleanup_targets(

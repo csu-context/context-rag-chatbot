@@ -1,5 +1,8 @@
+import functools
+import json
 import logging
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 from langchain_core.documents import Document
@@ -18,6 +21,24 @@ from src.utils.paths import PROCESSED_DATA_DIR
 logger = logging.getLogger(__name__)
 
 
+@functools.lru_cache(maxsize=128)
+def _load_source_json(json_path: Path) -> list | None:
+    """source_id별 JSON 파일을 LRU 캐시로 로드합니다. 동일 경로의 반복 디스크 I/O를 방지합니다."""
+    try:
+        if json_path.exists():
+            with open(json_path, encoding="utf-8") as f:
+                return json.load(f)
+        return None
+    except Exception as e:
+        logger.error(f"JSON 파일 로드 실패: {json_path} - {e}")
+        return None
+
+
+def invalidate_source_json_cache() -> None:
+    """인덱싱으로 JSON 파일이 갱신된 경우 LRU 캐시를 무효화합니다."""
+    _load_source_json.cache_clear()
+
+
 class RAGPipeline:
     """RAG 파이프라인의 핵심 로직을 관리하는 클래스"""
 
@@ -30,11 +51,7 @@ class RAGPipeline:
 
     def _resolve_parent_documents(self, docs: list[Document]) -> list[Document]:
         """자식 청크로 검색된 문서들을 부모 청크의 원문으로 전환합니다."""
-        import json
-
         resolved_docs = []
-        # source_id별로 로드된 JSON 데이터를 캐싱하여 반복 로드 최소화
-        loaded_json_cache = {}
 
         for doc in docs:
             parent_id = doc.metadata.get(MetadataFields.PARENT_ID)
@@ -42,19 +59,11 @@ class RAGPipeline:
 
             if parent_id and source_id:
                 try:
-                    if source_id not in loaded_json_cache:
-                        json_path = PROCESSED_DATA_DIR / f"{source_id}.json"
-                        if json_path.exists():
-                            with open(json_path, encoding="utf-8") as f:
-                                loaded_json_cache[source_id] = json.load(f)
-                        else:
-                            loaded_json_cache[source_id] = None
-
-                    parents_list = loaded_json_cache[source_id]
+                    json_path = PROCESSED_DATA_DIR / f"{source_id}.json"
+                    parents_list = _load_source_json(json_path)
                     if parents_list:
                         for p in parents_list:
                             if p.get("parent_id") == parent_id:
-                                # 부모 원문으로 교체
                                 doc.page_content = p.get("parent_text", doc.page_content)
                                 break
                 except Exception as e:

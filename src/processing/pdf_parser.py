@@ -1,6 +1,9 @@
 import logging
+import re
 from pathlib import Path
 from typing import Any
+
+from src.common.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -68,18 +71,9 @@ class DoclingPDFParser:
         }
 
     def _clean_pdf_noise(self, text: str) -> str:
-        """PDF 파싱 결과물에서 반복 노이즈 제거"""
-        import re
-
-        # 매 페이지 상하단에 반복적으로 나오는 대형 노이즈 문구 및 페이지 기호 정제
-        noise_patterns = [
-            r"(?im)^\s*조선대학교\s+학칙\s*$",  # 조선대학교 학칙 단독 라인
-            r"(?im)^\s*-\s*\d+\s*-\s*$",  # 페이지 번호 (- 1 -)
-            r"(?im)^\s*대외비\s*$",  # 대외비 단독 라인
-        ]
-
+        """PDF 파싱 결과물에서 반복 노이즈 제거 (패턴은 settings.PDF_NOISE_PATTERNS에서 주입)"""
         cleaned_text = text
-        for pattern in noise_patterns:
+        for pattern in settings.PDF_NOISE_PATTERNS:
             cleaned_text = re.sub(pattern, "", cleaned_text)
 
         # 연속된 빈 라인 정리
