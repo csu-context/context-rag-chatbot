@@ -58,6 +58,7 @@ class Settings(BaseSettings):
     # 7. 시맨틱 캐시 설정
     SEMANTIC_CACHE_COLLECTION_NAME: str = Field(default="semantic_cache")
     SEMANTIC_CACHE_THRESHOLD: float = Field(default=0.90)
+    MAX_CHAT_HISTORY_TURNS: int = Field(default=5)
 
     # Pydantic 설정 (env 파일 로드 및 대소문자 무시)
     model_config = SettingsConfigDict(
