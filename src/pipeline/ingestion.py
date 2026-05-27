@@ -150,7 +150,7 @@ class IngestionPipeline:
             files.extend(filtered_files)
         return files
 
-    def process_and_chunk(  # noqa: C901
+    def process_and_chunk(
         self, files: list[Path], progress_callback=None, file_parser_types: dict[str, str] | None = None
     ) -> list[dict[str, Any]]:
         import os
