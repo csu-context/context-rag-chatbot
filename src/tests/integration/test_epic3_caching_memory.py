@@ -63,7 +63,7 @@ def test_semantic_cache_selective_invalidation_no_match():
 # ---------------------------------------------------------------------------
 def test_chat_history_trim_enforces_max_turns():
     """메시지 수가 MAX_CHAT_HISTORY_TURNS * 2 초과 시 오래된 메시지가 잘리는지 검증."""
-    from src.controllers.chat_controller import _trim_chat_history
+    from src.ui.stream_responder import _trim_chat_history
 
     max_msgs = settings.MAX_CHAT_HISTORY_TURNS * 2
     all_messages = [
@@ -73,7 +73,7 @@ def test_chat_history_trim_enforces_max_turns():
     mock_state = MagicMock()
     mock_state.messages = all_messages.copy()
 
-    with patch("src.controllers.chat_controller.st.session_state", mock_state):
+    with patch("src.ui.stream_responder.st.session_state", mock_state):
         _trim_chat_history()
 
     assert len(mock_state.messages) == max_msgs
@@ -82,7 +82,7 @@ def test_chat_history_trim_enforces_max_turns():
 
 def test_chat_history_trim_no_op_when_under_limit():
     """메시지 수가 한도 이하면 트리밍이 발생하지 않는지 검증."""
-    from src.controllers.chat_controller import _trim_chat_history
+    from src.ui.stream_responder import _trim_chat_history
 
     max_msgs = settings.MAX_CHAT_HISTORY_TURNS * 2
     all_messages = [{"role": "user", "content": f"msg {i}"} for i in range(max_msgs - 2)]
@@ -90,7 +90,7 @@ def test_chat_history_trim_no_op_when_under_limit():
     mock_state = MagicMock()
     mock_state.messages = all_messages.copy()
 
-    with patch("src.controllers.chat_controller.st.session_state", mock_state):
+    with patch("src.ui.stream_responder.st.session_state", mock_state):
         _trim_chat_history()
 
     assert len(mock_state.messages) == len(all_messages)
