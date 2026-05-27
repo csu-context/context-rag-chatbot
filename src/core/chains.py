@@ -29,9 +29,14 @@ _TOKEN_RATIO: dict[str, float] = {
     "claude": 1.2,
 }
 
-_HISTORY_WINDOW = 6  # 슬라이딩 윈도우: 최근 N개 메시지(= K턴 * 2)
+_MAX_HISTORY_MESSAGES = 6  # 슬라이딩 윈도우: 최근 N개 메시지(= K턴 * 2)
+_CTX_USAGE_RATIO: float = 0.75  # 컨텍스트 윈도우 중 문서에 할당하는 비율
 
 logger = logging.getLogger(__name__)
+
+
+def _estimate_tokens(text: str, ratio: float) -> int:
+    return max(1, int(len(text) / ratio))
 
 
 class RAGPipeline:
@@ -91,19 +96,18 @@ class RAGPipeline:
         self, docs: list[Document], system_prompt: str, history: list[dict]
     ) -> list[Document]:
         """토큰 한도 초과 시 낮은 점수 문서부터 제거합니다."""
-        limit = int(settings.OLLAMA_NUM_CTX * 0.75)
+        limit = int(settings.OLLAMA_NUM_CTX * _CTX_USAGE_RATIO)
         ratio = _TOKEN_RATIO.get(settings.MODEL_TYPE, 1.5)
 
-        def _est(text: str) -> int:
-            return max(1, int(len(text) / ratio))
-
-        fixed_tokens = _est(system_prompt) + sum(_est(m.get("content", "")) for m in history[-_HISTORY_WINDOW:])
+        fixed_tokens = _estimate_tokens(system_prompt, ratio) + sum(
+            _estimate_tokens(m.get("content", ""), ratio) for m in history[-_MAX_HISTORY_MESSAGES:]
+        )
         available = limit - fixed_tokens
 
         ranked = sorted(docs, key=lambda d: d.metadata.get("rerank_score", d.metadata.get("score", 0.0)), reverse=True)
         kept, total = [], 0
         for doc in ranked:
-            doc_tokens = _est(doc.page_content)
+            doc_tokens = _estimate_tokens(doc.page_content, ratio)
             if total + doc_tokens > available:
                 break
             kept.append(doc)
@@ -156,7 +160,7 @@ class RAGPipeline:
         """대화 맥락에 따른 캐시 오염을 방지하기 위해 최근 대화 이력을 쿼리에 결합합니다."""
         if not history:
             return query
-        history_str = "\n".join(f"{m.get('role', '')}: {m.get('content', '')}" for m in history[-_HISTORY_WINDOW:])
+        history_str = "\n".join(f"{m.get('role', '')}: {m.get('content', '')}" for m in history[-_MAX_HISTORY_MESSAGES:])
         return f"[History]\n{history_str}\n\n[Current Query]\n{query}"
 
     def _stream_generation(
@@ -169,7 +173,7 @@ class RAGPipeline:
 
             messages = [("system", system_prompt)]
 
-            for msg in history[-_HISTORY_WINDOW:]:
+            for msg in history[-_MAX_HISTORY_MESSAGES:]:
                 role = msg.get("role")
                 content = msg.get("content", "")
                 if role == "user":
