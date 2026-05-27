@@ -4,7 +4,15 @@ from typing import Any
 
 import streamlit as st
 
+from src.common.config import settings
+
 logger = logging.getLogger(__name__)
+
+
+def _trim_chat_history() -> None:
+    max_messages = settings.MAX_CHAT_HISTORY_TURNS * 2
+    if len(st.session_state.messages) > max_messages:
+        st.session_state.messages = st.session_state.messages[-max_messages:]
 
 
 def check_repetition(full_response: str) -> tuple[bool, str]:
@@ -99,6 +107,51 @@ class ChatController:
     """답변 스트리밍 생성 프로세스를 총괄하여 처리하는 컨트롤러 클래스"""
 
     @staticmethod
+    def _finalize_stream(
+        ui_handler: StreamUIHandler,
+        perf_logger: Any,
+        get_system_stats_fn: Any,
+        status: str,
+        error: Exception | None = None,
+    ) -> None:
+        """스트림 종료 후 메시지 저장, 로깅, 세션 정리를 수행합니다."""
+        st.session_state.is_generating = False
+        latency = time.time() - st.session_state.start_time
+        content = ui_handler.handle_error(error) if error else ui_handler.full_response
+
+        st.session_state.messages.append(
+            {
+                "role": "assistant",
+                "content": content,
+                "citations": ui_handler.final_docs,
+                "latency": latency,
+            }
+        )
+        _trim_chat_history()
+
+        log_kwargs: dict[str, Any] = {
+            "total_latency": latency,
+            "system_stats": get_system_stats_fn(),
+            "status": status,
+        }
+        if error:
+            log_kwargs["query"] = st.session_state.current_prompt
+            log_kwargs["error"] = str(error)
+        else:
+            log_kwargs["query"] = st.session_state.current_prompt
+            log_kwargs["answer"] = ui_handler.full_response
+            log_kwargs["latencies_per_stage"] = {
+                s: v["end"] - v["start"] for s, v in ui_handler.stage_latencies.items() if "end" in v
+            }
+            log_kwargs["confidence_scores"] = [
+                doc.get("metadata", {}).get("rerank_score", doc.get("score", 0.0)) for doc in ui_handler.final_docs
+            ]
+        perf_logger.log(**log_kwargs)
+
+        st.session_state.stream_iter = None
+        st.session_state.current_prompt = ""
+
+    @staticmethod
     def consume_stream(ui_handler: StreamUIHandler, perf_logger: Any, get_system_stats_fn: Any):
         """스트리밍 생성 제네레이터를 읽어서 UI를 실시간 업데이트하고 결과를 로깅합니다."""
         show_expert_mode = st.session_state.show_expert_mode
@@ -135,85 +188,14 @@ class ChatController:
 
                     ui_handler.process_step(step)
 
-            if not st.session_state.stop_generation:
-                st.session_state.is_generating = False
-                latency = time.time() - st.session_state.start_time
-                st.session_state.messages.append(
-                    {
-                        "role": "assistant",
-                        "content": ui_handler.full_response,
-                        "citations": ui_handler.final_docs,
-                        "latency": latency,
-                    }
-                )
-                perf_logger.log(
-                    query=st.session_state.current_prompt,
-                    answer=ui_handler.full_response,
-                    total_latency=latency,
-                    latencies_per_stage={
-                        s: v["end"] - v["start"] for s, v in ui_handler.stage_latencies.items() if "end" in v
-                    },
-                    confidence_scores=[
-                        doc.get("metadata", {}).get("rerank_score", doc.get("score", 0.0))
-                        for doc in ui_handler.final_docs
-                    ],
-                    system_stats=get_system_stats_fn(),
-                    status="success",
-                )
-                st.session_state.stream_iter = None
-                st.session_state.current_prompt = ""
-                st.rerun()
-            else:
-                st.session_state.is_generating = False
-                latency = time.time() - st.session_state.start_time
-                st.session_state.messages.append(
-                    {
-                        "role": "assistant",
-                        "content": ui_handler.full_response,
-                        "citations": ui_handler.final_docs,
-                        "latency": latency,
-                    }
-                )
-                perf_logger.log(
-                    query=st.session_state.current_prompt,
-                    answer=ui_handler.full_response,
-                    total_latency=latency,
-                    latencies_per_stage={
-                        s: v["end"] - v["start"] for s, v in ui_handler.stage_latencies.items() if "end" in v
-                    },
-                    confidence_scores=[
-                        doc.get("metadata", {}).get("rerank_score", doc.get("score", 0.0))
-                        for doc in ui_handler.final_docs
-                    ],
-                    system_stats=get_system_stats_fn(),
-                    status="interrupted",
-                )
-                st.session_state.stream_iter = None
-                st.session_state.current_prompt = ""
+            if st.session_state.stop_generation:
                 st.session_state.stop_generation = False
-                st.rerun()
+                ChatController._finalize_stream(ui_handler, perf_logger, get_system_stats_fn, "interrupted")
+            else:
+                ChatController._finalize_stream(ui_handler, perf_logger, get_system_stats_fn, "success")
+            st.rerun()
 
         except Exception as e:
-            st.session_state.is_generating = False
             logger.error(f"채팅 중 오류 발생: {e}", exc_info=True)
-            error_msg = ui_handler.handle_error(e) or f"\n\n[오류] 답변 생성 중 문제가 발생했습니다: {e}"
-
-            latency = time.time() - st.session_state.start_time
-            st.session_state.messages.append(
-                {
-                    "role": "assistant",
-                    "content": error_msg,
-                    "citations": ui_handler.final_docs,
-                    "latency": latency,
-                }
-            )
-            perf_logger.log(
-                query=st.session_state.current_prompt,
-                error=str(e),
-                total_latency=latency,
-                system_stats=get_system_stats_fn(),
-                status="error",
-            )
-            st.session_state.stream_iter = None
-            st.session_state.current_prompt = ""
+            ChatController._finalize_stream(ui_handler, perf_logger, get_system_stats_fn, "error", error=e)
             st.rerun()
