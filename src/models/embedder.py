@@ -34,7 +34,10 @@ class BGEEmbedder:
             {"torch_dtype": torch.float16} if settings.EMBEDDER_USE_FP16 and self.device in ("cuda", "mps") else {}
         )
         self.model = SentenceTransformer(
-            model_name, cache_folder=str(MODELS_DIR), local_files_only=not settings.ALLOW_EXTERNAL_API
+            model_name,
+            cache_folder=str(MODELS_DIR),
+            local_files_only=not settings.ALLOW_EXTERNAL_API,
+            model_kwargs=model_kwargs,
         )
         self.model.to(self.device)
         logger.info(f"모델이 다음 장치에 로드되었습니다: {self.device}")

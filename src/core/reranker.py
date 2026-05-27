@@ -163,6 +163,7 @@ class CrossEncoderReranker(BaseReranker):
                     self.model_name,
                     device=self.device,
                     cache_dir=str(CROSS_ENCODER_CACHE_DIR),
+                    automodel_args=automodel_args,
                 )
             except Exception as e:
                 logger.error(f"Failed to load CrossEncoder: {e}")
