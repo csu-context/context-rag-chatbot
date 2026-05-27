@@ -290,12 +290,16 @@ def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
 
             if st.button("정합성 자동 복구 (Repair)", type="primary", use_container_width=True):
                 with st.spinner("복구 작업 진행 중..."):
-                    repair_integrity(anomalies)
-                    st.success("복구가 완료되었습니다. 상태를 재확인하세요.")
-                    del st.session_state.health_report
-                    initialize_rag_system_callback()
-                    time.sleep(0.5)
-                    st.rerun()
+                    try:
+                        repair_integrity(anomalies)
+                        del st.session_state.health_report
+                        initialize_rag_system_callback()
+                    except Exception as repair_err:
+                        st.error(f"복구 중 오류가 발생했습니다: {repair_err}")
+                    else:
+                        st.success("복구가 완료되었습니다. 상태를 재확인하세요.")
+                        time.sleep(0.5)
+                        st.rerun()
 
     st.divider()
     if st.button("관리 시스템 종료 (닫기)", use_container_width=True):
