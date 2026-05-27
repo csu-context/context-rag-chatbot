@@ -154,10 +154,11 @@ class TestContextTrimming:
 class TestOllamaSettings:
     def test_keep_alive_applied_from_settings(self):
         with patch("src.models.llm_ollama.settings") as mock_s, patch("src.models.llm_ollama.ChatOllama") as mock_chat:
-            mock_s.OLLAMA_KEEP_ALIVE = "-1"
-            mock_s.OLLAMA_NUM_PREDICT = 2048
+            mock_s.OLLAMA_KEEP_ALIVE = -1
+            mock_s.OLLAMA_NUM_PREDICT = 8192
             mock_s.OLLAMA_REPEAT_PENALTY = 1.05
             mock_s.OLLAMA_NUM_CTX = 4096
+            mock_s.OLLAMA_THINK = False
             mock_s.OLLAMA_BASE_URL = "http://localhost:11434"
             mock_chat.return_value = MagicMock()
 
@@ -167,9 +168,10 @@ class TestOllamaSettings:
                 OllamaModel(model_name="test-model")
 
             call_kwargs = mock_chat.call_args.kwargs
-            assert call_kwargs["keep_alive"] == "-1"
-            assert call_kwargs["num_predict"] == 2048
+            assert call_kwargs["keep_alive"] == -1
+            assert call_kwargs["num_predict"] == 8192
             assert call_kwargs["repeat_penalty"] == 1.05
+            assert call_kwargs["think"] is False
 
     def test_repeat_penalty_default_is_lower_than_original(self):
         from src.common.config import Settings

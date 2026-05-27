@@ -114,6 +114,7 @@ class OllamaModel(BaseLLM):
             repeat_penalty=settings.OLLAMA_REPEAT_PENALTY,
             num_ctx=settings.OLLAMA_NUM_CTX,
             keep_alive=settings.OLLAMA_KEEP_ALIVE,
+            think=settings.OLLAMA_THINK,
         )
         # 헬스 체크 연동 경고 로그
         if not self.check_health():

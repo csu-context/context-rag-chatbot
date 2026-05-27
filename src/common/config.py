@@ -59,9 +59,10 @@ class Settings(BaseSettings):
 
     # 8. Ollama 추론 제어
     OLLAMA_KEEP_ALIVE: int | str = Field(default=-1)
-    OLLAMA_NUM_PREDICT: int = Field(default=2048)
+    OLLAMA_NUM_PREDICT: int = Field(default=8192)
     OLLAMA_REPEAT_PENALTY: float = Field(default=1.05)
     OLLAMA_NUM_CTX: int = Field(default=4096)
+    OLLAMA_THINK: bool = Field(default=False)
 
     # 9. LLM 프롬프트 및 Fallback
     PROMPT_FILE: str | None = Field(default=None)
