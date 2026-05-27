@@ -172,13 +172,12 @@ class RAGPipeline:
         final_k = input_dict.get("final_k", 5)
         history = input_dict.get("history", [])
 
-        cache_query = self._build_cache_query(query, history)
-        use_cache = True
+        cache_query = ContextBuilderNode.build_cache_query(query, history)
 
         with self.tracing_logger.start_session(query=query) as session:
             # 1. Semantic Cache Check
             yield {"stage": "cache", "status": "running"}
-            cached_result = self.cache.get(cache_query) if use_cache else None
+            cached_result = self.cache.get(cache_query)
             if cached_result:
                 session.data["cache_hit"] = True
                 yield {"stage": "cache", "status": "hit"}
@@ -230,8 +229,7 @@ class RAGPipeline:
                     }
                 )
 
-            if use_cache:
-                self.cache.add(cache_query, full_answer, docs_for_cache)
+            self.cache.add(cache_query, full_answer, docs_for_cache)
 
             yield {"stage": "citation", "status": "complete", "output": citations_str, "source_documents": final_docs}
 
