@@ -57,6 +57,16 @@ class Settings(BaseSettings):
     SEMANTIC_CACHE_COLLECTION_NAME: str = Field(default="semantic_cache")
     SEMANTIC_CACHE_THRESHOLD: float = Field(default=0.90)
 
+    # 8. Ollama 추론 제어
+    OLLAMA_KEEP_ALIVE: str = Field(default="-1")
+    OLLAMA_NUM_PREDICT: int = Field(default=2048)
+    OLLAMA_REPEAT_PENALTY: float = Field(default=1.05)
+    OLLAMA_NUM_CTX: int = Field(default=4096)
+
+    # 9. LLM 프롬프트 및 Fallback
+    PROMPT_FILE: str | None = Field(default=None)
+    LLM_FALLBACK_ENABLED: bool = Field(default=True)
+
     # Pydantic 설정 (env 파일 로드 및 대소문자 무시)
     model_config = SettingsConfigDict(
         env_file=ROOT_DIR / ".env",

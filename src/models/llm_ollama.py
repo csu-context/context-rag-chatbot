@@ -7,6 +7,7 @@ from typing import Any, ClassVar
 
 from langchain_ollama import ChatOllama
 
+from src.common.config import settings
 from src.models.base import BaseLLM, LLMResponse
 
 logger = logging.getLogger(__name__)
@@ -109,8 +110,10 @@ class OllamaModel(BaseLLM):
             model=model_name,
             base_url=self.base_url,
             temperature=temperature,
-            num_predict=512,
-            repeat_penalty=1.2,
+            num_predict=settings.OLLAMA_NUM_PREDICT,
+            repeat_penalty=settings.OLLAMA_REPEAT_PENALTY,
+            num_ctx=settings.OLLAMA_NUM_CTX,
+            keep_alive=settings.OLLAMA_KEEP_ALIVE,
         )
         # 헬스 체크 연동 경고 로그
         if not self.check_health():
@@ -233,3 +236,13 @@ class OllamaModel(BaseLLM):
     def get_pull_status(self) -> dict | None:
         """현재 백그라운드 다운로드 상태를 조회합니다."""
         return OllamaPullStatus.get_status(self.model_name)
+
+    def warmup(self) -> bool:
+        """앱 시작 시 더미 요청으로 모델을 사전 로드합니다."""
+        try:
+            self.model.invoke("안녕")
+            logger.info(f"Ollama 모델 warmup 완료: {self.model_name}")
+            return True
+        except Exception as e:
+            logger.warning(f"Ollama 모델 warmup 실패 ({self.model_name}): {e}")
+            return False

@@ -1,4 +1,5 @@
 import logging
+import re
 from collections.abc import Iterator
 from typing import Any
 
@@ -6,6 +7,7 @@ from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda
 
+from src.common.config import settings
 from src.common.constants import MetadataFields
 from src.core.cache import SemanticCache
 from src.core.prompts import RAG_SYSTEM_PROMPT
@@ -13,6 +15,11 @@ from src.core.reranker import RerankerFactory
 from src.models.factory import LLMFactory
 from src.utils.citation import format_citations
 from src.utils.logger import TracingLogger
+
+_INJECTION_PATTERN = re.compile(
+    r"(###|---+|\bSystem:|\bAssistant:|\bHuman:|\[INST\]|\[/INST\]|<\|system\|>|<\|user\|>)",
+    re.IGNORECASE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +29,7 @@ class RAGPipeline:
 
     def __init__(self, retriever_or_db: Any, llm: Any = None, reranker: Any = None):
         self.retriever_or_db = retriever_or_db
-        self.llm = llm or LLMFactory.create_llm().get_model()
+        self.llm = llm or LLMFactory.create_llm_with_fallback()
         self.reranker = reranker or RerankerFactory.create()
         self.tracing_logger = TracingLogger()
         self.cache = SemanticCache()
@@ -54,15 +61,47 @@ class RAGPipeline:
             for res in search_results
         ]
 
+    @staticmethod
+    def _escape_injection(text: str) -> str:
+        """문서 내 프롬프트 인젝션 유발 패턴을 이스케이프합니다."""
+        return _INJECTION_PATTERN.sub(lambda m: f"[{m.group(0)}]", text)
+
     def _format_docs(self, docs: list[Document]) -> str:
-        """프롬프트 주입을 위한 컨텍스트 포맷팅"""
+        """프롬프트 주입 방어 XML 샌드박싱 적용 컨텍스트 포맷팅"""
         formatted = []
-        for doc in docs:
+        for i, doc in enumerate(docs, start=1):
             source = doc.metadata.get(MetadataFields.SRC_NAME) or "알 수 없는 파일"
             page = doc.metadata.get(MetadataFields.PG_NUM) or "-"
-            content = f"내용: {doc.page_content}\n출처: [{source}, p.{page}]"
-            formatted.append(content)
+            safe_content = self._escape_injection(doc.page_content)
+            entry = f'<document index="{i}">\n내용: {safe_content}\n출처: [{source}, p.{page}]\n</document>'
+            formatted.append(entry)
         return "\n\n".join(formatted)
+
+    def _trim_docs_to_token_limit(
+        self, docs: list[Document], system_prompt: str, history: list[dict]
+    ) -> list[Document]:
+        """토큰 한도 초과 시 낮은 점수 문서부터 제거합니다. 추정: 2자 ≈ 1토큰(한국어)."""
+        limit = int(settings.OLLAMA_NUM_CTX * 0.75)
+
+        def _est(text: str) -> int:
+            return max(1, len(text) // 2)
+
+        fixed_tokens = _est(system_prompt) + sum(_est(m.get("content", "")) for m in history[-6:])
+        available = limit - fixed_tokens
+
+        ranked = sorted(docs, key=lambda d: d.metadata.get("rerank_score", d.metadata.get("score", 0.0)), reverse=True)
+        kept, total = [], 0
+        for doc in ranked:
+            doc_tokens = _est(doc.page_content)
+            if total + doc_tokens > available:
+                break
+            kept.append(doc)
+            total += doc_tokens
+
+        if len(kept) < len(docs):
+            logger.warning(f"컨텍스트 토큰 한도 초과: {len(docs)}개 → {len(kept)}개 문서로 트리밍")
+
+        return kept
 
     def _do_retrieval(self, query: str, k: int, session: Any) -> list[Document]:
         with session.trace_step("retrieval") as step:
@@ -119,7 +158,8 @@ class RAGPipeline:
         self, query: str, final_docs: list[Document], history: list[dict[str, Any]], session: Any
     ) -> Iterator[str]:
         with session.trace_step("generation") as step:
-            context = self._format_docs(final_docs)
+            trimmed_docs = self._trim_docs_to_token_limit(final_docs, RAG_SYSTEM_PROMPT, history)
+            context = self._format_docs(trimmed_docs)
 
             # system 메시지는 RAG_SYSTEM_PROMPT 템플릿 유지
             messages = [("system", RAG_SYSTEM_PROMPT)]
