@@ -101,17 +101,15 @@ class CrossEncoderReranker(BaseReranker):
     _model: CrossEncoder | None = None
     _singleton_lock = threading.Lock()
 
-    DEFAULT_MODEL_NAME = "BAAI/bge-reranker-v2-m3"
-
     def __init__(
         self,
-        model_name: str = DEFAULT_MODEL_NAME,
+        model_name: str | None = None,
         top_k: int = 3,
         threshold: float | None = None,
         device: str | None = None,
     ):
         super().__init__(name="Local CrossEncoder", top_k=top_k, threshold=threshold or 0.3)
-        self.model_name = model_name
+        self.model_name = model_name or settings.RERANKER_MODEL_NAME
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
 
         if threshold is None:
@@ -123,7 +121,7 @@ class CrossEncoderReranker(BaseReranker):
         model_lower = self.model_name.lower()
         if "bge" in model_lower:
             self.threshold = 0.4
-        elif "skesarmom" in model_lower or "kor" in model_lower:
+        elif "ko-reranker" in model_lower or "skesarmom" in model_lower or "kor" in model_lower:
             self.threshold = 0.5
         else:
             self.threshold = 0.45
@@ -131,7 +129,7 @@ class CrossEncoderReranker(BaseReranker):
     @classmethod
     def get_instance(
         cls,
-        model_name: str = DEFAULT_MODEL_NAME,
+        model_name: str | None = None,
         top_k: int = 5,
         threshold: float | None = None,
         device: str | None = None,
@@ -379,5 +377,5 @@ class RerankerFactory:
             logger.info("Jina 리랭커를 사용합니다.")
             return JinaReranker(top_k=top_k)
         else:
-            logger.info("로컬 CrossEncoder 리랭커를 사용합니다.")
-            return CrossEncoderReranker.get_instance()
+            logger.info(f"로컬 CrossEncoder 리랭커를 사용합니다. (모델: {settings.RERANKER_MODEL_NAME})")
+            return CrossEncoderReranker.get_instance(model_name=settings.RERANKER_MODEL_NAME, top_k=top_k)
