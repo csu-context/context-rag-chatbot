@@ -64,6 +64,7 @@ RUN mkdir -p data/raw data/processed vector_db logs
 
 # 소스 코드 복사
 COPY src/ /app/src/
+COPY prompts/ /app/prompts/
 
 # 포트 설정
 EXPOSE 8501
