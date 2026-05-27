@@ -47,44 +47,47 @@ _BUILTIN_FALLBACK = """당신은 사내 문서를 기반으로 정확한 정보�
 {context}
 </Context>"""
 
-_PROMPT_TTL: float = 60.0
-_cache_value: str | None = None
-_cache_ts: float = 0.0
-_cache_lock = Lock()
+class PromptManager:
+    """프롬프트 파일 로드 및 TTL 캐싱을 관리하는 클래스"""
 
+    def __init__(self, ttl: float = 60.0):
+        self._ttl = ttl
+        self._cache_value: str | None = None
+        self._cache_ts: float = 0.0
+        self._cache_lock = Lock()
 
-def _load_prompt() -> str:
-    from src.common.config import settings
+    def _load_prompt(self) -> str:
+        from src.common.config import settings
 
-    custom_path = Path(settings.PROMPT_FILE) if settings.PROMPT_FILE else None
-    candidates = [p for p in [custom_path, _DEFAULT_PROMPT_FILE] if p]
+        custom_path = Path(settings.PROMPT_FILE) if settings.PROMPT_FILE else None
+        candidates = [p for p in [custom_path, _DEFAULT_PROMPT_FILE] if p]
 
-    for path in candidates:
-        if path.exists():
-            try:
-                text = path.read_text(encoding="utf-8").strip()
-                logger.debug(f"시스템 프롬프트 로드: {path}")
-                return text
-            except Exception as e:
-                logger.warning(f"프롬프트 파일 읽기 실패 ({path}): {e}")
+        for path in candidates:
+            if path.exists():
+                try:
+                    text = path.read_text(encoding="utf-8").strip()
+                    logger.debug(f"시스템 프롬프트 로드: {path}")
+                    return text
+                except Exception as e:
+                    logger.warning(f"프롬프트 파일 읽기 실패 ({path}): {e}")
 
-    logger.warning("프롬프트 파일을 찾을 수 없어 내장 기본값을 사용합니다.")
-    return _BUILTIN_FALLBACK
+        logger.warning("프롬프트 파일을 찾을 수 없어 내장 기본값을 사용합니다.")
+        return _BUILTIN_FALLBACK
 
+    def get_system_prompt(self) -> str:
+        """TTL 캐시 기반 시스템 프롬프트 반환"""
+        now = time.monotonic()
+        if self._cache_value is not None and now - self._cache_ts < self._ttl:
+            return self._cache_value
 
-def get_system_prompt() -> str:
-    """TTL 캐시 기반 시스템 프롬프트 반환. 60초 경과 시 파일 재읽기(프로세스 재시작 불필요)."""
-    global _cache_value, _cache_ts
-    now = time.monotonic()
-    if _cache_value is not None and now - _cache_ts < _PROMPT_TTL:
-        return _cache_value
-    with _cache_lock:
-        now = time.monotonic()  # 락 획득 후 재계산으로 stale 방지
-        if _cache_value is None or now - _cache_ts >= _PROMPT_TTL:
-            _cache_value = _load_prompt()
-            _cache_ts = now
-    return _cache_value
+        with self._cache_lock:
+            now = time.monotonic()
+            if self._cache_value is None or now - self._cache_ts >= self._ttl:
+                self._cache_value = self._load_prompt()
+                self._cache_ts = now
+        return self._cache_value
 
-
-# 하위 호환성 유지 (테스트 및 외부 임포트)
+# 전역 싱글톤 인스턴스
+prompt_manager = PromptManager()
+get_system_prompt = prompt_manager.get_system_prompt
 RAG_SYSTEM_PROMPT: str = get_system_prompt()

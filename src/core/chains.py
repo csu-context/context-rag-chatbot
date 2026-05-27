@@ -16,27 +16,9 @@ from src.models.factory import LLMFactory
 from src.utils.citation import format_citations
 from src.utils.logger import TracingLogger
 
-_INJECTION_PATTERN = re.compile(
-    r"(###|---+|\bSystem:|\bAssistant:|\bHuman:|\[INST\]|\[/INST\]|<\|system\|>|<\|user\|>)",
-    re.IGNORECASE,
-)
-
-# 모델 계열별 한국어 토크나이저 실측 평균 (chars / token).
-# tiktoken/transformers 미연동 상태에서 모델 타입별 정적 근사값 사용.
-_TOKEN_RATIO: dict[str, float] = {
-    "ollama": 1.5,  # Llama/Qwen 계열
-    "gemini": 1.3,
-    "claude": 1.2,
-}
-
-_MAX_HISTORY_MESSAGES = 6  # 슬라이딩 윈도우: 최근 N개 메시지(= K턴 * 2)
-_CTX_USAGE_RATIO: float = 0.75  # 컨텍스트 윈도우 중 문서에 할당하는 비율
+from src.core.nodes import ContextBuilderNode, _MAX_HISTORY_MESSAGES
 
 logger = logging.getLogger(__name__)
-
-
-def _estimate_tokens(text: str, ratio: float) -> int:
-    return max(1, int(len(text) / ratio))
 
 
 class RAGPipeline:
@@ -76,47 +58,7 @@ class RAGPipeline:
             for res in search_results
         ]
 
-    @staticmethod
-    def _escape_injection(text: str) -> str:
-        """문서 내 프롬프트 인젝션 유발 패턴을 이스케이프합니다."""
-        return _INJECTION_PATTERN.sub(lambda m: f"[{m.group(0)}]", text)
 
-    def _format_docs(self, docs: list[Document]) -> str:
-        """프롬프트 주입 방어 XML 샌드박싱 적용 컨텍스트 포맷팅"""
-        formatted = []
-        for i, doc in enumerate(docs, start=1):
-            source = doc.metadata.get(MetadataFields.SRC_NAME) or "알 수 없는 파일"
-            page = doc.metadata.get(MetadataFields.PG_NUM) or "-"
-            safe_content = self._escape_injection(doc.page_content)
-            entry = f'<document index="{i}">\n내용: {safe_content}\n출처: [{source}, p.{page}]\n</document>'
-            formatted.append(entry)
-        return "\n\n".join(formatted)
-
-    def _trim_docs_to_token_limit(
-        self, docs: list[Document], system_prompt: str, history: list[dict]
-    ) -> list[Document]:
-        """토큰 한도 초과 시 낮은 점수 문서부터 제거합니다."""
-        limit = int(settings.OLLAMA_NUM_CTX * _CTX_USAGE_RATIO)
-        ratio = _TOKEN_RATIO.get(settings.MODEL_TYPE, 1.5)
-
-        fixed_tokens = _estimate_tokens(system_prompt, ratio) + sum(
-            _estimate_tokens(m.get("content", ""), ratio) for m in history[-_MAX_HISTORY_MESSAGES:]
-        )
-        available = limit - fixed_tokens
-
-        ranked = sorted(docs, key=lambda d: d.metadata.get("rerank_score", d.metadata.get("score", 0.0)), reverse=True)
-        kept, total = [], 0
-        for doc in ranked:
-            doc_tokens = _estimate_tokens(doc.page_content, ratio)
-            if total + doc_tokens > available:
-                break
-            kept.append(doc)
-            total += doc_tokens
-
-        if len(kept) < len(docs):
-            logger.warning(f"컨텍스트 토큰 한도 초과: {len(docs)}개 → {len(kept)}개 문서로 트리밍")
-
-        return kept
 
     def _do_retrieval(self, query: str, k: int, session: Any) -> list[Document]:
         with session.trace_step("retrieval") as step:
@@ -156,22 +98,15 @@ class RAGPipeline:
             )
             return final_docs, scores
 
-    def _build_cache_query(self, query: str, history: list[dict[str, Any]]) -> str:
-        """대화 맥락에 따른 캐시 오염을 방지하기 위해 최근 대화 이력을 쿼리에 결합합니다."""
-        if not history:
-            return query
-        history_str = "\n".join(
-            f"{m.get('role', '')}: {m.get('content', '')}" for m in history[-_MAX_HISTORY_MESSAGES:]
-        )
-        return f"[History]\n{history_str}\n\n[Current Query]\n{query}"
+
 
     def _stream_generation(
         self, query: str, final_docs: list[Document], history: list[dict[str, Any]], session: Any
     ) -> Iterator[str]:
         with session.trace_step("generation") as step:
             system_prompt = get_system_prompt()
-            trimmed_docs = self._trim_docs_to_token_limit(final_docs, system_prompt, history)
-            context = self._format_docs(trimmed_docs)
+            trimmed_docs = ContextBuilderNode.trim_docs_to_token_limit(final_docs, system_prompt, history)
+            context = ContextBuilderNode.format_docs(trimmed_docs)
 
             messages = [("system", system_prompt)]
 
@@ -237,7 +172,7 @@ class RAGPipeline:
         history = input_dict.get("history", [])
 
         # 대화 이력이 병합된 고유 캐시 쿼리 생성
-        cache_query = self._build_cache_query(query, history)
+        cache_query = ContextBuilderNode.build_cache_query(query, history)
         use_cache = len(history) == 0
 
         with self.tracing_logger.start_session(query=query) as session:
