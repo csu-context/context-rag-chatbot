@@ -20,6 +20,14 @@ from src.vector_db.chroma_manager import ChromaDBManager
 logger = logging.getLogger(__name__)
 
 
+def _safe_invoke_progress(callback, current: int, total: int, name: str) -> None:
+    if callback:
+        try:
+            callback(current, total, name)
+        except Exception as cb_e:
+            logger.error(f"진행 상황 콜백 호출 실패: {cb_e}")
+
+
 def _process_single_file_helper(  # noqa: C901
     file_path: Path,
     file_parser_types: dict[str, str] | None,
@@ -155,11 +163,7 @@ class IngestionPipeline:
 
         # 단일 파일인 경우 불필요한 프로세스 풀 생성 오버헤드 방지
         if total_files == 1:
-            if progress_callback:
-                try:
-                    progress_callback(0, total_files, files[0].name)
-                except Exception as cb_e:
-                    logger.error(f"진행 상황 콜백 호출 실패: {cb_e}")
+            _safe_invoke_progress(progress_callback, 0, total_files, files[0].name)
             res = _process_single_file_helper(
                 files[0],
                 file_parser_types,
@@ -167,11 +171,7 @@ class IngestionPipeline:
                 self.storage_manager.cache_dir,
             )
             all_hierarchical_data.extend(res)
-            if progress_callback:
-                try:
-                    progress_callback(total_files, total_files, "모든 파일 처리 완료")
-                except Exception as cb_e:
-                    logger.error(f"진행 상황 콜백 호출 실패: {cb_e}")
+            _safe_invoke_progress(progress_callback, total_files, total_files, "모든 파일 처리 완료")
             return all_hierarchical_data
 
         # 하이브리드 처리: MD 파일은 프로세스 풀 병렬, PDF 파일은 OOM 방지를 위해 순차 처리
@@ -205,11 +205,7 @@ class IngestionPipeline:
                     except Exception as e:
                         logger.error(f"병렬 파일 처리 실패: {file_path.name} - {e}")
 
-                    if progress_callback:
-                        try:
-                            progress_callback(completed_count, total_files, file_path.name)
-                        except Exception as cb_e:
-                            logger.error(f"진행 상황 콜백 호출 실패: {cb_e}")
+                    _safe_invoke_progress(progress_callback, completed_count, total_files, file_path.name)
 
         # Phase 2: PDF 파일 순차 처리 (Docling heavy AI 모델 OOM 방지)
         if pdf_files:
@@ -227,11 +223,7 @@ class IngestionPipeline:
                     logger.error(f"PDF 파일 처리 실패: {file_path.name} - {e}")
 
                 completed_count += 1
-                if progress_callback:
-                    try:
-                        progress_callback(completed_count, total_files, file_path.name)
-                    except Exception as cb_e:
-                        logger.error(f"진행 상황 콜백 호출 실패: {cb_e}")
+                _safe_invoke_progress(progress_callback, completed_count, total_files, file_path.name)
 
         return all_hierarchical_data
 
@@ -279,12 +271,12 @@ class IngestionPipeline:
             logger.info(f"파일명 기반 클린업 대상 확인: {filenames_to_delete}")
             try:
                 results = self.db_manager.collection.get(
-                    where={"src_name": {"$in": target_filenames}}, include=["metadatas"]
+                    where={MetadataFields.SRC_NAME: {"$in": target_filenames}}, include=["metadatas"]
                 )
                 if results and results.get("metadatas"):
                     for meta in results["metadatas"]:
-                        if meta and "source_id" in meta:
-                            valid_ids.append(meta["source_id"])
+                        if meta and MetadataFields.SOURCE_ID in meta:
+                            valid_ids.append(meta[MetadataFields.SOURCE_ID])
             except Exception as e:
                 logger.error(f"파일명 기반 source_id 조회 중 오류 발생: {e}")
 
@@ -310,7 +302,7 @@ class IngestionPipeline:
         # 1. 벡터 DB 데이터 삭제
         if target_filenames:
             try:
-                self.db_manager.delete_documents(where={"src_name": {"$in": target_filenames}})
+                self.db_manager.delete_documents(where={MetadataFields.SRC_NAME: {"$in": target_filenames}})
                 logger.info(f"   - ChromaDB 파일명 기준 {len(target_filenames)}개 파일 삭제 완료")
             except Exception as e:
                 logger.error(f"ChromaDB 파일명 기준 삭제 실패: {e}")

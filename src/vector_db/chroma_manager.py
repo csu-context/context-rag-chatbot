@@ -14,7 +14,7 @@ from src.common.config import settings
 from src.common.constants import MetadataFields
 from src.core.base_retriever import BaseRetriever
 from src.models.embedder import BGEEmbedder
-from src.utils.paths import CACHE_DIR, PROCESSED_DATA_DIR, VECTOR_DB_DIR, ensure_directories
+from src.utils.paths import BM25_CACHE_DIR, CACHE_DIR, PROCESSED_DATA_DIR, VECTOR_DB_DIR, ensure_directories
 from src.utils.unicode import normalize_to_nfc, normalize_to_nfd
 
 # 경고 숨기기 로직 추가
@@ -414,7 +414,7 @@ class ChromaDBManager(BaseRetriever):
 
     def _clear_bm25_cache_directory(self):
         """BM25 캐시 디렉토리를 안전하게 삭제합니다."""
-        bm25_cache_dir = Path(".cache/bm25_v2")
+        bm25_cache_dir = BM25_CACHE_DIR
         if bm25_cache_dir.exists():
             try:
                 shutil.rmtree(bm25_cache_dir)

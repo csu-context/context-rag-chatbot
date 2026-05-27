@@ -9,6 +9,7 @@ from src.common.config import settings
 logger = logging.getLogger(__name__)
 
 _PAGE_BREAK_PLACEHOLDER = "<!-- page break -->"
+_HEADER_FOOTER_LINES = 2  # 각 페이지 앞뒤에서 헤더/푸터 후보로 수집할 줄 수
 
 
 class DoclingPDFParser:
@@ -89,7 +90,7 @@ class DoclingPDFParser:
             "table_count": len(tables_metadata),
         }
 
-    def _remove_repeated_lines(self, text: str, threshold: float = 0.8) -> str:
+    def _remove_repeated_lines(self, text: str, threshold: float) -> str:
         """페이지 간 반복 출현하는 헤더/푸터 라인을 동적으로 제거한다.
 
         export_to_markdown(page_break_placeholder=...) 가 삽입한 마커로 페이지를 분리한 뒤,
@@ -108,7 +109,7 @@ class DoclingPDFParser:
         for page in pages:
             non_empty = [line.strip() for line in page.split("\n") if line.strip()]
             # 앞 2줄 + 뒤 2줄; 같은 페이지 내 중복 카운트 방지
-            candidates = set(non_empty[:2] + non_empty[-2:])
+            candidates = set(non_empty[:_HEADER_FOOTER_LINES] + non_empty[-_HEADER_FOOTER_LINES:])
             for line in candidates:
                 candidate_counter[line] += 1
 

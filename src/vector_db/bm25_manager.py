@@ -68,14 +68,6 @@ class BM25Manager(BaseRetriever):
     def _get_all_json_files(self) -> list:
         return list(self.data_dir.glob("*.json"))
 
-    def _should_rebuild_index(self, json_files: list) -> bool:
-        """manifest.json 타임스탬프를 기준으로 재빌드 여부를 결정함."""
-        manifest_path = self.cache_dir / _MANIFEST_FILE
-        if not manifest_path.exists():
-            return True
-        last_mtime = max((f.stat().st_mtime for f in json_files), default=0)
-        return last_mtime > manifest_path.stat().st_mtime
-
     def _flatten_data(self, data: Any) -> list[dict]:
         """
         계층형 구조를 평탄화하며, 검색에 필요한 필드만 보존함.
