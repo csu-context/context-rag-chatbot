@@ -16,11 +16,7 @@ class SemanticCache:
         self.collection = self.db_manager.collection
 
     def _get_valid_collection(self):
-        """
-        다른 프로세스(파이프라인)에 의해 컬렉션이 삭제(flush)되었을 경우,
-        기존의 stale한 collection 객체를 계속 사용하면 'does not exist' 에러가 발생합니다.
-        이를 방지하기 위해 사용 전 컬렉션의 유효성을 검증하고 필요시 재할당합니다.
-        """
+        # 파이프라인이 flush하면 stale 컬렉션 참조가 'does not exist' 에러를 냄 → 사용 전 재검증
         try:
             self.collection.count()
         except Exception:
