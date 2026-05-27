@@ -65,6 +65,34 @@ class BM25Manager(BaseRetriever):
         # N: 명사, V: 용언(동사/형용사), S: 외국어/숫자 추출 및 1글자 노이즈 제거
         return [t.form for t in self.kiwi.tokenize(text) if t.tag.startswith(("N", "V", "S")) and len(t.form) > 1]
 
+    def _flatten_data(self, data: Any) -> list[dict]:
+        flattened = []
+
+        if isinstance(data, list):
+            for item in data:
+                flattened.extend(self._flatten_data(item))
+            return flattened
+
+        if isinstance(data, dict):
+            text_content = data.get(DataFields.TEXT) or data.get(DataFields.CONTENT) or data.get(DataFields.PARENT_TEXT)
+
+            if text_content:
+                node: dict = {
+                    DataFields.CONTENT: text_content,
+                    DataFields.METADATA: data.get(DataFields.METADATA) or {},
+                }
+                # chunk_id가 최상위에 존재하면 보존 (RRF 중복 제거용)
+                if MetadataFields.CHUNK_ID in data:
+                    node[MetadataFields.CHUNK_ID] = data[MetadataFields.CHUNK_ID]
+                flattened.append(node)
+
+            children = data.get(DataFields.CHILDREN)
+            if children and isinstance(children, list):
+                for child in children:
+                    flattened.extend(self._flatten_data(child))
+
+        return flattened
+
     def _get_all_json_files(self) -> list:
         return [f for f in self.data_dir.glob("*.json") if f.name != "manifest.json"]
 
@@ -150,7 +178,7 @@ class BM25Manager(BaseRetriever):
                         except json.JSONDecodeError as e:
                             logger.error(f"JSON 파싱 오류 ({f.name}): {e}")
 
-            new_flattened = BM25IndexBuilder.flatten_data(new_raw_data)
+            new_flattened = self._flatten_data(new_raw_data)
             updated_corpus.extend(new_flattened)
 
             self.corpus_data = updated_corpus
