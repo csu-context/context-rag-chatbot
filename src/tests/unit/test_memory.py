@@ -69,8 +69,9 @@ class TestRAGPipelineMemory:
         assert called_args[3] == ("human", "{question}")
 
     def test_semantic_cache_with_history(self, pipeline, mock_retriever, mock_llm, mock_reranker):
-        """대화 이력이 존재할 때 캐시 조회 및 저장 모두 수행하지 않는지 검증"""
+        """대화 이력이 존재할 때도 캐시를 정상적으로 조회 및 저장하는지 검증"""
         mock_cache = pipeline.cache
+        mock_cache.get.return_value = None
 
         history = [{"role": "user", "content": "질문"}]
         input_data = {"question": "후속 질문", "k": 1, "final_k": 1, "history": history}
@@ -81,7 +82,6 @@ class TestRAGPipelineMemory:
 
         list(pipeline.stream(input_data))
 
-        # 이력 있으면 캐시 조회 안 함 (컨텍스트 오염 방지)
-        mock_cache.get.assert_not_called()
-        # 이력 있으면 캐시 저장 안 함
-        mock_cache.add.assert_not_called()
+        # 캐시의 get과 add가 호출되었음을 검증
+        mock_cache.get.assert_called_once()
+        mock_cache.add.assert_called_once()

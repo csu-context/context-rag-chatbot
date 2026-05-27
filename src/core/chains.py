@@ -27,6 +27,15 @@ class RAGPipeline:
         self.tracing_logger = TracingLogger()
         self.cache = SemanticCache()
 
+    def _build_cache_query(self, query: str, history: list[dict]) -> str:
+        if not history:
+            return query
+
+        # 마지막 6개 메시지만 사용하여 히스토리 문자열 구성
+        recent_history = history[-6:]
+        history_text = "\n".join([f"{msg.get('role', 'unknown')}: {msg.get('content', '')}" for msg in recent_history])
+        return f"[History]\n{history_text}\n[Current Query]\n{query}"
+
     def _perform_retrieval(self, query: str, k: int) -> list[Document]:
         """리트리버 타입에 따른 검색 수행 로직"""
         if hasattr(self.retriever_or_db, "get_relevant_documents"):
@@ -162,12 +171,14 @@ class RAGPipeline:
         retrieval_k = input_dict.get("k", 20)
         final_k = input_dict.get("final_k", 5)
         history = input_dict.get("history", [])
-        use_cache = len(history) == 0
+
+        cache_query = self._build_cache_query(query, history)
+        use_cache = True
 
         with self.tracing_logger.start_session(query=query) as session:
             # 1. Semantic Cache Check
             yield {"stage": "cache", "status": "running"}
-            cached_result = self.cache.get(query) if use_cache else None
+            cached_result = self.cache.get(cache_query) if use_cache else None
             if cached_result:
                 session.data["cache_hit"] = True
                 yield {"stage": "cache", "status": "hit"}
@@ -220,7 +231,7 @@ class RAGPipeline:
                 )
 
             if use_cache:
-                self.cache.add(query, full_answer, docs_for_cache)
+                self.cache.add(cache_query, full_answer, docs_for_cache)
 
             yield {"stage": "citation", "status": "complete", "output": citations_str, "source_documents": final_docs}
 
