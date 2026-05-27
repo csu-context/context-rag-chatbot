@@ -19,7 +19,7 @@ class SyncController:
             # 1. 정합성 점검 및 자가 치유
             st.write("DB 상태를 스캔하고 있습니다...")
             _, report = run_full_diagnostics(silent=True, check_model=False)
-            anomalies = report.get("anomalies", {})
+            anomalies = report.get("db", {}).get("anomalies", {})
             if anomalies and any(anomalies.values()):
                 st.write("이상 데이터 감지: 자동 복구를 진행합니다.")
                 repair_integrity(anomalies)
