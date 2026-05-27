@@ -1,11 +1,13 @@
+import functools
+import json
 import logging
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda
-from src.core.nodes import ContextBuilderNode
 
 from src.common.constants import MetadataFields
 from src.core.cache import SemanticCache
@@ -14,8 +16,27 @@ from src.core.reranker import RerankerFactory
 from src.models.factory import LLMFactory
 from src.utils.citation import format_citations
 from src.utils.logger import TracingLogger
+from src.utils.paths import PROCESSED_DATA_DIR
 
 logger = logging.getLogger(__name__)
+
+
+@functools.lru_cache(maxsize=128)
+def _load_source_json(json_path: Path) -> list | None:
+    """source_id별 JSON 파일을 LRU 캐시로 로드합니다. 동일 경로의 반복 디스크 I/O를 방지합니다."""
+    try:
+        if json_path.exists():
+            with open(json_path, encoding="utf-8") as f:
+                return json.load(f)
+        return None
+    except Exception as e:
+        logger.error(f"JSON 파일 로드 실패: {json_path} - {e}")
+        return None
+
+
+def invalidate_source_json_cache() -> None:
+    """인덱싱으로 JSON 파일이 갱신된 경우 LRU 캐시를 무효화합니다."""
+    _load_source_json.cache_clear()
 
 
 class RAGPipeline:
@@ -28,14 +49,37 @@ class RAGPipeline:
         self.tracing_logger = TracingLogger()
         self.cache = SemanticCache()
 
-    def _build_cache_query(self, query: str, history: list[dict]) -> str:
+    @staticmethod
+    def _build_cache_query(query: str, history: list[dict]) -> str:
         if not history:
             return query
-
-        # 마지막 6개 메시지만 사용하여 히스토리 문자열 구성
         recent_history = history[-6:]
         history_text = "\n".join([f"{msg.get('role', 'unknown')}: {msg.get('content', '')}" for msg in recent_history])
         return f"[History]\n{history_text}\n[Current Query]\n{query}"
+
+    def _resolve_parent_documents(self, docs: list[Document]) -> list[Document]:
+        """자식 청크로 검색된 문서들을 부모 청크의 원문으로 전환합니다."""
+        resolved_docs = []
+
+        for doc in docs:
+            parent_id = doc.metadata.get(MetadataFields.PARENT_ID)
+            source_id = doc.metadata.get(MetadataFields.SOURCE_ID)
+
+            if parent_id and source_id:
+                try:
+                    json_path = PROCESSED_DATA_DIR / f"{source_id}.json"
+                    parents_list = _load_source_json(json_path)
+                    if parents_list:
+                        for p in parents_list:
+                            if p.get("parent_id") == parent_id:
+                                doc.page_content = p.get("parent_text", doc.page_content)
+                                break
+                except Exception as e:
+                    logger.error(f"부모 청크 로드 실패: {e}")
+
+            resolved_docs.append(doc)
+
+        return resolved_docs
 
     def _perform_retrieval(self, query: str, k: int) -> list[Document]:
         """리트리버 타입에 따른 검색 수행 로직"""
@@ -55,14 +99,15 @@ class RAGPipeline:
                             },
                         )
                     )
-            return docs
+            return self._resolve_parent_documents(docs)
 
         # 기존 ChromaDBManager 호환성 유지
         search_results = self.retriever_or_db.search(query_text=query, k=k)
-        return [
+        docs = [
             Document(page_content=res["content"], metadata={**res["metadata"], "score": res["score"]})
             for res in search_results
         ]
+        return self._resolve_parent_documents(docs)
 
     def _format_docs(self, docs: list[Document]) -> str:
         """프롬프트 주입을 위한 컨텍스트 포맷팅"""
@@ -173,7 +218,7 @@ class RAGPipeline:
         final_k = input_dict.get("final_k", 5)
         history = input_dict.get("history", [])
 
-        cache_query = ContextBuilderNode.build_cache_query(query, history)
+        cache_query = self._build_cache_query(query, history)
 
         with self.tracing_logger.start_session(query=query) as session:
             # 1. Semantic Cache Check
