@@ -134,11 +134,10 @@ class ChatController:
             "system_stats": get_system_stats_fn(),
             "status": status,
         }
+        log_kwargs["query"] = st.session_state.current_prompt
         if error:
-            log_kwargs["query"] = st.session_state.current_prompt
             log_kwargs["error"] = str(error)
         else:
-            log_kwargs["query"] = st.session_state.current_prompt
             log_kwargs["answer"] = ui_handler.full_response
             log_kwargs["latencies_per_stage"] = {
                 s: v["end"] - v["start"] for s, v in ui_handler.stage_latencies.items() if "end" in v

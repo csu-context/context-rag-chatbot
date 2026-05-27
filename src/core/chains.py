@@ -162,11 +162,12 @@ class RAGPipeline:
         retrieval_k = input_dict.get("k", 20)
         final_k = input_dict.get("final_k", 5)
         history = input_dict.get("history", [])
+        use_cache = len(history) == 0
 
         with self.tracing_logger.start_session(query=query) as session:
             # 1. Semantic Cache Check
             yield {"stage": "cache", "status": "running"}
-            cached_result = self.cache.get(query) if len(history) == 0 else None
+            cached_result = self.cache.get(query) if use_cache else None
             if cached_result:
                 session.data["cache_hit"] = True
                 yield {"stage": "cache", "status": "hit"}
@@ -218,7 +219,7 @@ class RAGPipeline:
                     }
                 )
 
-            if len(history) == 0:
+            if use_cache:
                 self.cache.add(query, full_answer, docs_for_cache)
 
             yield {"stage": "citation", "status": "complete", "output": citations_str, "source_documents": final_docs}

@@ -144,22 +144,28 @@ def _get_local_files_info() -> dict[str, dict]:
     return local_files_info
 
 
-def _get_db_rel_path_map(db_manager) -> dict[str, list]:
+def _get_db_rel_path_map(db_manager, batch_size: int = 1000) -> dict[str, list]:
     """DB의 메타데이터를 가져와 상대 경로별로 그룹화"""
-    # TODO: 데이터가 수만 건 이상일 경우 페이징 처리 필요
-    all_db_data = db_manager.collection.get(include=["metadatas"])
-    db_metas = all_db_data["metadatas"]
-
     db_rel_path_map = {}
-    for meta in db_metas:
-        rel_path = meta.get(MetadataFields.RELATIVE_PATH)
-        # 하위 호환성: relative_path가 없으면 src_name 활용
-        if not rel_path:
-            rel_path = meta.get(MetadataFields.SRC_NAME, "UNKNOWN")
+    offset = 0
 
-        if rel_path not in db_rel_path_map:
-            db_rel_path_map[rel_path] = []
-        db_rel_path_map[rel_path].append(meta)
+    while True:
+        batch = db_manager.collection.get(include=["metadatas"], limit=batch_size, offset=offset)
+        db_metas = batch["metadatas"]
+
+        for meta in db_metas:
+            rel_path = meta.get(MetadataFields.RELATIVE_PATH)
+            # 하위 호환성: relative_path가 없으면 src_name 활용
+            if not rel_path:
+                rel_path = meta.get(MetadataFields.SRC_NAME, "UNKNOWN")
+            if rel_path not in db_rel_path_map:
+                db_rel_path_map[rel_path] = []
+            db_rel_path_map[rel_path].append(meta)
+
+        offset += batch_size
+        if len(db_metas) < batch_size:
+            break
+
     return db_rel_path_map
 
 
