@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from langchain_core.documents import Document
 
-from src.core.chains import RAGPipeline
+from src.core.chains import ContextBuilderNode, RAGPipeline
 
 
 class TestRAGPipelineMemory:
@@ -34,7 +34,7 @@ class TestRAGPipelineMemory:
     def test_build_cache_query_empty_history(self, pipeline):
         """대화 이력이 없을 때 캐시 쿼리가 원본 쿼리와 동일하게 빌드되는지 확인"""
         query = "테스트 질문"
-        cache_query = pipeline._build_cache_query(query, [])
+        cache_query = ContextBuilderNode.build_cache_query(query, [])
         assert cache_query == query
 
     def test_build_cache_query_with_history(self, pipeline):
@@ -44,7 +44,7 @@ class TestRAGPipelineMemory:
             {"role": "user", "content": "첫 번째 질문"},
             {"role": "assistant", "content": "첫 번째 답변"},
         ]
-        cache_query = pipeline._build_cache_query(query, history)
+        cache_query = ContextBuilderNode.build_cache_query(query, history)
         assert "[History]" in cache_query
         assert "user: 첫 번째 질문" in cache_query
         assert "assistant: 첫 번째 답변" in cache_query
@@ -64,7 +64,7 @@ class TestRAGPipelineMemory:
             {"role": "user", "content": "유지될 질문 4"},
             {"role": "assistant", "content": "유지될 답변 4"},
         ]
-        cache_query = pipeline._build_cache_query(query, history)
+        cache_query = ContextBuilderNode.build_cache_query(query, history)
         assert "버려질 질문 1" not in cache_query
         assert "유지될 질문 2" in cache_query
         assert "유지될 질문 4" in cache_query
