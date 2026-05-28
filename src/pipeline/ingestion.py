@@ -76,7 +76,19 @@ def _chunk_manual_pdf(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
         meta_for_children[MetadataFields.SEC_TITLE] = sec_title
         meta_for_children[MetadataFields.HEADER_PATH] = sec_title
 
-        children = chunker.split_into_children(sec["content"], parent_id, meta_for_children)
+        # 표 섹션은 분할 없이 단일 청크로 저장 — MarkdownTableProtector 토큰이
+        # child_splitter에 의해 분할되면 복원 불가능하므로 전체를 하나의 child로 처리
+        if sec["metadata"].get(MetadataFields.IS_TABLE, False):
+            child_id = f"{parent_id}_c0"
+            child_meta = {
+                **meta_for_children,
+                MetadataFields.CHUNK_ID: child_id,
+                MetadataFields.PARENT_ID: parent_id,
+                MetadataFields.IS_TABLE: True,
+            }
+            children = [{"chunk_id": child_id, "metadata": child_meta, "text": sec["content"]}]
+        else:
+            children = chunker.split_into_children(sec["content"], parent_id, meta_for_children)
 
         if children:
             parent_metadata = {
