@@ -51,14 +51,18 @@ class RAGPipeline:
         self.cache = SemanticCache()
 
     def _resolve_parent_documents(self, docs: list[Document]) -> list[Document]:
-        """자식 청크로 검색된 문서들을 부모 청크의 원문으로 전환합니다."""
+        """자식 청크로 검색된 문서들을 부모 청크의 원문으로 전환하며, 동일 부모 중복을 제거합니다."""
         resolved_docs = []
+        seen_parents = set()
 
         for doc in docs:
             parent_id = doc.metadata.get(MetadataFields.PARENT_ID)
             source_id = doc.metadata.get(MetadataFields.SOURCE_ID)
 
             if parent_id and source_id:
+                if parent_id in seen_parents:
+                    continue  # 이미 부모 청크가 추가되었으므로 중복 자식은 생략
+                
                 try:
                     json_path = PROCESSED_DATA_DIR / f"{source_id}.json"
                     parents_list = _load_source_json(json_path)
@@ -66,6 +70,7 @@ class RAGPipeline:
                         for p in parents_list:
                             if p.get("parent_id") == parent_id:
                                 doc.page_content = p.get("parent_text", doc.page_content)
+                                seen_parents.add(parent_id)
                                 break
                 except Exception as e:
                     logger.error(f"부모 청크 로드 실패: {e}")
