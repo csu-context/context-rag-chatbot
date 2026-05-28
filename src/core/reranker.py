@@ -171,7 +171,7 @@ class CrossEncoderReranker(BaseReranker):
     def _predict_with_cpu_fallback(self, pairs: list) -> list:
         try:
             model = self._load_model()
-            scores_pred = model.predict(pairs)
+            scores_pred = model.predict(pairs, batch_size=settings.RERANKER_BATCH_SIZE)
             return scores_pred.tolist() if hasattr(scores_pred, "tolist") else list(scores_pred)
         except RuntimeError as e:
             err_msg = str(e).lower()
@@ -182,7 +182,7 @@ class CrossEncoderReranker(BaseReranker):
                     self._model = None
                 try:
                     model = self._load_model()
-                    scores_pred = model.predict(pairs)
+                    scores_pred = model.predict(pairs, batch_size=settings.RERANKER_BATCH_SIZE)
                     return scores_pred.tolist() if hasattr(scores_pred, "tolist") else list(scores_pred)
                 except Exception as cpu_err:
                     logger.error(f"[{self.name}] Failed to run even on CPU fallback: {cpu_err}")
