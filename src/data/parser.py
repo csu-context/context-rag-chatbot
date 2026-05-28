@@ -91,6 +91,44 @@ class ManualParser:
             }
         )
 
+    @staticmethod
+    def _collect_chars_from_span(span: dict) -> list[tuple[float, float, str, float, float]]:
+        """span에서 (y, x0, char, size, x1) 튜플 목록을 수집한다."""
+        size = span["size"]
+        chars = []
+        if "chars" in span:
+            for ch in span["chars"]:
+                c = ch["c"]
+                if c.strip():
+                    x0 = ch["origin"][0]
+                    y0 = ch["origin"][1]
+                    x1 = ch["bbox"][2] if "bbox" in ch else x0 + size * 0.55
+                    chars.append((round(y0, 1), round(x0, 1), c, size, round(x1, 1)))
+        else:
+            x, y = span["origin"]
+            char_w = size * 0.55
+            for i, c in enumerate(span["text"]):
+                if c.strip():
+                    x0 = x + i * char_w
+                    chars.append((round(y, 1), round(x0, 1), c, size, round(x0 + char_w, 1)))
+        return chars
+
+    @staticmethod
+    def _join_sorted_chars(all_chars: list[tuple[float, float, str, float, float]]) -> str:
+        """(y, x0, char, size, x1) 목록을 읽기 순서대로 조합해 문자열로 반환한다."""
+        result: list[str] = []
+        prev_y, prev_x1, prev_size = all_chars[0][0], -1.0, all_chars[0][3]
+        for y, x0, c, size, x1 in all_chars:
+            if abs(y - prev_y) > size * 0.5:
+                if result and result[-1] != " ":
+                    result.append(" ")
+                prev_y, prev_x1 = y, -1.0
+            elif prev_x1 != -1.0 and x0 - prev_x1 > prev_size * 0.35:
+                result.append(" ")
+            result.append(c)
+            prev_x1, prev_size = x1, size
+        return "".join(result).strip()
+
     def _extract_block_info(self, block: dict) -> tuple[str, float]:
         """블록 내 텍스트와 최대 폰트 크기를 추출.
 
@@ -100,58 +138,20 @@ class ManualParser:
         if "lines" not in block:
             return "", 0.0
 
-        # (y, x, char, size) 수집
-        all_chars: list[tuple[float, float, str, float]] = []
+        all_chars: list[tuple[float, float, str, float, float]] = []
         max_size = 0.0
 
         for line in block["lines"]:
             for span in line["spans"]:
-                size = span["size"]
-                if size > max_size:
-                    max_size = size
-                if "chars" in span:
-                    # rawdict 모드: 문자별 실제 좌표 + bbox 너비 사용
-                    for ch in span["chars"]:
-                        c = ch["c"]
-                        if c.strip():
-                            x0 = ch["origin"][0]
-                            y0 = ch["origin"][1]
-                            # bbox[2]: 문자 우측 끝 (실제 advance width)
-                            x1 = ch["bbox"][2] if "bbox" in ch else x0 + size * 0.55
-                            all_chars.append((round(y0, 1), round(x0, 1), c, size, round(x1, 1)))
-                else:
-                    # dict 모드 fallback
-                    x, y = span["origin"]
-                    char_w = size * 0.55
-                    for i, c in enumerate(span["text"]):
-                        if c.strip():
-                            x0 = x + i * char_w
-                            all_chars.append((round(y, 1), round(x0, 1), c, size, round(x0 + char_w, 1)))
+                if span["size"] > max_size:
+                    max_size = span["size"]
+                all_chars.extend(self._collect_chars_from_span(span))
 
         if not all_chars:
             return "", round(max_size, 1)
 
         all_chars.sort(key=lambda v: (v[0], v[1]))
-
-        # 문자 조합: y 변화 → 줄바꿈 공백, bbox 간 gap > 문자폭 0.35배 → 공백
-        result: list[str] = []
-        prev_y, prev_x1, prev_size = all_chars[0][0], -1.0, all_chars[0][3]
-
-        for y, x0, c, size, x1 in all_chars:
-            if abs(y - prev_y) > size * 0.5:
-                if result and result[-1] != " ":
-                    result.append(" ")
-                prev_y = y
-                prev_x1 = -1.0
-            elif prev_x1 != -1.0:
-                gap = x0 - prev_x1
-                if gap > prev_size * 0.35:
-                    result.append(" ")
-            result.append(c)
-            prev_x1 = x1
-            prev_size = size
-
-        return "".join(result).strip(), round(max_size, 1)
+        return self._join_sorted_chars(all_chars), round(max_size, 1)
 
     def _parse_pdf(self) -> list[dict[str, Any]]:
         """폰트 크기 분석 기반 PDF 파싱 로직"""
