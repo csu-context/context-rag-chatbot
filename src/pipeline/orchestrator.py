@@ -106,17 +106,12 @@ class PipelineOrchestrator:
     ) -> tuple[list[Path], list[str], dict[str, Any]]:
         """현재 파일 상태와 이전 상태를 비교하여 변경 사항(Delta)을 계산합니다."""
         old_files = old_manifest.get("files", {})
+        old_files_nfc = {normalize_to_nfc(k): v for k, v in old_files.items()}
 
         new_files = {}
         for f in all_files:
             rel_path = normalize_path_to_nfc(f.relative_to(RAW_DATA_DIR))
-            old_info = old_files.get(rel_path, {})
-            if not old_info:
-                # NFD-NFC 매치 백업
-                for k, v in old_files.items():
-                    if normalize_to_nfc(k) == rel_path:
-                        old_info = v
-                        break
+            old_info = old_files.get(rel_path) or old_files_nfc.get(rel_path, {})
             file_parser_type = old_info.get("parser_type", self.parser_type)
             h = generate_file_hash(f, file_parser_type)
             new_files[rel_path] = {"hash": h, "parser_type": file_parser_type}
@@ -287,14 +282,7 @@ class PipelineOrchestrator:
         logger.info(f"단일 파일 개별 동기화 완료: {relative_path}")
         return True
 
-    def run_ingestion(  # noqa: C901
-        self,
-        force: bool = False,
-        parser_type: str | None = None,
-        progress_callback=None,
-        target_files: list[Path] | None = None,
-    ):
-        """전체 데이터 구축 파이프라인 실행"""
+    def _update_parser_if_changed(self, parser_type: str | None) -> None:
         if parser_type:
             parser_type_lower = parser_type.lower()
             if self.parser_type != parser_type_lower:
@@ -303,88 +291,94 @@ class PipelineOrchestrator:
                 self.strategy = self._get_parser_strategy()
                 self.ingestion_pipeline.strategy = self.strategy
 
+    def _prepare_sync_plan(
+        self, force: bool, all_files: list[Path], old_manifest: dict[str, Any]
+    ) -> tuple[list[Path], list[str], list[str] | None, dict[str, Any]]:
+        """force/delta 모드에 따라 처리 목록과 삭제 목록을 계산합니다."""
+        if force:
+            logger.info("강제 동기화가 요청되었습니다. 모든 기존 데이터를 완전히 삭제하고 전체 재색인을 수행합니다.")
+            self._reset_all_data()
+            new_files = {
+                normalize_path_to_nfc(f.relative_to(RAW_DATA_DIR)): {
+                    "hash": generate_file_hash(f, self.parser_type),
+                    "parser_type": self.parser_type,
+                }
+                for f in all_files
+            }
+            new_manifest = {"version": "2.0", "global_parser_type": self.parser_type, "files": new_files}
+            return all_files, [], None, new_manifest
+
+        files_to_process, source_ids_to_delete, new_manifest = self._calculate_delta(all_files, old_manifest)
+        files_to_process_relative = [str(f.relative_to(RAW_DATA_DIR)) for f in files_to_process]
+        old_files_keys = old_manifest.get("files", {}).keys()
+        new_files_keys = new_manifest.get("files", {}).keys()
+        relative_paths_to_delete = [p for p in old_files_keys if p not in new_files_keys]
+        relative_paths_to_delete += files_to_process_relative
+        return files_to_process, source_ids_to_delete, relative_paths_to_delete, new_manifest
+
+    def _apply_target_filter(
+        self,
+        target_files: list[Path],
+        files_to_process: list[Path],
+        source_ids_to_delete: list[str],
+        new_manifest: dict[str, Any],
+        old_manifest: dict[str, Any],
+    ) -> tuple[list[Path], list[str]]:
+        """target_files 부분 동기화 필터를 적용합니다."""
+        target_paths = {p.resolve() for p in target_files}
+        target_names = {p.name for p in target_files}
+        old_files = old_manifest.get("files", {})
+
+        filtered_files = [f for f in files_to_process if f.resolve() in target_paths]
+        filtered_ids = [
+            sid
+            for sid in source_ids_to_delete
+            if any(info.get("hash") == sid and Path(rel).name in target_names for rel, info in old_files.items())
+        ]
+
+        if new_manifest and "files" in new_manifest:
+            for rel_path in list(new_manifest["files"].keys()):
+                if (RAW_DATA_DIR / rel_path).resolve() not in target_paths:
+                    if rel_path in old_files:
+                        new_manifest["files"][rel_path] = old_files[rel_path]
+                    else:
+                        new_manifest["files"].pop(rel_path, None)
+
+        return filtered_files, filtered_ids
+
+    def run_ingestion(
+        self,
+        force: bool = False,
+        parser_type: str | None = None,
+        progress_callback=None,
+        target_files: list[Path] | None = None,
+    ):
+        """전체 데이터 구축 파이프라인 실행"""
+        self._update_parser_if_changed(parser_type)
         logger.info(f"데이터 구축 파이프라인을 시작합니다. (전략: {self.parser_type}, 강제 재색인: {force})")
 
         with self.tracing_logger.start_session(type="ingestion", parser_type=self.parser_type) as session:
             with session.trace_step("scan_and_check_updates") as step:
                 all_files = self.ingestion_pipeline.scan_files()
                 old_manifest = self._load_manifest()
-                relative_paths_to_delete = []
 
                 if not all_files and not old_manifest:
                     logger.warning("처리할 파일이 없고 이전 기록도 없습니다.")
                     session.data["status"] = "no_files"
                     return
 
-                if force:
-                    logger.info(
-                        "강제 동기화가 요청되었습니다. 모든 기존 데이터를 완전히 삭제하고 전체 재색인을 수행합니다."
-                    )
+                files_to_process, source_ids_to_delete, relative_paths_to_delete, new_manifest = (
+                    self._prepare_sync_plan(force, all_files, old_manifest)
+                )
 
-                    self._reset_all_data()
-
-                    files_to_process = all_files
-                    source_ids_to_delete = []  # 이미 물리적으로 모두 삭제했으므로 부분 삭제 프로세스는 건너뜀
-                    relative_paths_to_delete = None
-
-                    new_files = {}
-                    for f in all_files:
-                        rel_path = normalize_path_to_nfc(f.relative_to(RAW_DATA_DIR))
-                        new_files[rel_path] = {
-                            "hash": generate_file_hash(f, self.parser_type),
-                            "parser_type": self.parser_type,
-                        }
-                    new_manifest = {"version": "2.0", "global_parser_type": self.parser_type, "files": new_files}
-                else:
-                    files_to_process, source_ids_to_delete, new_manifest = self._calculate_delta(
-                        all_files, old_manifest
-                    )
-                    # 파서 변경 대응: 업데이트 대상 파일들은 상대 경로 기준으로도 삭제를 병행
-                    # (Delete-before-Insert 원자성 확보)
-                    files_to_process_relative = [str(f.relative_to(RAW_DATA_DIR)) for f in files_to_process]
-                    # 이미 source_ids_to_delete로 처리되는 항목(변경분)은 제외하고,
-                    # 삭제된 파일들만 relative_paths_to_delete에 추가
-                    old_files_keys = old_manifest.get("files", {}).keys()
-                    new_files_keys = new_manifest.get("files", {}).keys()
-                    relative_paths_to_delete = [p for p in old_files_keys if p not in new_files_keys]
-                    # 파서 변경 대응을 위해 현재 처리 대상인 파일들의 상대 경로도 추가 (중복되더라도 DB쪽은 안전)
-                    relative_paths_to_delete += files_to_process_relative
-
-                # target_files 부분 동기화 필터링 적용
                 if target_files is not None:
-                    target_paths = {p.resolve() for p in target_files}
-                    filtered_files_to_process = [f for f in files_to_process if f.resolve() in target_paths]
-
-                    # target_files에 해당하지 않는 문서들의 구 해시값은 delete 목록에서 보존
-                    target_names = {p.name for p in target_files}
-                    filtered_source_ids_to_delete = []
-                    for sid in source_ids_to_delete:
-                        old_files = old_manifest.get("files", {})
-                        is_target = False
-                        for rel_path, info in old_files.items():
-                            if info.get("hash") == sid and Path(rel_path).name in target_names:
-                                is_target = True
-                                break
-                        if is_target:
-                            filtered_source_ids_to_delete.append(sid)
-
-                    # new_manifest 내에서 처리되지 않은 문서의 메타데이터 보존
-                    if new_manifest and "files" in new_manifest:
-                        for rel_path in list(new_manifest["files"].keys()):
-                            full_path = RAW_DATA_DIR / rel_path
-                            if full_path.resolve() not in target_paths:
-                                if rel_path in old_manifest.get("files", {}):
-                                    new_manifest["files"][rel_path] = old_manifest["files"][rel_path]
-                                else:
-                                    new_manifest["files"].pop(rel_path, None)
-
-                    files_to_process = filtered_files_to_process
-                    source_ids_to_delete = filtered_source_ids_to_delete
+                    files_to_process, source_ids_to_delete = self._apply_target_filter(
+                        target_files, files_to_process, source_ids_to_delete, new_manifest, old_manifest
+                    )
 
                 step["total_files"] = len(all_files)
                 step["files_to_process"] = len(files_to_process)
                 step["files_to_delete_in_db"] = len(source_ids_to_delete)
-
                 logger.info(
                     f"파일 스캔 완료. 전체: {len(all_files)}, "
                     f"신규/변경/강제: {len(files_to_process)}, 삭제: {len(source_ids_to_delete)}"
@@ -394,7 +388,6 @@ class PipelineOrchestrator:
                     logger.info("변경 사항이 없으므로 데이터 구축 작업을 건너뜁니다.")
                     session.data["status"] = "no_changes"
                     if force:
-                        # 강제 초기화 후 파일이 없는 경우에도 manifest를 갱신하여 일관성 유지
                         self._save_manifest(new_manifest)
                     return
 

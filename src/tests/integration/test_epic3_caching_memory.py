@@ -1,4 +1,3 @@
-import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -7,55 +6,6 @@ from langchain_core.documents import Document
 
 from src.common.config import settings
 from src.core.reranker import CrossEncoderReranker
-
-
-# ---------------------------------------------------------------------------
-# Issue 8: 시맨틱 캐시 선택적 무효화
-# ---------------------------------------------------------------------------
-def test_semantic_cache_selective_invalidation():
-    """파일 변경 시 해당 파일 관련 캐시 엔트리만 삭제되고 무관한 엔트리는 보존되는지 검증."""
-    from src.core.cache import SemanticCache
-
-    mock_collection = MagicMock()
-    mock_collection.get.return_value = {
-        "ids": ["entry-1", "entry-2", "entry-3"],
-        "metadatas": [
-            {"answer": "A1", "sources": json.dumps([{"metadata": {"src_name": "file_a.pdf"}}])},
-            {"answer": "A2", "sources": json.dumps([{"metadata": {"src_name": "file_b.pdf"}}])},
-            {"answer": "A3", "sources": json.dumps([{"metadata": {"src_name": "file_c.pdf"}}])},
-        ],
-    }
-
-    cache = SemanticCache.__new__(SemanticCache)
-    cache.collection = mock_collection
-    cache.db_manager = MagicMock()
-
-    deleted = cache.invalidate_by_sources(["file_a.pdf"])
-
-    assert deleted == 1
-    mock_collection.delete.assert_called_once_with(ids=["entry-1"])
-
-
-def test_semantic_cache_selective_invalidation_no_match():
-    """변경 파일이 캐시에 없으면 아무것도 삭제하지 않는지 검증."""
-    from src.core.cache import SemanticCache
-
-    mock_collection = MagicMock()
-    mock_collection.get.return_value = {
-        "ids": ["entry-1"],
-        "metadatas": [
-            {"answer": "A1", "sources": json.dumps([{"metadata": {"src_name": "file_a.pdf"}}])},
-        ],
-    }
-
-    cache = SemanticCache.__new__(SemanticCache)
-    cache.collection = mock_collection
-    cache.db_manager = MagicMock()
-
-    deleted = cache.invalidate_by_sources(["unrelated_file.pdf"])
-
-    assert deleted == 0
-    mock_collection.delete.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

@@ -310,14 +310,15 @@ class ChromaDBManager(ChromaConnectionMixin, BaseRetriever):
         except Exception:
             return 0
 
+    def _normalized_name_variants(self, source_name: str) -> list[str]:
+        return [normalize_to_nfc(source_name), normalize_to_nfd(source_name)]
+
     def get_source_count(self, source_name: str) -> int:
         """특정 소스 파일명(metadata.src_name)에 해당하는 청크 수를 반환합니다."""
-        nfc_name = normalize_to_nfc(source_name)
-        nfd_name = normalize_to_nfd(source_name)
         try:
             collection = self._get_valid_collection()
             results = collection.get(
-                where={MetadataFields.SRC_NAME: {"$in": [nfc_name, nfd_name]}},
+                where={MetadataFields.SRC_NAME: {"$in": self._normalized_name_variants(source_name)}},
                 include=[],  # 실제 데이터는 필요 없으므로 빈 리스트
             )
             return len(results["ids"])
@@ -327,12 +328,10 @@ class ChromaDBManager(ChromaConnectionMixin, BaseRetriever):
 
     def get_source_chunks(self, source_name: str) -> list[dict[str, Any]]:
         """특정 소스 파일명(metadata.src_name)에 해당하는 청크 텍스트와 메타데이터 목록을 반환합니다."""
-        nfc_name = normalize_to_nfc(source_name)
-        nfd_name = normalize_to_nfd(source_name)
         try:
             collection = self._get_valid_collection()
             results = collection.get(
-                where={MetadataFields.SRC_NAME: {"$in": [nfc_name, nfd_name]}},
+                where={MetadataFields.SRC_NAME: {"$in": self._normalized_name_variants(source_name)}},
                 include=["documents", "metadatas"],
             )
             chunks = []
