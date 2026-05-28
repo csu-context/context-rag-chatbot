@@ -10,18 +10,6 @@ from src.common.config import settings
 logger = logging.getLogger(__name__)
 
 
-def check_repetition(full_response: str) -> tuple[bool, str]:
-    """동일 라인이 15자 이상이고 3회 이상 반복되면 True와 해당 라인을 반환"""
-    lines = full_response.split("\n")
-    line_counts: dict[str, int] = {}
-    for line in lines:
-        line_trimmed = line.strip()
-        if len(line_trimmed) >= 15:
-            line_counts[line_trimmed] = line_counts.get(line_trimmed, 0) + 1
-            if line_counts[line_trimmed] >= 3:
-                return True, line_trimmed
-    return False, ""
-
 
 def _trim_chat_history() -> None:
     max_messages = settings.MAX_CHAT_HISTORY_TURNS * 2
@@ -158,20 +146,6 @@ class StreamResponder:
                         break
 
                     st.session_state.stream_steps.append(step)
-
-                    if step.get("stage") == "generation" and step.get("status") == "streaming":
-                        new_text = step.get("output", "")
-                        temp_response = self.full_response + new_text
-                        has_repetition, repeated_line = check_repetition(temp_response)
-                        if has_repetition:
-                            logger.warning(f"동일 라인 반복 감지로 답변 생성 중단: '{repeated_line}'")
-                            self.full_response += (
-                                "\n\n[안내] 동일한 문장/라인이 반복되어 답변 생성이 안전하게 중단되었습니다."
-                            )
-                            self.response_container.markdown(self.full_response)
-                            st.session_state.is_generating = False
-                            st.session_state.stop_generation = True
-                            break
 
                     self.process_step(step)
 
