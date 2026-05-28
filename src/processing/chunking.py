@@ -158,10 +158,10 @@ class HierarchicalChunker:
             has_table = "@@TABLE_" in child_text
 
             restored_text = MarkdownTableProtector.restore_tables(child_text, tables).strip()
-            
+
             child_page_breaks = restored_text.count("<!-- page break -->")
             clean_text = restored_text.replace("<!-- page break -->", "").strip()
-            
+
             if not clean_text:
                 current_child_page += child_page_breaks
                 continue
@@ -189,7 +189,7 @@ class HierarchicalChunker:
                     "text": clean_text,
                 }
             )
-            
+
             current_child_page += child_page_breaks
 
         return children_list
@@ -203,7 +203,7 @@ class HierarchicalChunker:
 
         for doc in header_docs:
             page_breaks_in_header = doc.page_content.count("<!-- page break -->")
-            
+
             if not doc.page_content.strip():
                 current_page += page_breaks_in_header
                 continue
@@ -247,7 +247,7 @@ class HierarchicalChunker:
                     MetadataFields.PARSER: base_metadata.get(MetadataFields.PARSER, "manual"),
                     MetadataFields.RELATIVE_PATH: base_metadata.get(MetadataFields.RELATIVE_PATH, "UNKNOWN"),
                 }
-                
+
                 clean_p_text = p_text.replace("<!-- page break -->", "").strip()
 
                 hierarchical_data.append(
@@ -258,7 +258,7 @@ class HierarchicalChunker:
                         "children": children_list,
                     }
                 )
-                
+
                 current_page += page_breaks_in_parent
 
         return hierarchical_data
