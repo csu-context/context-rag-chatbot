@@ -160,6 +160,11 @@ class HierarchicalChunker:
             restored_text = MarkdownTableProtector.restore_tables(child_text, tables).strip()
 
             child_page_breaks = restored_text.count("<!-- page break -->")
+            if idx > 0:
+                # 이전 child split 끝 overlap 구간과 중복된 마커만 제거
+                prev_tail = merged_docs[idx - 1][-self.child_chunk_overlap :]
+                child_page_breaks -= prev_tail.count("<!-- page break -->")
+            child_page_breaks = max(0, child_page_breaks)
             clean_text = restored_text.replace("<!-- page break -->", "").strip()
 
             if not clean_text:
@@ -219,7 +224,7 @@ class HierarchicalChunker:
             # 부모(Parent) 단위로 한 번 더 분할 (너무 긴 문맥 단위 처리)
             parent_splits = self.parent_splitter.split_text(doc.page_content)
 
-            for p_text in parent_splits:
+            for p_idx, p_text in enumerate(parent_splits):
                 parent_id = str(uuid.uuid4())
 
                 meta_for_children = base_metadata.copy()
@@ -230,6 +235,12 @@ class HierarchicalChunker:
                 children_list = self.split_into_children(p_text, parent_id, meta_for_children)
 
                 page_breaks_in_parent = p_text.count("<!-- page break -->")
+                if p_idx > 0:
+                    # 이전 split 끝 overlap 구간에도 포함된 마커만 중복으로 제거
+                    # (RecursiveCharacterTextSplitter가 이전 split 마지막 overlap 문자를 다음 split 앞에 복사하므로)
+                    prev_tail = parent_splits[p_idx - 1][-self.parent_chunk_overlap :]
+                    page_breaks_in_parent -= prev_tail.count("<!-- page break -->")
+                page_breaks_in_parent = max(0, page_breaks_in_parent)
 
                 if not children_list:
                     current_page += page_breaks_in_parent
