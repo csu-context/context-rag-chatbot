@@ -59,7 +59,9 @@ class LLMFactory:
                     f"기본 설정({LLMDefaults.CLAUDE_DEFAULT})으로 Fallback 합니다. "
                     "보안 경고: 외부 API 호출이 허용되어 있습니다 (ALLOW_EXTERNAL_API=True)."
                 )
-                return ClaudeModel(model_name=LLMDefaults.CLAUDE_DEFAULT, api_key=settings.ANTHROPIC_API_KEY, temperature=temp_)
+                return ClaudeModel(
+                    model_name=LLMDefaults.CLAUDE_DEFAULT, api_key=settings.ANTHROPIC_API_KEY, temperature=temp_
+                )
 
     @staticmethod
     def create_llm_with_fallback(model_type: str | None = None, model_name: str | None = None, **kwargs):

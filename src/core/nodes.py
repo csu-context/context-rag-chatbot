@@ -71,4 +71,3 @@ class ContextBuilderNode:
             logger.warning(f"컨텍스트 토큰 한도 초과: {len(docs)}개 → {len(kept)}개 문서로 트리밍")
 
         return kept
-
