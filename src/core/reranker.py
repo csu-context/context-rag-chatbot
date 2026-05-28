@@ -101,17 +101,15 @@ class CrossEncoderReranker(BaseReranker):
     _model: CrossEncoder | None = None
     _singleton_lock = threading.Lock()
 
-    DEFAULT_MODEL_NAME = "cross-encoder/ms-marco-MiniLM-L-6-v2"
-
     def __init__(
         self,
-        model_name: str = DEFAULT_MODEL_NAME,
+        model_name: str | None = None,
         top_k: int = 5,
         threshold: float | None = None,
         device: str | None = None,
     ):
         super().__init__(name="Local CrossEncoder", top_k=top_k, threshold=threshold or 0.3)
-        self.model_name = model_name
+        self.model_name = model_name or settings.RERANKER_MODEL_NAME
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
 
         if threshold is None:
@@ -123,7 +121,7 @@ class CrossEncoderReranker(BaseReranker):
         model_lower = self.model_name.lower()
         if "bge" in model_lower:
             self.threshold = 0.4
-        elif "skesarmom" in model_lower or "kor" in model_lower:
+        elif "ko-reranker" in model_lower or "skesarmom" in model_lower or "kor" in model_lower:
             self.threshold = 0.5
         else:
             self.threshold = 0.45
@@ -131,7 +129,7 @@ class CrossEncoderReranker(BaseReranker):
     @classmethod
     def get_instance(
         cls,
-        model_name: str = DEFAULT_MODEL_NAME,
+        model_name: str | None = None,
         top_k: int = 5,
         threshold: float | None = None,
         device: str | None = None,
@@ -168,6 +166,28 @@ class CrossEncoderReranker(BaseReranker):
                 raise
         return self._model
 
+    def _predict_with_cpu_fallback(self, pairs: list) -> list:
+        try:
+            model = self._load_model()
+            scores_pred = model.predict(pairs)
+            return scores_pred.tolist() if hasattr(scores_pred, "tolist") else list(scores_pred)
+        except RuntimeError as e:
+            err_msg = str(e).lower()
+            if self.device != "cpu" and any(x in err_msg for x in ["cuda", "mps", "device", "out of memory", "oom"]):
+                logger.warning(f"[{self.name}] GPU/MPS error detected: {e}. Falling back to CPU mode...")
+                self.device = "cpu"
+                with self._singleton_lock:
+                    self._model = None
+                try:
+                    model = self._load_model()
+                    scores_pred = model.predict(pairs)
+                    return scores_pred.tolist() if hasattr(scores_pred, "tolist") else list(scores_pred)
+                except Exception as cpu_err:
+                    logger.error(f"[{self.name}] Failed to run even on CPU fallback: {cpu_err}")
+                    raise cpu_err
+            else:
+                raise
+
     def rerank(
         self,
         query: str,
@@ -175,7 +195,8 @@ class CrossEncoderReranker(BaseReranker):
         top_k: int | None = None,
         threshold: float | None = None,
     ) -> RerankResult:
-        effective_top_k = top_k or self.top_k
+        # RAG 응답 시간 5초 이내 사수를 위해 최종 제공 문서를 엄격하게 최대 RERANKER_MAX_DOCS개로 하드캡(Hard-cap) 제한
+        effective_top_k = min(settings.RERANKER_MAX_DOCS, top_k or self.top_k)
         effective_threshold = threshold if threshold is not None else self.threshold
 
         if len(documents) < 2:
@@ -189,27 +210,7 @@ class CrossEncoderReranker(BaseReranker):
         pairs = [(query, doc.page_content) for doc in documents]
 
         start_time = time.time()
-        try:
-            model = self._load_model()
-            scores_pred = model.predict(pairs)
-            raw_scores = scores_pred.tolist() if hasattr(scores_pred, "tolist") else list(scores_pred)
-        except RuntimeError as e:
-            err_msg = str(e).lower()
-            # CUDA, MPS, OOM, Device 관련 에러가 발생한 경우 CPU로 폴백
-            if self.device != "cpu" and any(x in err_msg for x in ["cuda", "mps", "device", "out of memory", "oom"]):
-                logger.warning(f"[{self.name}] GPU/MPS error detected: {e}. Falling back to CPU mode...")
-                self.device = "cpu"
-                with self._singleton_lock:
-                    self._model = None  # 기존 GPU 모델 언로드 유도
-                try:
-                    model = self._load_model()
-                    scores_pred = model.predict(pairs)
-                    raw_scores = scores_pred.tolist() if hasattr(scores_pred, "tolist") else list(scores_pred)
-                except Exception as cpu_err:
-                    logger.error(f"[{self.name}] Failed to run even on CPU fallback: {cpu_err}")
-                    raise cpu_err
-            else:
-                raise
+        raw_scores = self._predict_with_cpu_fallback(pairs)
 
         elapsed_time = time.time() - start_time
         # ms-marco 등 raw logit(범위 -10~15)을 [0, 1]로 정규화
@@ -378,5 +379,5 @@ class RerankerFactory:
             logger.info("Jina 리랭커를 사용합니다.")
             return JinaReranker(top_k=top_k)
         else:
-            logger.info("로컬 CrossEncoder 리랭커를 사용합니다.")
-            return CrossEncoderReranker.get_instance()
+            logger.info(f"로컬 CrossEncoder 리랭커를 사용합니다. (모델: {settings.RERANKER_MODEL_NAME})")
+            return CrossEncoderReranker.get_instance(model_name=settings.RERANKER_MODEL_NAME, top_k=top_k)

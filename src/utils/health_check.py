@@ -266,7 +266,6 @@ def repair_integrity(anomalies: dict, target_parser: str | None = None):
     if not anomalies:
         return
 
-    from src.controllers.sync_controller import SyncController
     from src.pipeline import PipelineOrchestrator
 
     orchestrator = PipelineOrchestrator()
@@ -299,9 +298,7 @@ def repair_integrity(anomalies: dict, target_parser: str | None = None):
                 parser_type = _get_parser_type(db_data["metadatas"][0])
 
             logger.info(f"  재색인 파일 ({rel_path}) | 적용 파서: {parser_type}")
-            SyncController.trigger_single_file_sync(
-                file_name=file_name, active_parser=parser_type, clear_cache_callback=lambda: None
-            )
+            orchestrator.update_file_parser(file_name, parser_type)
 
     logger.info("정합성 복구 작업이 완료되었습니다.")
 

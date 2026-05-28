@@ -48,38 +48,24 @@ class BGEChromaEmbeddingFunction(EmbeddingFunction):
         return embeddings.tolist()
 
 
-class ChromaDBManager(BaseRetriever):
-    _shared_client = None  # 동일 프로세스 내에서 중복 클라이언트 생성 및 파일 락 충돌 방지를 위한 공유 클라이언트
+class ChromaConnectionMixin:
+    """ChromaDB 연결, 재시도 및 클라이언트 세션 관리를 담당하는 Mixin 클래스"""
 
-    def __init__(self, collection_name: str = "rag_collection"):
-        """
-        ChromaDB 클라이언트 및 컬렉션을 초기화합니다.
-        환경 변수 CHROMA_SERVER_HOST 존재 여부에 따라 로컬(Persistent) 또는 서버(Http) 모드로 동작하며,
-        DB 연결 실패 시 재시도(Retry) 로직을 수행합니다.
-        """
-        self.collection_name = collection_name
-        self.embedding_fn = BGEChromaEmbeddingFunction()
-
-        # 클라이언트 초기화 및 DB 연결 재시도 로직
-        self._initialize_client_with_retry()
+    _shared_client = None
 
     def _initialize_client_with_retry(self, max_retries: int = 3, retry_delay: int = 2):
         chroma_host = os.getenv("CHROMA_SERVER_HOST")
         chroma_port = os.getenv("CHROMA_SERVER_PORT", "8000")
-
-        # 공통 설정 변수로 추출 (DRY 원칙 적용)
         common_settings = Settings(anonymized_telemetry=False)
 
         for attempt in range(max_retries):
             try:
-                if ChromaDBManager._shared_client is not None:
-                    self.client = ChromaDBManager._shared_client
+                if self.__class__._shared_client is not None:
+                    self.client = self.__class__._shared_client
                 else:
                     self.client = self._create_client(chroma_host, chroma_port, common_settings)
-                    ChromaDBManager._shared_client = self.client
+                    self.__class__._shared_client = self.client
 
-                # 컬렉션 로드 (실질적인 연결 테스트 구간)
-                # hnsw:num_threads=1: Python 3.13 + chromadb Rust 바인딩의 멀티스레드 segfault 방지
                 self.collection = self.client.get_or_create_collection(
                     name=self.collection_name,
                     embedding_function=self.embedding_fn,
@@ -88,7 +74,7 @@ class ChromaDBManager(BaseRetriever):
 
                 self._check_config_and_auto_reset()
                 logger.info(f"ChromaDB 로드 완료. (컬렉션: {self.collection_name})")
-                return  # 성공 시 루프 탈출
+                return
 
             except Exception as e:
                 # DB 손상 또는 메타데이터 에러 감지 시 자가 치유 시도
@@ -97,7 +83,7 @@ class ChromaDBManager(BaseRetriever):
                         f"[자가 치유] ChromaDB 초기화 중 오류 감지 (DB 손상 또는 버전 불일치 가능성): {e}. "
                         "로컬 DB 디렉토리를 완전히 삭제하고 자동 재구성을 수행합니다."
                     )
-                    ChromaDBManager._shared_client = None
+                    self.__class__._shared_client = None
                     self.client = None
                     if VECTOR_DB_DIR.exists():
                         try:
@@ -191,6 +177,18 @@ class ChromaDBManager(BaseRetriever):
             logger.error(f"설정 검증 및 자동 초기화 중 오류 발생: {e}")
             raise
 
+
+class ChromaDBManager(ChromaConnectionMixin, BaseRetriever):
+    def __init__(self, collection_name: str = "rag_collection"):
+        """
+        ChromaDB 클라이언트 및 컬렉션을 초기화합니다.
+        환경 변수 CHROMA_SERVER_HOST 존재 여부에 따라 로컬(Persistent) 또는 서버(Http) 모드로 동작하며,
+        DB 연결 실패 시 재시도(Retry) 로직을 수행합니다.
+        """
+        self.collection_name = collection_name
+        self.embedding_fn = BGEChromaEmbeddingFunction()
+        self._initialize_client_with_retry()
+
     def embed_query(self, query_text: str) -> list[float]:
         """
         사용자 쿼리를 벡터(Embedding)로 변환합니다.
@@ -253,7 +251,7 @@ class ChromaDBManager(BaseRetriever):
         except Exception as e:
             logger.error(f"문서 업서트 중 오류 발생: {e}")
 
-    def search(self, query_text: str, k: int = 3) -> list[dict[str, Any]]:
+    def search(self, query_text: str, k: int = 3, where: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         """
         주어진 쿼리 텍스트와 가장 유사한 문서를 검색하고,
         하이브리드 리트리버와 호환되는 표준화된 dict 리스트 형태로 반환합니다.
@@ -261,7 +259,7 @@ class ChromaDBManager(BaseRetriever):
         try:
             collection = self._get_valid_collection()
             # ChromaDB query 호출
-            results = collection.query(query_texts=[query_text], n_results=k)
+            results = collection.query(query_texts=[query_text], n_results=k, where=where)
 
             # 검색 결과가 없는 경우 빈 리스트 반환 (에러 전파 방지)
             if not results or not results.get("documents") or len(results["documents"][0]) == 0:
@@ -293,9 +291,17 @@ class ChromaDBManager(BaseRetriever):
             logger.error(f"DB 검색 중 오류 발생: {e}")
             return []  # 에러 발생 시에도 빈 리스트를 반환하여 프로세스 중단 방지
 
-    def retrieve(self, query: str, n: int = 5) -> list[dict[str, Any]]:
+    @staticmethod
+    def _build_where_clause(metadata_filter: dict | None) -> dict | None:
+        if not metadata_filter:
+            return None
+        if len(metadata_filter) == 1:
+            return metadata_filter
+        return {"$and": [{k: {"$eq": v}} for k, v in metadata_filter.items()]}
+
+    def retrieve(self, query: str, n: int = 5, metadata_filter: dict | None = None) -> list[dict[str, Any]]:
         """BaseRetriever 인터페이스 구현. ChromaDB 검색을 실행합니다."""
-        return self.search(query_text=query, k=n)
+        return self.search(query_text=query, k=n, where=self._build_where_clause(metadata_filter))
 
     def get_count(self) -> int:
         """현재 컬렉션에 저장된 총 청크 수를 반환합니다."""
