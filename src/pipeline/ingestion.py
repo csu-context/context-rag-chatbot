@@ -88,7 +88,7 @@ def _chunk_manual_pdf(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 MetadataFields.CHUNK_ID: parent_id,
                 MetadataFields.PARENT_ID: None,
                 MetadataFields.HEADER_PATH: sec_title,
-                MetadataFields.IS_TABLE: False,
+                MetadataFields.IS_TABLE: sec["metadata"].get(MetadataFields.IS_TABLE, False),
                 MetadataFields.RELATIVE_PATH: sec["metadata"].get(MetadataFields.RELATIVE_PATH, "UNKNOWN"),
             }
             result.append(

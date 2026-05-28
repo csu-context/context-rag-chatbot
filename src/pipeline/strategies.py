@@ -67,56 +67,65 @@ class MarkdownParserStrategy(ParserStrategy):
 
 
 class DoclingPDFParserStrategy(ParserStrategy):
-    """IBM Docling 기반 고품질 PDF 파서 전략.
+    """하이브리드 PDF 파서 전략: Manual(텍스트) + Docling(표 추출).
 
-    - 표 구조 자동 감지 및 마크다운 변환
-    - 레이아웃 구조 보존
-    - 파일 I/O는 StorageManager를 사용하도록 캡슐화 처리
+    - 텍스트: ManualParser(rawdict 문자 단위 정렬) → 숫자 분리 레이아웃 문제 없음
+    - 표: DoclingPDFParser → AI 레이아웃 분석으로 복잡한 표 구조 정확히 추출
+    - 표는 별도 청크로 저장 (IS_TABLE=True)
     """
 
     def __init__(self):
-        self.pdf_parser = DoclingPDFParser()  # AI 모델 1회만 로드
+        self.pdf_parser = DoclingPDFParser()  # 표 추출 전용, AI 모델 1회만 로드
 
     def parse(self, file_path: Path, storage_manager: Any = None) -> list[dict[str, Any]]:
-        if file_path.suffix.lower() == ".pdf":
-            source_id = generate_file_hash(file_path, parser_type="docling")
-
-            # StorageManager가 주입되었을 때 캐시 로드
-            if storage_manager and storage_manager.has_cache(source_id):
-                logger.info(f"캐시된 Docling 파싱 결과를 로드합니다: {file_path.name}")
-                return storage_manager.load_cache(source_id)
-
-            logger.info(f"DoclingPDFParser를 사용하여 PDF 파싱: {file_path.name}")
-            start_time = time.time()
-            parsed = self.pdf_parser.parse(file_path)  # {markdown, tables, page_count, table_count}
-            elapsed = time.time() - start_time
-            logger.info(f"파싱 완료: {file_path.name} (소요 시간: {elapsed:.2f}초, 표 {parsed['table_count']}개 감지)")
-
-            results = [
-                {
-                    "is_combined": True,
-                    "content": parsed["markdown"],
-                    "metadata": {
-                        MetadataFields.SOURCE_ID: source_id,
-                        MetadataFields.SRC_NAME: file_path.name,
-                        MetadataFields.RELATIVE_PATH: str(_safe_relative_to(file_path, RAW_DATA_DIR)),
-                        MetadataFields.PARSER_TYPE: "docling",
-                        MetadataFields.PG_NUM: 1,
-                        MetadataFields.DOC_TYPE: "pdf",
-                        MetadataFields.CATEGORY: file_path.parent.name,
-                        "table_count": parsed["table_count"],
-                        "page_count": parsed["page_count"],
-                        "has_table": parsed["table_count"] > 0,
-                    },
-                }
-            ]
-
-            # StorageManager가 주입되었을 때 캐시 저장
-            if storage_manager:
-                storage_manager.save_cache(source_id, results)
-
-            return results
-        else:
-            # PDF가 아닌 경우 ManualParser로 Fallback
+        if file_path.suffix.lower() != ".pdf":
             relative_path = _safe_relative_to(file_path, RAW_DATA_DIR)
             return ManualParser(str(relative_path), parser_type="docling").parse()
+
+        source_id = generate_file_hash(file_path, parser_type="docling")
+
+        if storage_manager and storage_manager.has_cache(source_id):
+            logger.info(f"캐시된 하이브리드 파싱 결과를 로드합니다: {file_path.name}")
+            return storage_manager.load_cache(source_id)
+
+        relative_path = _safe_relative_to(file_path, RAW_DATA_DIR)
+
+        # 1. 텍스트: ManualParser (rawdict 기반 정확한 읽기 순서)
+        logger.info(f"ManualParser로 텍스트 추출: {file_path.name}")
+        text_sections = ManualParser(str(relative_path), parser_type="docling").parse()
+        for sec in text_sections:
+            sec["metadata"][MetadataFields.SOURCE_ID] = source_id
+
+        # 2. 표: Docling (AI 레이아웃 분석)
+        logger.info(f"Docling으로 표 추출: {file_path.name}")
+        start_time = time.time()
+        parsed = self.pdf_parser.parse(file_path)
+        elapsed = time.time() - start_time
+        logger.info(f"Docling 표 추출 완료: {file_path.name} ({elapsed:.2f}초, 표 {parsed['table_count']}개)")
+
+        table_sections = [
+            {
+                "chapter": f"표 (p.{tbl['page']})",
+                "article": f"표 {tbl['table_index'] + 1}",
+                "content": tbl["markdown"],
+                "metadata": {
+                    MetadataFields.SOURCE_ID: source_id,
+                    MetadataFields.SRC_NAME: file_path.name,
+                    MetadataFields.RELATIVE_PATH: str(relative_path),
+                    MetadataFields.PARSER_TYPE: "docling",
+                    MetadataFields.PG_NUM: tbl["page"],
+                    MetadataFields.DOC_TYPE: "pdf",
+                    MetadataFields.CATEGORY: file_path.parent.name,
+                    MetadataFields.IS_TABLE: True,
+                },
+            }
+            for tbl in parsed["tables"]
+            if tbl.get("markdown", "").strip()
+        ]
+
+        results = text_sections + table_sections
+
+        if storage_manager:
+            storage_manager.save_cache(source_id, results)
+
+        return results
