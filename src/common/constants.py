@@ -41,6 +41,7 @@ class LLMDefaults:
 
     CLAUDE_DEFAULT: Final[str] = "claude-sonnet-4-6"
     GEMINI_DEFAULT: Final[str] = "gemini-2.0-flash"
+    OLLAMA_DEFAULT: Final[str] = "gemma4:e4b"
     TEMPERATURE: Final[float] = 0.1
 
 

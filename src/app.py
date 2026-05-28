@@ -149,8 +149,10 @@ with st.sidebar:
 
     # 2. 검색 설정
     st.subheader("검색 설정")
-    k_value = st.slider("초벌 검색 개수 (K)", 1, 20, 10, 1, disabled=st.session_state.is_generating)
-    final_k_value = st.slider("최종 선별 개수", 1, 10, 5, 1, disabled=st.session_state.is_generating)
+    k_value = st.select_slider(
+        "초벌 검색 개수 (K)", options=[10, 20, 30, 40, 50], value=50, disabled=st.session_state.is_generating
+    )
+    final_k_value = st.slider("최종 선별 개수", 1, 5, 5, 1, disabled=st.session_state.is_generating)
     st.divider()
 
     # 3. 데이터베이스 상태 및 관리 (가로 버튼 배치로 통합)
@@ -298,9 +300,10 @@ for msg_idx, msg in enumerate(st.session_state.messages):
                 source = metadata.get(MetadataFields.SRC_NAME, "알 수 없음")
                 page = metadata.get(MetadataFields.PG_NUM, "-")
                 score = metadata.get("rerank_score", doc.get("score", 0.0))
+                display_score = max(0.0, (score - 0.5) * 2)
                 is_low_confidence = score < 0.5
 
-                button_label = f"📄 {source} (p.{page}) - 신뢰도: {score:.2f}"
+                button_label = f"📄 {source} (p.{page}) - 신뢰도: {display_score:.2f}"
                 if is_low_confidence:
                     button_label += " ⚠️"
 

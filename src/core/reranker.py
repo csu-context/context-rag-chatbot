@@ -38,10 +38,10 @@ class BaseReranker(ABC):
 
     MAX_INFER_TIME_SEC = 5  # API 타임아웃
 
-    def __init__(self, name: str, top_k: int = 5, threshold: float = 0.45):
+    def __init__(self, name: str, top_k: int = 5, threshold: float | None = None):
         self.name = name
         self.top_k = top_k
-        self.threshold = threshold
+        self.threshold = threshold if threshold is not None else settings.RERANKER_THRESHOLD
 
     @abstractmethod
     def rerank(
@@ -88,23 +88,9 @@ class CrossEncoderReranker(BaseReranker):
         threshold: float | None = None,
         device: str | None = None,
     ):
-        super().__init__(name="Local CrossEncoder", top_k=top_k, threshold=threshold or 0.3)
+        super().__init__(name="Local CrossEncoder", top_k=top_k, threshold=threshold)
         self.model_name = model_name or settings.RERANKER_MODEL_NAME
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-
-        if threshold is None:
-            self._set_model_defaults()
-
-    def _set_model_defaults(self) -> None:
-        # sigmoid 정규화 후 [0, 1] 기준 임계값
-        # sigmoid(0) = 0.5 (중립), sigmoid(1) ≈ 0.73 (긍정적)
-        model_lower = self.model_name.lower()
-        if "bge" in model_lower:
-            self.threshold = 0.4
-        elif "ko-reranker" in model_lower or "skesarmom" in model_lower or "kor" in model_lower:
-            self.threshold = 0.5
-        else:
-            self.threshold = 0.45
 
     @classmethod
     def get_instance(
@@ -309,7 +295,7 @@ class APIBaseReranker(BaseReranker):
 class CohereReranker(APIBaseReranker):
     """Cohere API 기반 리랭커."""
 
-    def __init__(self, api_key: str | None = None, top_k: int = 5, threshold: float = 0.3):
+    def __init__(self, api_key: str | None = None, top_k: int = 5, threshold: float | None = None):
         super().__init__(
             api_key=api_key or os.getenv("COHERE_API_KEY"),
             model_name="rerank-multilingual-v3.0",
@@ -328,7 +314,7 @@ class CohereReranker(APIBaseReranker):
 class JinaReranker(APIBaseReranker):
     """Jina API 기반 리랭커."""
 
-    def __init__(self, api_key: str | None = None, top_k: int = 5, threshold: float = 0.3):
+    def __init__(self, api_key: str | None = None, top_k: int = 5, threshold: float | None = None):
         super().__init__(
             api_key=api_key or os.getenv("JINA_API_KEY"),
             model_name="jina-reranker-v2-base-multilingual",

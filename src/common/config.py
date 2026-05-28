@@ -41,8 +41,9 @@ class Settings(BaseSettings):
     HYBRID_WEIGHT_BM25: float = 0.5
     HYBRID_WEIGHT_VECTOR: float = 0.5
     RETRIEVER_CANDIDATE_POOL_MIN: int = Field(default=15)
-    RERANKER_MAX_DOCS: int = Field(default=10)
-    RERANKER_BATCH_SIZE: int = Field(default=8)
+    RERANKER_MAX_DOCS: int = Field(default=5)
+    RERANKER_BATCH_SIZE: int = Field(default=5)
+    RERANKER_THRESHOLD: float = Field(default=0.5)
 
     # 4. 파이프라인 및 파싱 설정
     PARSER_TYPE: Literal["manual", "docling"] = Field(default="docling")
