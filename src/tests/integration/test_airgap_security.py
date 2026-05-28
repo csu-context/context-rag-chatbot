@@ -16,7 +16,7 @@ def test_llm_factory_airgap():
     ):
         llm = LLMFactory.create_llm()
         assert isinstance(llm, OllamaModel)
-        assert llm.model_name == "llama3.2:1b"
+        assert llm.model_name == "gemma4:e4b"
 
     # 케이스 2: ALLOW_EXTERNAL_API = True (외부 호출 허용), 모델 타입 = gemini
     with (

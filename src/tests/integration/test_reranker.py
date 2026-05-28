@@ -148,18 +148,14 @@ class TestCrossEncoderReranker:
                 assert result.elapsed_time_sec == pytest.approx(6.0)
 
     def test_model_defaults(self):
-        """모델명에 따라 임계치가 올바르게 자동 설정되는지 확인 (sigmoid [0,1] 기준)"""
-        # BGE 모델 (0.4)
+        """threshold가 settings.RERANKER_THRESHOLD 기본값으로 설정되는지 확인 (sigmoid 중립점 0.5)"""
+        from src.common.config import settings
+
         bge = CrossEncoderReranker(model_name="bge-reranker-v2-m3")
-        assert bge.threshold == 0.4
+        assert bge.threshold == settings.RERANKER_THRESHOLD
 
-        # 한국어 모델 (0.5)
-        kor = CrossEncoderReranker(model_name="skesarmom/cross-encoder-kor")
-        assert kor.threshold == 0.5
-
-        # 기본 모델 (0.45)
         default = CrossEncoderReranker(model_name="cross-encoder/ms-marco-MiniLM-L-6-v2")
-        assert default.threshold == 0.45
+        assert default.threshold == settings.RERANKER_THRESHOLD
 
     def test_elapsed_time_tracking(self, sample_docs):
         """추론 소요 시간이 결과 객체에 정확히 기록되는지 확인"""
