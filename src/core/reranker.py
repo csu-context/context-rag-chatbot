@@ -68,10 +68,6 @@ class BaseReranker(ABC):
         return top_k
 
     def rerank_with_timeout(self, query: str, documents: list[Document], **kwargs: Any) -> RerankResult:
-        """
-        타임아웃, 예외 처리 및 성능 모니터링을 포함한 리랭킹을 수행합니다.
-        실패 시 원본 문서 목록의 일부를 그대로 반환합니다.
-        """
         target_top_k = kwargs.get("top_k") or self.top_k
         adjusted_top_k = self._adjust_top_k(target_top_k)
         kwargs["top_k"] = adjusted_top_k
@@ -156,10 +152,16 @@ class CrossEncoderReranker(BaseReranker):
             if self._model is not None:
                 return self._model
             try:
+                automodel_args = (
+                    {"torch_dtype": torch.float16}
+                    if settings.RERANKER_USE_FP16 and self.device in ("cuda", "mps")
+                    else {}
+                )
                 self._model = CrossEncoder(
                     self.model_name,
                     device=self.device,
                     cache_dir=str(CROSS_ENCODER_CACHE_DIR),
+                    automodel_args=automodel_args,
                 )
             except Exception as e:
                 logger.error(f"Failed to load CrossEncoder: {e}")
@@ -169,7 +171,7 @@ class CrossEncoderReranker(BaseReranker):
     def _predict_with_cpu_fallback(self, pairs: list) -> list:
         try:
             model = self._load_model()
-            scores_pred = model.predict(pairs)
+            scores_pred = model.predict(pairs, batch_size=settings.RERANKER_BATCH_SIZE)
             return scores_pred.tolist() if hasattr(scores_pred, "tolist") else list(scores_pred)
         except RuntimeError as e:
             err_msg = str(e).lower()
@@ -180,7 +182,7 @@ class CrossEncoderReranker(BaseReranker):
                     self._model = None
                 try:
                     model = self._load_model()
-                    scores_pred = model.predict(pairs)
+                    scores_pred = model.predict(pairs, batch_size=settings.RERANKER_BATCH_SIZE)
                     return scores_pred.tolist() if hasattr(scores_pred, "tolist") else list(scores_pred)
                 except Exception as cpu_err:
                     logger.error(f"[{self.name}] Failed to run even on CPU fallback: {cpu_err}")
@@ -238,7 +240,7 @@ class APIBaseReranker(BaseReranker):
         self.api_key = api_key
         self.model_name = model_name
         self.api_url = api_url
-        self._session = requests.Session()  # Connection Pooling 지원
+        self._session = requests.Session()
 
     def _build_payload(self, query: str, documents: list[Document], top_k: int) -> dict:
         return {
@@ -254,12 +256,10 @@ class APIBaseReranker(BaseReranker):
 
     @staticmethod
     def _extract_score(result_item: dict) -> float:
-        """API 결과 항목에서 관련도 점수를 추출합니다. (하위 클래스에서 오버라이딩 가능)"""
         return float(result_item.get("relevance_score", 0.0))
 
     @staticmethod
     def _extract_index(result_item: dict) -> int:
-        """API 결과 항목에서 원본 문서 인덱스를 추출합니다. (하위 클래스에서 오버라이딩 가능)"""
         return int(result_item.get("index", -1))
 
     def rerank(
@@ -356,7 +356,6 @@ class RerankerFactory:
     @staticmethod
     def create(top_k: int = 5) -> BaseReranker:
         reranker_type = settings.RERANKER_TYPE.lower()
-        # 보안 가드레일: 외부 API 및 전체 외부 호출 허용 여부 체크
         allow_external = settings.ALLOW_EXTERNAL_RERANKER and settings.ALLOW_EXTERNAL_API
 
         if reranker_type in ["cohere", "jina"]:

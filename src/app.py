@@ -19,13 +19,13 @@ from dotenv import load_dotenv
 
 from src.common.config import settings
 from src.common.constants import MetadataFields
-from src.controllers.chat_controller import ChatController, StreamUIHandler
 from src.core.chains import get_rag_chain
 from src.core.retriever import RetrieverFactory
 from src.models.factory import LLMFactory
 from src.ui.dialogs.admin import show_admin_dialog
 from src.ui.dialogs.chunk_viewer import show_chunks_viewer_dialog
 from src.ui.session import init_session_state
+from src.ui.stream_responder import StreamResponder
 from src.utils.logger import PerformanceLogger, setup_global_logging
 from src.utils.monitoring import get_system_stats
 from src.utils.paths import ensure_directories
@@ -352,11 +352,11 @@ if prompt := st.chat_input(
 # active generation UI (컨트롤러로 비즈니스 논리 이관 호출)
 if st.session_state.is_generating:
     with st.chat_message("assistant"):
-        ui_handler = StreamUIHandler()
+        responder = StreamResponder(perf_logger=perf_logger, get_system_stats_fn=get_system_stats)
 
         # Re-render accumulated steps
         for step in st.session_state.stream_steps:
-            ui_handler.process_step(step)
+            responder.process_step(step)
 
         # 가로 배치를 위한 컬럼 생성 (텍스트 밀림 방지 및 세련된 레이아웃 확보)
         col_status, col_stop = st.columns([8, 2], vertical_alignment="center")
@@ -375,11 +375,7 @@ if st.session_state.is_generating:
                 st.rerun()
 
         with col_status:
-            ChatController.consume_stream(
-                ui_handler=ui_handler,
-                perf_logger=perf_logger,
-                get_system_stats_fn=get_system_stats,
-            )
+            responder.consume_stream()
 
 # --- Controlled Rerun at the end of the script ---
 if st.session_state.should_rerun_app:

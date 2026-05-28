@@ -69,6 +69,7 @@ class TestRAGPipelineMemory:
         assert "유지될 질문 2" in cache_query
         assert "유지될 질문 4" in cache_query
 
+
     @patch("src.core.chains.ChatPromptTemplate")
     def test_stream_generation_prompt_binding(self, mock_chat_prompt_template, pipeline):
         """프롬프트 템플릿에 이전 대화 이력과 컨텍스트가 정상 바인딩되는지 검증"""
@@ -113,16 +114,12 @@ class TestRAGPipelineMemory:
         mock_cache.get.return_value = None
 
         history = [{"role": "user", "content": "질문"}]
-
-        # RAG pipeline.stream 실행
         input_data = {"question": "후속 질문", "k": 1, "final_k": 1, "history": history}
 
-        # 모의 함수들 준비
         mock_retriever.search.return_value = []
         mock_reranker.rerank_with_timeout.return_value = MagicMock(documents=[], scores=[])
         mock_llm.stream.return_value = ["답변"]
 
-        # generator 실행완료 처리
         list(pipeline.stream(input_data))
 
         # 캐시의 get과 add가 호출되었음을 검증
