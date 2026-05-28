@@ -70,7 +70,7 @@ class Settings(BaseSettings):
 
     # 7. 시맨틱 캐시 설정
     SEMANTIC_CACHE_COLLECTION_NAME: str = Field(default="semantic_cache")
-    SEMANTIC_CACHE_THRESHOLD: float = Field(default=0.90)
+    SEMANTIC_CACHE_THRESHOLD: float = Field(default=0.95)
     MAX_CHAT_HISTORY_TURNS: int = Field(default=5)
 
     # 8. Ollama 추론 제어
