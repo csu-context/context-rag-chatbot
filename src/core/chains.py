@@ -62,7 +62,7 @@ class RAGPipeline:
             if parent_id and source_id:
                 if parent_id in seen_parents:
                     continue  # 이미 부모 청크가 추가되었으므로 중복 자식은 생략
-                
+
                 try:
                     json_path = PROCESSED_DATA_DIR / f"{source_id}.json"
                     parents_list = _load_source_json(json_path)
