@@ -223,7 +223,6 @@ class RAGPipeline:
         final_k = input_dict.get("final_k", 5)
         history = input_dict.get("history", [])
 
-        # 대화 이력이 병합된 고유 캐시 쿼리 생성
         cache_query = self._build_cache_query(query, history)
         use_cache = True
 
@@ -235,10 +234,8 @@ class RAGPipeline:
                 session.data["cache_hit"] = True
                 yield {"stage": "cache", "status": "hit"}
 
-                # Stream cached answer
-                answer = cached_result["answer"]
-                for char in answer:
-                    yield {"stage": "generation", "status": "streaming", "output": char}
+                # 캐시 히트: 전체 답변을 한 번에 전달 (1자씩 스트리밍 → 브라우저 프리징 방지)
+                yield {"stage": "generation", "status": "streaming", "output": cached_result["answer"]}
                 yield {"stage": "generation", "status": "complete"}
 
                 # Yield cached sources for citation
