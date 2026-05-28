@@ -173,6 +173,8 @@ class CrossEncoderReranker(BaseReranker):
                 self.device = "cpu"
                 with self._singleton_lock:
                     self._model = None
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
                 try:
                     model = self._load_model()
                     scores_pred = model.predict(pairs, batch_size=settings.RERANKER_BATCH_SIZE)
