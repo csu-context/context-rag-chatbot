@@ -37,8 +37,7 @@ async def test_rerank_rank_change_logging(tmp_path):
                 mock_get_reranker.return_value = mock_reranker
 
                 # Mock LLM
-                with patch("src.models.factory.LLMFactory.create_llm") as mock_factory:
-                    mock_llm_inst = MagicMock()
+                with patch("src.models.factory.LLMFactory.create_llm_with_fallback") as mock_factory:
                     mock_model = MagicMock()
                     mock_model.ainvoke = AsyncMock()
                     mock_model.model_name = "test-model"
@@ -51,8 +50,7 @@ async def test_rerank_rank_change_logging(tmp_path):
 
                     mock_model.stream = mock_stream
                     mock_model.ainvoke.return_value = mock_response
-                    mock_llm_inst.get_model.return_value = mock_model
-                    mock_factory.return_value = mock_llm_inst
+                    mock_factory.return_value = mock_model
 
                     chain = get_rag_chain(mock_db)
 

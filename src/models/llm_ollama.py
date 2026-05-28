@@ -7,6 +7,7 @@ from typing import Any, ClassVar
 
 from langchain_ollama import ChatOllama
 
+from src.common.config import settings
 from src.models.base import BaseLLM, LLMResponse
 
 logger = logging.getLogger(__name__)
@@ -95,24 +96,19 @@ class OllamaModel(BaseLLM):
     """Ollama를 통한 로컬 sLLM 구현체"""
 
     def __init__(self, model_name: str, base_url: str | None = None, temperature: float = 0.1):
-        """
-        Args:
-            model_name: Ollama 모델 명 (예: llama3, solar)
-            base_url: Ollama 서버 주소 (기본값: http://localhost:11434)
-            temperature: 생성 온도
-        """
         super().__init__(model_name=model_name)
-        # 환경 변수 또는 직접 전달된 URL 사용
         self.base_url = base_url or os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 
         self.model = ChatOllama(
             model=model_name,
             base_url=self.base_url,
             temperature=temperature,
-            num_predict=512,
-            repeat_penalty=1.2,
+            num_predict=settings.OLLAMA_NUM_PREDICT,
+            repeat_penalty=settings.OLLAMA_REPEAT_PENALTY,
+            num_ctx=settings.OLLAMA_NUM_CTX,
+            keep_alive=settings.OLLAMA_KEEP_ALIVE,
+            think=settings.OLLAMA_THINK,
         )
-        # 헬스 체크 연동 경고 로그
         if not self.check_health():
             logger.warning(
                 f"Ollama 서비스 헬스체크 실패 ({self.base_url}). "
@@ -160,11 +156,7 @@ class OllamaModel(BaseLLM):
             return False
 
     def pull_model_progress(self) -> Any:
-        """Ollama 서비스에서 모델을 다운로드하며 실시간 진행 상황을 생성합니다.
-
-        Yields:
-            dict: 진행 정보 딕셔너리
-        """
+        """Ollama pull API를 스트리밍으로 호출해 진행 상태 dict를 yield합니다."""
         import json
 
         import requests
@@ -209,7 +201,7 @@ class OllamaModel(BaseLLM):
                 latency=latency,
                 model_name=self.model_name,
                 metadata=getattr(response, "response_metadata", {}),
-                cost=0.0,  # 로컬 모델 비용 0원
+                cost=0.0,
             )
 
         except Exception as e:
@@ -233,3 +225,13 @@ class OllamaModel(BaseLLM):
     def get_pull_status(self) -> dict | None:
         """현재 백그라운드 다운로드 상태를 조회합니다."""
         return OllamaPullStatus.get_status(self.model_name)
+
+    def warmup(self) -> bool:
+        """앱 시작 시 더미 요청으로 모델을 사전 로드합니다."""
+        try:
+            self.model.invoke("안녕")
+            logger.info(f"Ollama 모델 warmup 완료: {self.model_name}")
+            return True
+        except Exception as e:
+            logger.warning(f"Ollama 모델 warmup 실패 ({self.model_name}): {e}")
+            return False

@@ -29,6 +29,7 @@ CACHE_DIR = (BASE_DIR / ".cache").resolve()
 BM25_CACHE_FILE = CACHE_DIR / "bm25_index.pkl"  # legacy — kept for reference only
 BM25_CACHE_DIR = CACHE_DIR / "bm25_v2"
 CROSS_ENCODER_CACHE_DIR = CACHE_DIR / "cross-encoder"
+PROMPTS_DIR = (BASE_DIR / "prompts").resolve()
 
 
 # 3. 디렉토리 목록 (자동 생성용)

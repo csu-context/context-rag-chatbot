@@ -15,13 +15,6 @@ class LLMFactory:
 
     @staticmethod
     def create_llm(model_type: str | None = None, model_name: str | None = None, **kwargs) -> BaseLLM:
-        """
-        설정된 타입에 따라 모델 인스턴스를 반환합니다.
-
-        Args:
-            model_type: 'gemini', 'claude', 'ollama' 등 (기본값: settings.MODEL_TYPE)
-            model_name: 구체적인 모델 명 (기본값: settings.MODEL_NAME)
-        """
         type_ = (model_type or settings.MODEL_TYPE).lower()
         name_ = model_name or settings.MODEL_NAME
         temp_ = kwargs.get("temperature", settings.TEMPERATURE)
@@ -72,3 +65,36 @@ class LLMFactory:
                 )
                 api_key = settings.ANTHROPIC_API_KEY
                 return ClaudeModel(model_name=LLMDefaults.CLAUDE_DEFAULT, api_key=api_key, temperature=temp_)
+
+    @staticmethod
+    def create_llm_with_fallback(model_type: str | None = None, model_name: str | None = None, **kwargs):
+        """Fallback 체인(Ollama → Gemini → Claude). FALLBACK_ENABLED=False 또는 외부API 비허용 시 primary만 반환."""
+        primary = LLMFactory.create_llm(model_type, model_name, **kwargs)
+        primary_model = primary.get_model()
+
+        if not settings.LLM_FALLBACK_ENABLED or not settings.ALLOW_EXTERNAL_API:
+            return primary_model
+
+        fallbacks = []
+        fallback_order = [
+            ("gemini", LLMDefaults.GEMINI_DEFAULT, settings.GEMINI_API_KEY or settings.GOOGLE_API_KEY),
+            ("claude", LLMDefaults.CLAUDE_DEFAULT, settings.ANTHROPIC_API_KEY),
+        ]
+        current_type = (model_type or settings.MODEL_TYPE).lower()
+
+        for fb_type, fb_name, fb_key in fallback_order:
+            if fb_type == current_type:
+                continue
+            if not fb_key:
+                continue
+            try:
+                fb_llm = LLMFactory.create_llm(fb_type, fb_name, **kwargs)
+                fallbacks.append(fb_llm.get_model())
+                logger.info(f"Fallback 모델 등록: {fb_type}/{fb_name}")
+            except Exception as e:
+                logger.warning(f"Fallback 모델 초기화 실패 ({fb_type}): {e}")
+
+        if not fallbacks:
+            return primary_model
+
+        return primary_model.with_fallbacks(fallbacks)

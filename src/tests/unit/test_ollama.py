@@ -29,8 +29,11 @@ def test_ollama_model_initialization(mock_chat_ollama):
         model="llama3",
         base_url="http://test:11434",
         temperature=0.1,
-        num_predict=512,
-        repeat_penalty=1.2,
+        num_predict=8192,
+        repeat_penalty=1.0,
+        num_ctx=8192,
+        keep_alive=-1,
+        think=False,
     )
 
 
