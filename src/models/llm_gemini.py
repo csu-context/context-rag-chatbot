@@ -48,7 +48,7 @@ class GeminiModel(BaseLLM):
 
         except Exception as e:
             logger.error(f"Gemini 호출 중 오류 발생: {e}")
-            raise e
+            raise
 
     def get_model(self) -> BaseChatModel:
         """LangChain의 ChatGoogleGenerativeAI 인스턴스를 반환합니다."""

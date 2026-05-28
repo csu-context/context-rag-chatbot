@@ -53,7 +53,7 @@ class ChromaConnectionMixin:
 
     _shared_client = None
 
-    def _initialize_client_with_retry(self, max_retries: int = 3, retry_delay: int = 2):
+    def _initialize_client_with_retry(self, max_retries: int = 3, retry_delay: int = 2) -> None:
         chroma_host = os.getenv("CHROMA_SERVER_HOST")
         chroma_port = os.getenv("CHROMA_SERVER_PORT", "8000")
         common_settings = Settings(anonymized_telemetry=False)
@@ -104,7 +104,7 @@ class ChromaConnectionMixin:
                     logger.error("ChromaDB 연결에 최종적으로 실패했습니다. DB 상태를 확인하시기 바랍니다.")
                     raise RuntimeError("ChromaDB initialization failed.") from e
 
-    def _create_client(self, chroma_host, chroma_port, common_settings):
+    def _create_client(self, chroma_host: str | None, chroma_port: str, common_settings: Any) -> Any:
         if chroma_host:
             logger.info(f"ChromaDB 서버 모드 접속 시도 (Host: {chroma_host}, Port: {chroma_port})")
             return chromadb.HttpClient(host=chroma_host, port=int(chroma_port), settings=common_settings)
@@ -121,7 +121,7 @@ class ChromaConnectionMixin:
             ensure_directories()
             return chromadb.PersistentClient(path=str(VECTOR_DB_DIR), settings=common_settings)
 
-    def _check_config_and_auto_reset(self):
+    def _check_config_and_auto_reset(self) -> None:
         """임베딩 모델 및 청크 크기 변경을 감지하여 자동 리셋을 수행합니다."""
         try:
             existing_metadata = self.collection.metadata
@@ -203,7 +203,7 @@ class ChromaDBManager(ChromaConnectionMixin, BaseRetriever):
             # 빈 리스트를 반환하지 않고 에러를 명시적으로 발생시킴
             raise RuntimeError(f"Failed to embed query: '{query_text}'") from e
 
-    def _get_valid_collection(self):
+    def _get_valid_collection(self) -> Any:
         """
         ChromaDB 서버 리셋 등으로 컬렉션 레퍼런스가 만료되었을 때
         'does not exist' 에러를 방지하기 위해 유효성을 검증하고 필요시 재로딩합니다.
@@ -349,7 +349,7 @@ class ChromaDBManager(ChromaConnectionMixin, BaseRetriever):
             logger.error(f"소스별 청크 데이터 조회 중 오류 발생 ({source_name}): {e}")
             return []
 
-    def delete_documents(self, where: dict[str, Any]):
+    def delete_documents(self, where: dict[str, Any]) -> None:
         """
         조건(where)에 맞는 도큐먼트들을 컬렉션에서 삭제합니다.
         where 필터로 ID를 먼저 조회한 후 ID 기반으로 삭제하여 신뢰성을 높입니다.
@@ -377,7 +377,7 @@ class ChromaDBManager(ChromaConnectionMixin, BaseRetriever):
             logger.error(f"ChromaDB 도큐먼트 삭제 실패: {e}", exc_info=True)
             raise
 
-    def reset_collection(self):
+    def reset_collection(self) -> None:
         """컬렉션의 모든 문서를 삭제하여 초기화합니다."""
         try:
             collection = self._get_valid_collection()
@@ -392,7 +392,7 @@ class ChromaDBManager(ChromaConnectionMixin, BaseRetriever):
             logger.error(f"ChromaDB 컬렉션 초기화 중 오류 발생: {e}")
             raise
 
-    def _clear_processed_and_cache_files(self):
+    def _clear_processed_and_cache_files(self) -> None:
         """임베딩 모델 또는 설정 변경 시, 로컬 가공 및 캐시 파일들을 제거합니다."""
 
         logger.info("가공 데이터(processed) 및 파서 캐시(cache) 초기화 중...")
@@ -409,14 +409,14 @@ class ChromaDBManager(ChromaConnectionMixin, BaseRetriever):
         self._clear_bm25_cache_directory()
         logger.info("가공 및 캐시 파일 물리적 삭제 완료.")
 
-    def _safe_unlink(self, file_path: Path):
+    def _safe_unlink(self, file_path: Path) -> None:
         """안전하게 파일을 삭제합니다."""
         try:
             file_path.unlink(missing_ok=True)
         except Exception as ex:
             logger.error(f"파일 {file_path.name} 삭제 실패: {ex}")
 
-    def _clear_bm25_cache_directory(self):
+    def _clear_bm25_cache_directory(self) -> None:
         """BM25 캐시 디렉토리를 안전하게 삭제합니다."""
         bm25_cache_dir = BM25_CACHE_DIR
         if bm25_cache_dir.exists():

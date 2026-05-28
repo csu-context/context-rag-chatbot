@@ -1,3 +1,4 @@
+import importlib.util
 import json
 import logging
 import threading
@@ -78,7 +79,7 @@ class PipelineOrchestrator:
                 self.manifest_path.unlink()
             return default_manifest
 
-    def _save_manifest(self, manifest: dict[str, Any]):
+    def _save_manifest(self, manifest: dict[str, Any]) -> None:
         """처리 완료 후 새로운 manifest 상태를 저장합니다."""
         try:
             with open(self.manifest_path, "w", encoding="utf-8") as f:
@@ -90,17 +91,14 @@ class PipelineOrchestrator:
     def _get_parser_strategy(self) -> ParserStrategy:
         """설정된 파서 타입에 따라 전략을 반환하며 가용성을 검증합니다."""
         if self.parser_type == "docling":
-            try:
-                import docling  # noqa: F401
-
+            if importlib.util.find_spec("docling") is not None:
                 return DoclingPDFParserStrategy()
-            except ImportError:
-                logger.error(
-                    "'docling' 파서용 'docling' 라이브러리가 없습니다. "
-                    "'manual'로 강제 전환합니다.\n"
-                    "설치: pip install docling"
-                )
-                return ManualParserStrategy()
+            logger.error(
+                "'docling' 파서용 'docling' 라이브러리가 없습니다. "
+                "'manual'로 강제 전환합니다.\n"
+                "설치: pip install docling"
+            )
+            return ManualParserStrategy()
 
         return ManualParserStrategy()
 
@@ -142,7 +140,66 @@ class PipelineOrchestrator:
 
         return files_to_process, source_ids_to_delete, new_manifest
 
-    def _process_changes(  # noqa: C901
+    def _cleanup_db(
+        self, session: Any, source_ids_to_delete: list[str], relative_paths_to_delete: list[str] | None
+    ) -> None:
+        with session.trace_step("db_cleanup"):
+            filenames_to_delete = []
+            try:
+                old_files = self._load_manifest().get("files", {})
+                filenames_to_delete = [
+                    Path(rel).name for rel, info in old_files.items() if info.get("hash") in source_ids_to_delete
+                ]
+            except Exception as e:
+                logger.error(f"삭제 파일명 추출 중 오류 발생: {e}")
+            self.ingestion_pipeline.cleanup_db(
+                source_ids_to_delete=source_ids_to_delete,
+                relative_paths_to_delete=relative_paths_to_delete,
+                filenames_to_delete=filenames_to_delete,
+            )
+
+    def _parse_and_upsert(
+        self, session: Any, files_to_process: list[Path], new_manifest: dict[str, Any] | None, progress_callback
+    ) -> None:
+        with session.trace_step("parse_and_chunk") as step:
+            file_parser_types = {
+                rel: info.get("parser_type", self.parser_type)
+                for rel, info in (new_manifest or {}).get("files", {}).items()
+            }
+            processed_data = self.ingestion_pipeline.process_and_chunk(
+                files_to_process, progress_callback=progress_callback, file_parser_types=file_parser_types
+            )
+            step["parent_chunk_count"] = len(processed_data)
+
+        if processed_data:
+            with session.trace_step("save_json") as step:
+                save_paths = self.ingestion_pipeline.save_processed_data(processed_data)
+                step["saved_files"] = [p.name for p in save_paths]
+
+            if progress_callback:
+                try:
+                    progress_callback(
+                        len(files_to_process),
+                        len(files_to_process),
+                        "임베딩 변환 및 벡터 적재 중 (시간이 소요될 수 있습니다)",
+                    )
+                except Exception as cb_e:
+                    logger.error(f"진행 상황 콜백 호출 실패: {cb_e}")
+
+            with session.trace_step("db_upsert"):
+                self.ingestion_pipeline.upsert_to_db(processed_data)
+
+    def _rebuild_bm25(self, session: Any) -> None:
+        with session.trace_step("bm25_update") as step:
+            try:
+                from src.vector_db.bm25_manager import BM25Manager
+
+                BM25Manager()
+                step["status"] = "success"
+            except Exception as e:
+                step["status"] = f"failed: {e}"
+
+    def _process_changes(
         self,
         files_to_process: list[Path],
         source_ids_to_delete: list[str],
@@ -152,70 +209,23 @@ class PipelineOrchestrator:
         new_manifest: dict[str, Any] | None = None,
     ):
         """도출된 변경 사항(DB 삭제, 파싱, 업서트, 인덱스 갱신)을 순차적으로 수행합니다."""
-        if files_to_process or source_ids_to_delete or relative_paths_to_delete:
+        has_changes = bool(files_to_process or source_ids_to_delete or relative_paths_to_delete)
+
+        if has_changes:
             with session.trace_step("cache_flush"):
                 logger.info("데이터 변경이 감지되어 시맨틱 캐시를 초기화합니다.")
                 self.cache.flush()
 
         if source_ids_to_delete or relative_paths_to_delete:
-            with session.trace_step("db_cleanup"):
-                filenames_to_delete = []
-                try:
-                    old_manifest = self._load_manifest()
-                    old_files = old_manifest.get("files", {})
-                    for rel_path, info in old_files.items():
-                        if info.get("hash") in source_ids_to_delete:
-                            filenames_to_delete.append(Path(rel_path).name)
-                except Exception as e:
-                    logger.error(f"삭제 파일명 추출 중 오류 발생: {e}")
-
-                self.ingestion_pipeline.cleanup_db(
-                    source_ids_to_delete=source_ids_to_delete,
-                    relative_paths_to_delete=relative_paths_to_delete,
-                    filenames_to_delete=filenames_to_delete,
-                )
+            self._cleanup_db(session, source_ids_to_delete, relative_paths_to_delete)
 
         if files_to_process:
-            with session.trace_step("parse_and_chunk") as step:
-                file_parser_types = {}
-                if new_manifest and "files" in new_manifest:
-                    for rel_path, info in new_manifest["files"].items():
-                        file_parser_types[rel_path] = info.get("parser_type", self.parser_type)
+            self._parse_and_upsert(session, files_to_process, new_manifest, progress_callback)
 
-                processed_data = self.ingestion_pipeline.process_and_chunk(
-                    files_to_process, progress_callback=progress_callback, file_parser_types=file_parser_types
-                )
-                step["parent_chunk_count"] = len(processed_data)
+        if has_changes:
+            self._rebuild_bm25(session)
 
-            if processed_data:
-                with session.trace_step("save_json") as step:
-                    save_paths = self.ingestion_pipeline.save_processed_data(processed_data)
-                    step["saved_files"] = [p.name for p in save_paths]
-
-                if progress_callback:
-                    try:
-                        progress_callback(
-                            len(files_to_process),
-                            len(files_to_process),
-                            "임베딩 변환 및 벡터 적재 중 (시간이 소요될 수 있습니다)",
-                        )
-                    except Exception as cb_e:
-                        logger.error(f"진행 상황 콜백 호출 실패: {cb_e}")
-
-                with session.trace_step("db_upsert"):
-                    self.ingestion_pipeline.upsert_to_db(processed_data)
-
-        if files_to_process or source_ids_to_delete or relative_paths_to_delete:
-            with session.trace_step("bm25_update") as step:
-                try:
-                    from src.vector_db.bm25_manager import BM25Manager
-
-                    BM25Manager()  # Rebuilds 수퍼 클래스
-                    step["status"] = "success"
-                except Exception as e:
-                    step["status"] = f"failed: {e}"
-
-    def _reset_all_data(self):
+    def _reset_all_data(self) -> None:
         """강제 초기화 시 기존 데이터를 물리적으로 모두 정리 (vector DB 및 파싱 캐시 등)"""
         logger.info("ChromaDB 컬렉션 및 가공 파일 물리적 초기화 시작...")
         self.ingestion_pipeline.db_manager.reset_collection()
@@ -407,7 +417,7 @@ class PipelineOrchestrator:
 
         logger.info("데이터 구축 파이프라인 작업이 완료되었습니다.")
 
-    def update_file_parser(self, file_name: str, new_parser_type: str, progress_callback=None):
+    def update_file_parser(self, file_name: str, new_parser_type: str, progress_callback=None) -> None:
         """특정 파일의 동기화 파서 타입을 변경하고, 해당 파일에 한해 즉각 재색인을 실행합니다."""
         new_parser_lower = new_parser_type.lower()
         old_manifest = self._load_manifest()
@@ -437,7 +447,7 @@ class PipelineOrchestrator:
         target_path = RAW_DATA_DIR / target_rel_path
         self.run_ingestion(force=False, progress_callback=progress_callback, target_files=[target_path])
 
-    def update_multiple_file_parsers(self, file_parser_map: dict[str, str], progress_callback=None):
+    def update_multiple_file_parsers(self, file_parser_map: dict[str, str], progress_callback=None) -> None:
         """복수 파일의 동기화 파서 타입을 한꺼번에 변경하고, 대상 파일들을 즉각 재색인합니다."""
         old_manifest = self._load_manifest()
         old_files = old_manifest.get("files", {})

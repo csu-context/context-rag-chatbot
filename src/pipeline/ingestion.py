@@ -1,3 +1,4 @@
+import importlib.util
 import logging
 import os
 import uuid
@@ -43,13 +44,10 @@ def _get_parser_strategy_for_file(file_path: Path, file_parser_types: dict[str, 
     file_parser = normalized_parser_types.get(rel_path, "manual").lower()
 
     if file_parser == "docling":
-        try:
-            import docling  # noqa: F401
-
+        if importlib.util.find_spec("docling") is not None:
             return DoclingPDFParserStrategy()
-        except ImportError:
-            logger.error("docling 라이브러리가 없어 manual 전략으로 대체합니다.")
-            return ManualParserStrategy()
+        logger.error("docling 라이브러리가 없어 manual 전략으로 대체합니다.")
+        return ManualParserStrategy()
 
     return ManualParserStrategy()
 
@@ -203,79 +201,90 @@ class IngestionPipeline:
             files.extend(filtered_files)
         return files
 
+    def _process_non_pdf_parallel(
+        self, files: list[Path], file_parser_types: dict | None, total: int, offset: int, progress_callback
+    ) -> tuple[list, int]:
+        data, completed = [], offset
+        max_workers = min(len(files), os.cpu_count() or 4)
+        logger.info(f"비-PDF 파일 병렬 파싱 활성화 ({len(files)}개 파일, Workers: {max_workers})")
+        futures_map = {}
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            for f in files:
+                futures_map[
+                    executor.submit(
+                        _process_single_file_helper,
+                        f,
+                        file_parser_types,
+                        self.storage_manager.processed_dir,
+                        self.storage_manager.cache_dir,
+                    )
+                ] = f
+            for future in as_completed(futures_map):
+                file_path = futures_map[future]
+                completed += 1
+                try:
+                    data.extend(future.result())
+                except Exception as e:
+                    logger.error(f"병렬 파일 처리 실패: {file_path.name} - {e}")
+                _safe_invoke_progress(progress_callback, completed, total, file_path.name)
+        return data, completed
+
+    def _process_pdf_sequential(
+        self, files: list[Path], file_parser_types: dict | None, total: int, offset: int, progress_callback
+    ) -> tuple[list, int]:
+        data, completed = [], offset
+        logger.info(f"PDF 파일 순차 처리 시작 ({len(files)}개 파일, 메모리 보호 모드)")
+        for file_path in files:
+            try:
+                data.extend(
+                    _process_single_file_helper(
+                        file_path,
+                        file_parser_types,
+                        self.storage_manager.processed_dir,
+                        self.storage_manager.cache_dir,
+                    )
+                )
+            except Exception as e:
+                logger.error(f"PDF 파일 처리 실패: {file_path.name} - {e}")
+            completed += 1
+            _safe_invoke_progress(progress_callback, completed, total, file_path.name)
+        return data, completed
+
     def process_and_chunk(
         self, files: list[Path], progress_callback=None, file_parser_types: dict[str, str] | None = None
     ) -> list[dict[str, Any]]:
-        all_hierarchical_data = []
-        total_files = len(files)
-        if total_files == 0:
+        total = len(files)
+        if total == 0:
             return []
 
-        # 단일 파일인 경우 불필요한 프로세스 풀 생성 오버헤드 방지
-        if total_files == 1:
-            _safe_invoke_progress(progress_callback, 0, total_files, files[0].name)
-            res = _process_single_file_helper(
+        if total == 1:
+            _safe_invoke_progress(progress_callback, 0, total, files[0].name)
+            result = _process_single_file_helper(
                 files[0],
                 file_parser_types,
                 self.storage_manager.processed_dir,
                 self.storage_manager.cache_dir,
             )
-            all_hierarchical_data.extend(res)
-            _safe_invoke_progress(progress_callback, total_files, total_files, "모든 파일 처리 완료")
-            return all_hierarchical_data
+            _safe_invoke_progress(progress_callback, total, total, "모든 파일 처리 완료")
+            return result
 
-        # 하이브리드 처리: MD 파일은 프로세스 풀 병렬, PDF 파일은 OOM 방지를 위해 순차 처리
         pdf_files = [f for f in files if f.suffix.lower() == ".pdf"]
         non_pdf_files = [f for f in files if f.suffix.lower() != ".pdf"]
-        completed_count = 0
+        all_data, completed = [], 0
 
-        # Phase 1: 비-PDF 파일 병렬 처리
         if non_pdf_files:
-            max_workers = min(len(non_pdf_files), os.cpu_count() or 4)
-            logger.info(f"비-PDF 파일 병렬 파싱 활성화 ({len(non_pdf_files)}개 파일, Workers: {max_workers})")
+            chunk, completed = self._process_non_pdf_parallel(
+                non_pdf_files, file_parser_types, total, completed, progress_callback
+            )
+            all_data.extend(chunk)
 
-            futures_map = {}
-            with ProcessPoolExecutor(max_workers=max_workers) as executor:
-                for file_path in non_pdf_files:
-                    future = executor.submit(
-                        _process_single_file_helper,
-                        file_path,
-                        file_parser_types,
-                        self.storage_manager.processed_dir,
-                        self.storage_manager.cache_dir,
-                    )
-                    futures_map[future] = file_path
-
-                for future in as_completed(futures_map):
-                    file_path = futures_map[future]
-                    completed_count += 1
-                    try:
-                        res = future.result()
-                        all_hierarchical_data.extend(res)
-                    except Exception as e:
-                        logger.error(f"병렬 파일 처리 실패: {file_path.name} - {e}")
-
-                    _safe_invoke_progress(progress_callback, completed_count, total_files, file_path.name)
-
-        # Phase 2: PDF 파일 순차 처리 (Docling heavy AI 모델 OOM 방지)
         if pdf_files:
-            logger.info(f"PDF 파일 순차 처리 시작 ({len(pdf_files)}개 파일, 메모리 보호 모드)")
-            for file_path in pdf_files:
-                try:
-                    res = _process_single_file_helper(
-                        file_path,
-                        file_parser_types,
-                        self.storage_manager.processed_dir,
-                        self.storage_manager.cache_dir,
-                    )
-                    all_hierarchical_data.extend(res)
-                except Exception as e:
-                    logger.error(f"PDF 파일 처리 실패: {file_path.name} - {e}")
+            chunk, completed = self._process_pdf_sequential(
+                pdf_files, file_parser_types, total, completed, progress_callback
+            )
+            all_data.extend(chunk)
 
-                completed_count += 1
-                _safe_invoke_progress(progress_callback, completed_count, total_files, file_path.name)
-
-        return all_hierarchical_data
+        return all_data
 
     def save_processed_data(self, data: list[dict[str, Any]]) -> list[Path]:
         """전처리된 데이터를 source_id별 개별 JSON 파일로 저장합니다.
@@ -367,7 +376,9 @@ class IngestionPipeline:
 
         logger.info("데이터 정합성 검증 및 클린업 작업이 완료되었습니다.")
 
-    def _delete_from_vector_db(self, source_ids_to_delete: list[str], relative_paths_to_delete: list[str] | None):
+    def _delete_from_vector_db(
+        self, source_ids_to_delete: list[str], relative_paths_to_delete: list[str] | None
+    ) -> None:
         """벡터 DB에서 데이터 삭제"""
         # 상대 경로 기반 삭제 (원자적 정리 강화)
         if relative_paths_to_delete:
@@ -427,7 +438,7 @@ class IngestionPipeline:
                 logger.warning(f"파일 스캔 중 오류 ({json_file.name}): {e}")
         return deleted_count
 
-    def upsert_to_db(self, data: list[dict[str, Any]]):
+    def upsert_to_db(self, data: list[dict[str, Any]]) -> None:
         ids, docs, metas = [], [], []
         for parent in data:
             for child in parent["children"]:

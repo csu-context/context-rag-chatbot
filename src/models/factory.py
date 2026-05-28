@@ -1,4 +1,5 @@
 import logging
+from typing import Any
 
 from src.common.config import settings
 from src.common.constants import LLMDefaults
@@ -66,7 +67,7 @@ class LLMFactory:
                 )
 
     @staticmethod
-    def create_llm_with_fallback(model_type: str | None = None, model_name: str | None = None, **kwargs):
+    def create_llm_with_fallback(model_type: str | None = None, model_name: str | None = None, **kwargs) -> Any:
         """Fallback 체인(Ollama → Gemini → Claude). FALLBACK_ENABLED=False 또는 외부API 비허용 시 primary만 반환."""
         primary = LLMFactory.create_llm(model_type, model_name, **kwargs)
         primary_model = primary.get_model()

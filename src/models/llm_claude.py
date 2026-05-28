@@ -43,7 +43,7 @@ class ClaudeModel(BaseLLM):
 
         except Exception as e:
             logger.error(f"Claude 호출 중 오류 발생: {e}")
-            raise e
+            raise
 
     def get_model(self) -> ChatAnthropic:
         return self.model

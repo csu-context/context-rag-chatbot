@@ -171,7 +171,7 @@ class CrossEncoderReranker(BaseReranker):
                     return self._to_list(scores_pred)
                 except Exception as cpu_err:
                     logger.error(f"[{self.name}] Failed to run even on CPU fallback: {cpu_err}")
-                    raise cpu_err
+                    raise
             else:
                 raise
 

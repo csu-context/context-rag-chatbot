@@ -3,6 +3,7 @@ import logging
 import os
 import threading
 import time
+from collections.abc import Iterator
 from typing import Any, ClassVar
 
 from langchain_ollama import ChatOllama
@@ -156,7 +157,7 @@ class OllamaModel(BaseLLM):
         except Exception:
             return False
 
-    def pull_model_progress(self) -> Any:
+    def pull_model_progress(self) -> Iterator[dict[str, Any]]:
         """Ollama pull API를 스트리밍으로 호출해 진행 상태 dict를 yield합니다."""
         import json
 
@@ -206,7 +207,7 @@ class OllamaModel(BaseLLM):
                 logger.error(msg)
                 raise ConnectionError(msg) from e
             logger.error(f"Ollama({self.model_name}) 호출 중 오류 발생: {e}")
-            raise e
+            raise
 
     def get_model(self) -> ChatOllama:
         return self.model
