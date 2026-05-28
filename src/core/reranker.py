@@ -160,7 +160,11 @@ class CrossEncoderReranker(BaseReranker):
     def _predict_with_cpu_fallback(self, pairs: list) -> list:
         try:
             model = self._load_model()
-            scores_pred = model.predict(pairs, batch_size=settings.RERANKER_BATCH_SIZE)
+            try:
+                scores_pred = model.predict(pairs, batch_size=settings.RERANKER_BATCH_SIZE)
+            finally:
+                if self.device == "cuda" and torch.cuda.is_available():
+                    torch.cuda.empty_cache()
             return scores_pred.tolist() if hasattr(scores_pred, "tolist") else list(scores_pred)
         except RuntimeError as e:
             err_msg = str(e).lower()

@@ -62,7 +62,11 @@ class BGEEmbedder:
         logger.info(f"모델이 다음 장치에 로드되었습니다: {self.device}")
 
     def encode(self, sentences):
-        return self.model.encode(sentences, normalize_embeddings=True)
+        try:
+            return self.model.encode(sentences, normalize_embeddings=True)
+        finally:
+            if self.device == "cuda":
+                torch.cuda.empty_cache()
 
     def get_dimension(self):
         return self.model.get_sentence_embedding_dimension()
