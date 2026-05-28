@@ -19,7 +19,6 @@ class MetadataFields:
     PARENT_ID: Final[str] = "parent_id"
     CHUNK_ID: Final[str] = "chunk_id"
     SEC_TITLE: Final[str] = "sec_title"
-    CONTENT_PREVIEW: Final[str] = "content_preview"
     HEADER_PATH: Final[str] = "header_path"
     IS_TABLE: Final[str] = "is_table"
 
