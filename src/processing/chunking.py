@@ -151,12 +151,19 @@ class HierarchicalChunker:
                 merged_docs.append(doc_text)
 
         children_list: list[ChildChunk] = []
+        current_child_page = base_metadata.get(MetadataFields.PG_NUM, 1)
+
         for idx, child_text in enumerate(merged_docs):
             # 복원 전 텍스트에 표 토큰이 포함되어 있다면 해당 청크는 표 데이터를 포함함을 의미함
             has_table = "@@TABLE_" in child_text
 
             restored_text = MarkdownTableProtector.restore_tables(child_text, tables).strip()
-            if not restored_text:
+            
+            child_page_breaks = restored_text.count("<!-- page break -->")
+            clean_text = restored_text.replace("<!-- page break -->", "").strip()
+            
+            if not clean_text:
+                current_child_page += child_page_breaks
                 continue
 
             child_id = f"{parent_id}_c{idx}"
@@ -165,7 +172,7 @@ class HierarchicalChunker:
                 MetadataFields.SOURCE_ID: base_metadata.get(MetadataFields.SOURCE_ID, "UNKNOWN"),
                 MetadataFields.SRC_NAME: base_metadata.get(MetadataFields.SRC_NAME, "UNKNOWN_FILE"),
                 MetadataFields.DOC_TYPE: base_metadata.get(MetadataFields.DOC_TYPE, "markdown"),
-                MetadataFields.PG_NUM: base_metadata.get(MetadataFields.PG_NUM, 1),
+                MetadataFields.PG_NUM: current_child_page,
                 MetadataFields.SEC_TITLE: base_metadata.get(MetadataFields.SEC_TITLE, "기본 섹션"),
                 MetadataFields.CHUNK_ID: child_id,
                 MetadataFields.PARENT_ID: parent_id,
@@ -179,9 +186,11 @@ class HierarchicalChunker:
                 {
                     "chunk_id": child_id,
                     "metadata": child_metadata_dict,
-                    "text": restored_text,
+                    "text": clean_text,
                 }
             )
+            
+            current_child_page += child_page_breaks
 
         return children_list
 
@@ -190,8 +199,13 @@ class HierarchicalChunker:
         header_docs = self.md_splitter.split_text(markdown_text)
         hierarchical_data: list[ParentChunk] = []
 
+        current_page = base_metadata.get(MetadataFields.PG_NUM, 1)
+
         for doc in header_docs:
+            page_breaks_in_header = doc.page_content.count("<!-- page break -->")
+            
             if not doc.page_content.strip():
+                current_page += page_breaks_in_header
                 continue
 
             header_path = self._get_header_path(doc.metadata)
@@ -211,17 +225,21 @@ class HierarchicalChunker:
                 meta_for_children = base_metadata.copy()
                 meta_for_children[MetadataFields.SEC_TITLE] = sec_title
                 meta_for_children[MetadataFields.HEADER_PATH] = header_path
+                meta_for_children[MetadataFields.PG_NUM] = current_page
 
                 children_list = self.split_into_children(p_text, parent_id, meta_for_children)
 
+                page_breaks_in_parent = p_text.count("<!-- page break -->")
+
                 if not children_list:
+                    current_page += page_breaks_in_parent
                     continue
 
                 parent_metadata: ChunkMetadata = {
                     MetadataFields.SOURCE_ID: base_metadata.get(MetadataFields.SOURCE_ID, "UNKNOWN"),
                     MetadataFields.SRC_NAME: base_metadata.get(MetadataFields.SRC_NAME, "UNKNOWN_FILE"),
                     MetadataFields.DOC_TYPE: base_metadata.get(MetadataFields.DOC_TYPE, "markdown"),
-                    MetadataFields.PG_NUM: base_metadata.get(MetadataFields.PG_NUM, 1),
+                    MetadataFields.PG_NUM: current_page,
                     MetadataFields.SEC_TITLE: sec_title,
                     MetadataFields.CHUNK_ID: parent_id,
                     MetadataFields.PARENT_ID: None,
@@ -229,15 +247,19 @@ class HierarchicalChunker:
                     MetadataFields.PARSER: base_metadata.get(MetadataFields.PARSER, "manual"),
                     MetadataFields.RELATIVE_PATH: base_metadata.get(MetadataFields.RELATIVE_PATH, "UNKNOWN"),
                 }
+                
+                clean_p_text = p_text.replace("<!-- page break -->", "").strip()
 
                 hierarchical_data.append(
                     {
                         "parent_id": parent_id,
-                        "parent_text": p_text,
+                        "parent_text": clean_p_text,
                         "metadata": parent_metadata,
                         "children": children_list,
                     }
                 )
+                
+                current_page += page_breaks_in_parent
 
         return hierarchical_data
 
