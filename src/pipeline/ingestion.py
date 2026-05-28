@@ -1,9 +1,12 @@
 import logging
+import os
 import uuid
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
 from src.common.constants import MetadataFields
+from src.core.chains import invalidate_source_json_cache
 from src.core.storage import StorageManager
 from src.pipeline.strategies import (
     DoclingPDFParserStrategy,
@@ -17,6 +20,104 @@ from src.utils.unicode import normalize_path_to_nfc, normalize_to_nfc, normalize
 from src.vector_db.chroma_manager import ChromaDBManager
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_invoke_progress(callback, current: int, total: int, name: str) -> None:
+    if callback:
+        try:
+            callback(current, total, name)
+        except Exception as cb_e:
+            logger.error(f"진행 상황 콜백 호출 실패: {cb_e}")
+
+
+def _get_parser_strategy_for_file(file_path: Path, file_parser_types: dict[str, str] | None) -> ParserStrategy:
+    """파일 경로와 매니페스트 설정을 기반으로 적절한 파서 전략을 반환합니다."""
+    if file_path.suffix.lower() != ".pdf":
+        return MarkdownParserStrategy()
+
+    from src.utils.paths import RAW_DATA_DIR
+    from src.utils.unicode import normalize_to_nfc
+
+    rel_path = normalize_path_to_nfc(file_path.relative_to(RAW_DATA_DIR))
+    normalized_parser_types = {normalize_to_nfc(k): v for k, v in (file_parser_types or {}).items()}
+    file_parser = normalized_parser_types.get(rel_path, "manual").lower()
+
+    if file_parser == "docling":
+        try:
+            import docling  # noqa: F401
+
+            return DoclingPDFParserStrategy()
+        except ImportError:
+            logger.error("docling 라이브러리가 없어 manual 전략으로 대체합니다.")
+            return ManualParserStrategy()
+
+    return ManualParserStrategy()
+
+
+def _chunk_sections(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """파싱된 섹션들을 계층적 청크 구조로 변환합니다."""
+    if not sections:
+        return []
+
+    file_chunks_accum = []
+
+    if sections[0].get("is_raw_markdown"):
+        return create_parent_child_chunks(sections[0]["content"], sections[0]["metadata"])
+
+    if sections[0].get("is_combined"):
+        for sec in sections:
+            file_chunks_accum.extend(create_parent_child_chunks(sec["content"], sec["metadata"]))
+        return file_chunks_accum
+
+    # 기존 ManualParser PDF 처리 방식 (Fallback 호환성)
+    chunker = HierarchicalChunker()
+    for sec in sections:
+        parent_id = str(uuid.uuid4())
+        meta_for_children = sec["metadata"].copy()
+        sec_title = f"{sec.get('chapter', '기본 섹션')} > {sec.get('article', '기본 섹션')}"
+        meta_for_children[MetadataFields.SEC_TITLE] = sec_title
+        meta_for_children[MetadataFields.HEADER_PATH] = sec_title
+
+        children = chunker.split_into_children(sec["content"], parent_id, meta_for_children)
+
+        if children:
+            parent_metadata = {
+                MetadataFields.SOURCE_ID: sec["metadata"].get(MetadataFields.SOURCE_ID, "UNKNOWN"),
+                MetadataFields.SRC_NAME: sec["metadata"].get(MetadataFields.SRC_NAME, "UNKNOWN"),
+                MetadataFields.DOC_TYPE: sec["metadata"].get(MetadataFields.DOC_TYPE, "pdf"),
+                MetadataFields.PG_NUM: sec["metadata"].get(MetadataFields.PG_NUM, 1),
+                MetadataFields.SEC_TITLE: sec_title,
+                MetadataFields.CHUNK_ID: parent_id,
+                MetadataFields.PARENT_ID: None,
+                MetadataFields.HEADER_PATH: sec_title,
+                MetadataFields.IS_TABLE: False,
+                MetadataFields.RELATIVE_PATH: sec["metadata"].get(MetadataFields.RELATIVE_PATH, "UNKNOWN"),
+            }
+            file_chunks_accum.append(
+                {
+                    "parent_id": parent_id,
+                    "parent_text": sec["content"],
+                    "metadata": parent_metadata,
+                    "children": children,
+                }
+            )
+    return file_chunks_accum
+
+
+def _process_single_file_helper(
+    file_path: Path,
+    file_parser_types: dict[str, str] | None,
+    processed_dir: Path,
+    cache_dir: Path,
+) -> list[dict[str, Any]]:
+    try:
+        storage_manager = StorageManager(processed_dir, cache_dir)
+        active_strategy = _get_parser_strategy_for_file(file_path, file_parser_types)
+        sections = active_strategy.parse(file_path, storage_manager=storage_manager)
+        return _chunk_sections(sections)
+    except Exception as e:
+        logger.error(f"파일 처리 실패: {file_path.name} - {e!s}")
+        return []
 
 
 class IngestionPipeline:
@@ -51,98 +152,77 @@ class IngestionPipeline:
             files.extend(filtered_files)
         return files
 
-    def process_and_chunk(  # noqa: C901
+    def process_and_chunk(
         self, files: list[Path], progress_callback=None, file_parser_types: dict[str, str] | None = None
     ) -> list[dict[str, Any]]:
         all_hierarchical_data = []
         total_files = len(files)
-        for idx, file_path in enumerate(files):
-            if progress_callback:
-                try:
-                    progress_callback(idx, total_files, file_path.name)
-                except Exception as cb_e:
-                    logger.error(f"진행 상황 콜백 호출 실패: {cb_e}")
-            try:
-                # 1. 파일 확장자에 따른 전략 동적 선택 및 파싱
-                if file_path.suffix.lower() == ".pdf":
-                    rel_path = normalize_path_to_nfc(file_path.relative_to(RAW_DATA_DIR))
-                    normalized_parser_types = {normalize_to_nfc(k): v for k, v in (file_parser_types or {}).items()}
-                    file_parser = normalized_parser_types.get(rel_path, "manual").lower()
-                    logger.warning(
-                        f"=== 디버깅 파서 선택 ===\n"
-                        f"파일명: {file_path.name}\n"
-                        f"rel_path (NFC): {rel_path}\n"
-                        f"결정된 file_parser: {file_parser}\n"
-                        f"전달된 file_parser_types: {file_parser_types}\n"
-                        f"정규화된 parser_types: {normalized_parser_types}\n"
-                        f"========================="
+        if total_files == 0:
+            return []
+
+        # 단일 파일인 경우 불필요한 프로세스 풀 생성 오버헤드 방지
+        if total_files == 1:
+            _safe_invoke_progress(progress_callback, 0, total_files, files[0].name)
+            res = _process_single_file_helper(
+                files[0],
+                file_parser_types,
+                self.storage_manager.processed_dir,
+                self.storage_manager.cache_dir,
+            )
+            all_hierarchical_data.extend(res)
+            _safe_invoke_progress(progress_callback, total_files, total_files, "모든 파일 처리 완료")
+            return all_hierarchical_data
+
+        # 하이브리드 처리: MD 파일은 프로세스 풀 병렬, PDF 파일은 OOM 방지를 위해 순차 처리
+        pdf_files = [f for f in files if f.suffix.lower() == ".pdf"]
+        non_pdf_files = [f for f in files if f.suffix.lower() != ".pdf"]
+        completed_count = 0
+
+        # Phase 1: 비-PDF 파일 병렬 처리
+        if non_pdf_files:
+            max_workers = min(len(non_pdf_files), os.cpu_count() or 4)
+            logger.info(f"비-PDF 파일 병렬 파싱 활성화 ({len(non_pdf_files)}개 파일, Workers: {max_workers})")
+
+            futures_map = {}
+            with ProcessPoolExecutor(max_workers=max_workers) as executor:
+                for file_path in non_pdf_files:
+                    future = executor.submit(
+                        _process_single_file_helper,
+                        file_path,
+                        file_parser_types,
+                        self.storage_manager.processed_dir,
+                        self.storage_manager.cache_dir,
                     )
-                    if file_parser == "docling":
-                        try:
-                            import docling  # noqa: F401
+                    futures_map[future] = file_path
 
-                            active_strategy = DoclingPDFParserStrategy()
-                        except ImportError:
-                            logger.error("docling 라이브러리가 없어 manual 전략으로 대체합니다.")
-                            active_strategy = ManualParserStrategy()
-                    else:
-                        active_strategy = ManualParserStrategy()
-                else:
-                    active_strategy = MarkdownParserStrategy()
+                for future in as_completed(futures_map):
+                    file_path = futures_map[future]
+                    completed_count += 1
+                    try:
+                        res = future.result()
+                        all_hierarchical_data.extend(res)
+                    except Exception as e:
+                        logger.error(f"병렬 파일 처리 실패: {file_path.name} - {e}")
 
-                sections = active_strategy.parse(file_path, storage_manager=self.storage_manager)
+                    _safe_invoke_progress(progress_callback, completed_count, total_files, file_path.name)
 
-                if not sections:
-                    continue
+        # Phase 2: PDF 파일 순차 처리 (Docling heavy AI 모델 OOM 방지)
+        if pdf_files:
+            logger.info(f"PDF 파일 순차 처리 시작 ({len(pdf_files)}개 파일, 메모리 보호 모드)")
+            for file_path in pdf_files:
+                try:
+                    res = _process_single_file_helper(
+                        file_path,
+                        file_parser_types,
+                        self.storage_manager.processed_dir,
+                        self.storage_manager.cache_dir,
+                    )
+                    all_hierarchical_data.extend(res)
+                except Exception as e:
+                    logger.error(f"PDF 파일 처리 실패: {file_path.name} - {e}")
 
-                # 2. 계층적 청킹 (결과 타입별 분기 처리)
-                if sections[0].get("is_raw_markdown"):
-                    file_chunks = create_parent_child_chunks(sections[0]["content"], sections[0]["metadata"])
-                    all_hierarchical_data.extend(file_chunks)
-                elif sections[0].get("is_combined"):
-                    for sec in sections:
-                        file_chunks = create_parent_child_chunks(sec["content"], sec["metadata"])
-                        all_hierarchical_data.extend(file_chunks)
-                else:
-                    # 기존 ManualParser PDF 처리 방식 (Fallback 호환성)
-                    for sec in sections:
-                        parent_id = str(uuid.uuid4())
-                        meta_for_children = sec["metadata"].copy()
-                        sec_title = f"{sec.get('chapter', '기본 섹션')} > {sec.get('article', '기본 섹션')}"
-                        meta_for_children[MetadataFields.SEC_TITLE] = sec_title
-                        meta_for_children[MetadataFields.HEADER_PATH] = sec_title
-
-                        children = self.chunker.split_into_children(sec["content"], parent_id, meta_for_children)
-
-                        if children:
-                            parent_metadata = {
-                                MetadataFields.SOURCE_ID: sec["metadata"].get(MetadataFields.SOURCE_ID, "UNKNOWN"),
-                                MetadataFields.SRC_NAME: sec["metadata"].get(MetadataFields.SRC_NAME, "UNKNOWN"),
-                                MetadataFields.DOC_TYPE: sec["metadata"].get(MetadataFields.DOC_TYPE, "pdf"),
-                                MetadataFields.PG_NUM: sec["metadata"].get(MetadataFields.PG_NUM, 1),
-                                MetadataFields.SEC_TITLE: sec_title,
-                                MetadataFields.CHUNK_ID: parent_id,
-                                MetadataFields.PARENT_ID: None,
-                                MetadataFields.HEADER_PATH: sec_title,
-                                MetadataFields.IS_TABLE: False,
-                            }
-                            all_hierarchical_data.append(
-                                {
-                                    "parent_id": parent_id,
-                                    "parent_text": sec["content"],
-                                    "metadata": parent_metadata,
-                                    "children": children,
-                                }
-                            )
-
-            except Exception as e:
-                logger.error(f"파일 처리 실패: {file_path.name} - {e!s}")
-
-        if progress_callback and total_files > 0:
-            try:
-                progress_callback(total_files, total_files, "모든 파일 처리 완료")
-            except Exception as cb_e:
-                logger.error(f"진행 상황 콜백 호출 실패: {cb_e}")
+                completed_count += 1
+                _safe_invoke_progress(progress_callback, completed_count, total_files, file_path.name)
 
         return all_hierarchical_data
 
@@ -165,12 +245,14 @@ class IngestionPipeline:
             saved_paths.append(save_path)
             logger.info(f"   - 전처리 결과 저장: {save_path.name}")
 
+        # JSON 파일이 갱신되었으므로 RAG 파이프라인의 LRU 캐시 무효화
+        invalidate_source_json_cache()
         return saved_paths
 
     def _prepare_cleanup_targets(
         self, source_ids_to_delete: list[str] | None, filenames_to_delete: list[str] | None
     ) -> tuple[list[str], list[str]]:
-        valid_ids = list(set([sid for sid in (source_ids_to_delete or []) if sid]))
+        valid_ids = list({sid for sid in (source_ids_to_delete or []) if sid})
 
         target_filenames = []
         if filenames_to_delete:
@@ -188,12 +270,12 @@ class IngestionPipeline:
             logger.info(f"파일명 기반 클린업 대상 확인: {filenames_to_delete}")
             try:
                 results = self.db_manager.collection.get(
-                    where={"src_name": {"$in": target_filenames}}, include=["metadatas"]
+                    where={MetadataFields.SRC_NAME: {"$in": target_filenames}}, include=["metadatas"]
                 )
                 if results and results.get("metadatas"):
                     for meta in results["metadatas"]:
-                        if meta and "source_id" in meta:
-                            valid_ids.append(meta["source_id"])
+                        if meta and MetadataFields.SOURCE_ID in meta:
+                            valid_ids.append(meta[MetadataFields.SOURCE_ID])
             except Exception as e:
                 logger.error(f"파일명 기반 source_id 조회 중 오류 발생: {e}")
 
@@ -219,7 +301,7 @@ class IngestionPipeline:
         # 1. 벡터 DB 데이터 삭제
         if target_filenames:
             try:
-                self.db_manager.delete_documents(where={"src_name": {"$in": target_filenames}})
+                self.db_manager.delete_documents(where={MetadataFields.SRC_NAME: {"$in": target_filenames}})
                 logger.info(f"   - ChromaDB 파일명 기준 {len(target_filenames)}개 파일 삭제 완료")
             except Exception as e:
                 logger.error(f"ChromaDB 파일명 기준 삭제 실패: {e}")
@@ -241,6 +323,11 @@ class IngestionPipeline:
             for rel_path in relative_paths_to_delete:
                 logger.info(f"   - 상대 경로 기준 삭제: {rel_path}")
                 self.db_manager.delete_documents(where={MetadataFields.RELATIVE_PATH: rel_path})
+
+                # 윈도우/리눅스 경로 구분자 불일치 대응 (메타데이터 저장 시 경로가 다를 수 있음)
+                alt_rel_path = rel_path.replace("\\", "/") if "\\" in rel_path else rel_path.replace("/", "\\")
+                if alt_rel_path != rel_path:
+                    self.db_manager.delete_documents(where={MetadataFields.RELATIVE_PATH: alt_rel_path})
 
         # Source ID 기반 삭제 (하위 호환성)
         if source_ids_to_delete:

@@ -126,7 +126,12 @@ class PipelineOrchestrator:
         files_to_process = []
         for rel_path, info in new_files.items():
             old_info = old_files.get(rel_path)
-            if not old_info or old_info.get("hash") != info["hash"]:
+            # [DataOps] 기존 기록이 없거나, 해시가 다르거나,
+            # 혹은 해시에 매핑된 물리 가공 JSON 파일이 유실되었거나,
+            # 또는 DB(ChromaDB) 내 청크가 전혀 검색되지 않는 경우(유실) 재처리 대상에 포함합니다 (자가 치유).
+            json_path = self.storage_manager.get_processed_path(info["hash"])
+            db_count = self.ingestion_pipeline.db_manager.get_source_count(Path(rel_path).name)
+            if not old_info or old_info.get("hash") != info["hash"] or not json_path.exists() or db_count == 0:
                 files_to_process.append(RAW_DATA_DIR / rel_path)
 
         source_ids_to_delete = []
@@ -212,6 +217,38 @@ class PipelineOrchestrator:
                 except Exception as e:
                     step["status"] = f"failed: {e}"
 
+    def _reset_all_data(self):
+        """강제 초기화 시 기존 데이터를 물리적으로 모두 정리 (vector DB 및 파싱 캐시 등)"""
+        logger.info("ChromaDB 컬렉션 및 가공 파일 물리적 초기화 시작...")
+        self.ingestion_pipeline.db_manager.reset_collection()
+
+        for f in self.storage_manager.scan_processed_files():
+            try:
+                self.storage_manager.delete_file(f)
+            except Exception as e:
+                logger.error(f"JSON 파일 삭제 실패 {f}: {e}")
+
+        for f in CACHE_DIR.glob("*_parsed.pkl"):
+            try:
+                self.storage_manager.delete_file(f)
+            except Exception as e:
+                logger.error(f"캐시 파일 삭제 실패 {f}: {e}")
+
+    def _find_relative_path(self, file_name: str, old_files: dict[str, Any]) -> str | None:
+        """주어진 파일 이름에 해당하는 상대 경로를 찾습니다."""
+        normalized_file_name = normalize_to_nfc(file_name)
+
+        for rel_path in old_files:
+            normalized_rel_path = normalize_to_nfc(rel_path)
+            if Path(normalized_rel_path).name == normalized_file_name or normalized_rel_path == normalized_file_name:
+                return rel_path
+
+        for f in self.ingestion_pipeline.scan_files():
+            if normalize_to_nfc(f.name) == normalized_file_name:
+                return normalize_path_to_nfc(f.relative_to(RAW_DATA_DIR))
+
+        return None
+
     def process_single_file(self, file_path: Path, force: bool = False) -> bool:
         """특정 단일 파일에 대해 즉시 색인 업데이트를 수행합니다. (Atomic Update)"""
         if not file_path.exists():
@@ -241,7 +278,10 @@ class PipelineOrchestrator:
 
             # 3. 매니페스트 업데이트
             manifest = self._load_manifest()
-            manifest[relative_path] = generate_file_hash(file_path, self.parser_type)
+            manifest["files"][relative_path] = {
+                "hash": generate_file_hash(file_path, self.parser_type),
+                "parser_type": self.parser_type,
+            }
             self._save_manifest(manifest)
 
         logger.info(f"단일 파일 개별 동기화 완료: {relative_path}")
@@ -281,22 +321,7 @@ class PipelineOrchestrator:
                         "강제 동기화가 요청되었습니다. 모든 기존 데이터를 완전히 삭제하고 전체 재색인을 수행합니다."
                     )
 
-                    # 강제 초기화 시 기존 데이터를 물리적으로 모두 정리 (vector DB 및 파싱 캐시 등)
-                    logger.info("ChromaDB 컬렉션 및 가공 파일 물리적 초기화 시작...")
-                    self.ingestion_pipeline.db_manager.reset_collection()
-
-                    # processed_dir의 JSON 파일들 및 CACHE_DIR의 pkl 파일들 정리
-                    for f in self.storage_manager.scan_processed_files():
-                        try:
-                            self.storage_manager.delete_file(f)
-                        except Exception as e:
-                            logger.error(f"JSON 파일 삭제 실패 {f}: {e}")
-
-                    for f in CACHE_DIR.glob("*_parsed.pkl"):
-                        try:
-                            self.storage_manager.delete_file(f)
-                        except Exception as e:
-                            logger.error(f"캐시 파일 삭제 실패 {f}: {e}")
+                    self._reset_all_data()
 
                     files_to_process = all_files
                     source_ids_to_delete = []  # 이미 물리적으로 모두 삭제했으므로 부분 삭제 프로세스는 건너뜀
@@ -319,7 +344,9 @@ class PipelineOrchestrator:
                     files_to_process_relative = [str(f.relative_to(RAW_DATA_DIR)) for f in files_to_process]
                     # 이미 source_ids_to_delete로 처리되는 항목(변경분)은 제외하고,
                     # 삭제된 파일들만 relative_paths_to_delete에 추가
-                    relative_paths_to_delete = [p for p in old_manifest if p not in new_manifest]
+                    old_files_keys = old_manifest.get("files", {}).keys()
+                    new_files_keys = new_manifest.get("files", {}).keys()
+                    relative_paths_to_delete = [p for p in old_files_keys if p not in new_files_keys]
                     # 파서 변경 대응을 위해 현재 처리 대상인 파일들의 상대 경로도 추가 (중복되더라도 DB쪽은 안전)
                     relative_paths_to_delete += files_to_process_relative
 
@@ -391,23 +418,7 @@ class PipelineOrchestrator:
         old_manifest = self._load_manifest()
         old_files = old_manifest.get("files", {})
 
-        normalized_file_name = normalize_to_nfc(file_name)
-        target_rel_path = None
-        for rel_path in old_files:
-            normalized_rel_path = normalize_to_nfc(rel_path)
-            is_match = (
-                Path(normalized_rel_path).name == normalized_file_name or normalized_rel_path == normalized_file_name
-            )
-            if is_match:
-                target_rel_path = rel_path
-                break
-
-        if not target_rel_path:
-            for f in self.ingestion_pipeline.scan_files():
-                normalized_f_name = normalize_to_nfc(f.name)
-                if normalized_f_name == normalized_file_name:
-                    target_rel_path = normalize_path_to_nfc(f.relative_to(RAW_DATA_DIR))
-                    break
+        target_rel_path = self._find_relative_path(file_name, old_files)
 
         if not target_rel_path:
             logger.warning(f"파서 변경 대상 파일을 찾을 수 없습니다: {file_name}")
@@ -431,7 +442,7 @@ class PipelineOrchestrator:
         target_path = RAW_DATA_DIR / target_rel_path
         self.run_ingestion(force=False, progress_callback=progress_callback, target_files=[target_path])
 
-    def update_multiple_file_parsers(self, file_parser_map: dict[str, str], progress_callback=None):  # noqa: C901
+    def update_multiple_file_parsers(self, file_parser_map: dict[str, str], progress_callback=None):
         """복수 파일의 동기화 파서 타입을 한꺼번에 변경하고, 대상 파일들을 즉각 재색인합니다."""
         old_manifest = self._load_manifest()
         old_files = old_manifest.get("files", {})
@@ -440,26 +451,7 @@ class PipelineOrchestrator:
         hashes_to_delete = []
         for file_name, new_parser in file_parser_map.items():
             new_parser_lower = new_parser.lower()
-
-            normalized_file_name = normalize_to_nfc(file_name)
-
-            target_rel_path = None
-            for rel_path in old_files:
-                normalized_rel_path = normalize_to_nfc(rel_path)
-                is_match = (
-                    Path(normalized_rel_path).name == normalized_file_name
-                    or normalized_rel_path == normalized_file_name
-                )
-                if is_match:
-                    target_rel_path = rel_path
-                    break
-
-            if not target_rel_path:
-                for f in self.ingestion_pipeline.scan_files():
-                    normalized_f_name = normalize_to_nfc(f.name)
-                    if normalized_f_name == normalized_file_name:
-                        target_rel_path = normalize_path_to_nfc(f.relative_to(RAW_DATA_DIR))
-                        break
+            target_rel_path = self._find_relative_path(file_name, old_files)
 
             if target_rel_path:
                 logger.info(f"파일 {target_rel_path}의 파서를 {new_parser_lower}로 변경 등록합니다.")
@@ -486,16 +478,7 @@ class PipelineOrchestrator:
             # 변경된 파일들에 대해서만 일괄 부분 동기화 가동
             target_paths = []
             for file_name in file_parser_map:
-                target_rel_path = None
-                for rel_path in old_files:
-                    if Path(rel_path).name == file_name or rel_path == file_name:
-                        target_rel_path = rel_path
-                        break
-                if not target_rel_path:
-                    for f in self.ingestion_pipeline.scan_files():
-                        if f.name == file_name:
-                            target_rel_path = str(f.relative_to(RAW_DATA_DIR))
-                            break
+                target_rel_path = self._find_relative_path(file_name, old_files)
                 if target_rel_path:
                     target_paths.append(RAW_DATA_DIR / target_rel_path)
 

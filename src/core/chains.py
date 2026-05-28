@@ -49,14 +49,6 @@ class RAGPipeline:
         self.tracing_logger = TracingLogger()
         self.cache = SemanticCache()
 
-    @staticmethod
-    def _build_cache_query(query: str, history: list[dict]) -> str:
-        if not history:
-            return query
-        recent_history = history[-6:]
-        history_text = "\n".join([f"{msg.get('role', 'unknown')}: {msg.get('content', '')}" for msg in recent_history])
-        return f"[History]\n{history_text}\n[Current Query]\n{query}"
-
     def _resolve_parent_documents(self, docs: list[Document]) -> list[Document]:
         """자식 청크로 검색된 문서들을 부모 청크의 원문으로 전환합니다."""
         resolved_docs = []
@@ -157,6 +149,19 @@ class RAGPipeline:
             )
             return final_docs, scores
 
+    def _build_cache_query(self, query: str, history: list[dict[str, Any]]) -> str:
+        """대화 맥락에 따른 캐시 오염을 방지하기 위해 최근 대화 이력을 쿼리에 결합합니다."""
+        if not history:
+            return query
+        recent_history = history[-6:]
+        history_parts = []
+        for msg in recent_history:
+            role = msg.get("role", "")
+            content = msg.get("content", "")
+            history_parts.append(f"{role}: {content}")
+        history_str = "\n".join(history_parts)
+        return f"[History]\n{history_str}\n\n[Current Query]\n{query}"
+
     def _stream_generation(
         self, query: str, final_docs: list[Document], history: list[dict[str, Any]], session: Any
     ) -> Iterator[str]:
@@ -219,11 +224,12 @@ class RAGPipeline:
         history = input_dict.get("history", [])
 
         cache_query = self._build_cache_query(query, history)
+        use_cache = True
 
         with self.tracing_logger.start_session(query=query) as session:
             # 1. Semantic Cache Check
             yield {"stage": "cache", "status": "running"}
-            cached_result = self.cache.get(cache_query)
+            cached_result = self.cache.get(cache_query) if use_cache else None
             if cached_result:
                 session.data["cache_hit"] = True
                 yield {"stage": "cache", "status": "hit"}
@@ -275,7 +281,8 @@ class RAGPipeline:
                     }
                 )
 
-            self.cache.add(cache_query, full_answer, docs_for_cache)
+            if use_cache:
+                self.cache.add(cache_query, full_answer, docs_for_cache)
 
             yield {"stage": "citation", "status": "complete", "output": citations_str, "source_documents": final_docs}
 
