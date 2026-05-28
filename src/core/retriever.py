@@ -41,25 +41,21 @@ class EnsembleRetriever(BaseRetriever):
 
         return self._rrf_fusion(bm25_results, vector_results, n)
 
-    def _get_bm25_results(self, query: str, n: int, metadata_filter: dict | None = None) -> list:
-        if not self.bm25:
-            logger.info("BM25Manager 미연결 -> BM25 검색 생략")
+    def _safe_retrieve(self, manager, name: str, query: str, n: int, metadata_filter: dict | None = None) -> list:
+        if not manager:
+            logger.info(f"{name} 미연결 -> {name} 검색 생략")
             return []
         try:
-            return self.bm25.retrieve(query, n, metadata_filter=metadata_filter)
+            return manager.retrieve(query, n, metadata_filter=metadata_filter)
         except Exception as e:
-            logger.error(f"BM25 검색 오류: {e}")
+            logger.error(f"{name} 검색 오류: {e}")
             return []
 
+    def _get_bm25_results(self, query: str, n: int, metadata_filter: dict | None = None) -> list:
+        return self._safe_retrieve(self.bm25, "BM25Manager", query, n, metadata_filter)
+
     def _get_vector_results(self, query: str, n: int, metadata_filter: dict | None = None) -> list:
-        if not self.chroma:
-            logger.info("ChromaManager 미연결 -> Vector 검색 생략")
-            return []
-        try:
-            return self.chroma.retrieve(query, n, metadata_filter=metadata_filter)
-        except Exception as e:
-            logger.error(f"Vector 검색 오류: {e}")
-            return []
+        return self._safe_retrieve(self.chroma, "ChromaManager", query, n, metadata_filter)
 
     def _rrf_fusion(self, bm25_results: list, vector_results: list, n: int) -> list:
         """Reciprocal Rank Fusion: score = weight * (1 / (k + rank))"""

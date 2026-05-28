@@ -49,9 +49,12 @@ class PipelineOrchestrator:
             self._initialized = True
             logger.info("PipelineOrchestrator 초기화 완료.")
 
+    def _make_manifest(self, files: dict[str, Any]) -> dict[str, Any]:
+        return {"version": "2.0", "global_parser_type": self.parser_type, "files": files}
+
     def _load_manifest(self) -> dict[str, Any]:
         """manifest.json 파일을 로드합니다. 파일이 없거나 손상된 경우, 빈 2.0 매니페스트를 반환합니다."""
-        default_manifest = {"version": "2.0", "global_parser_type": self.parser_type, "files": {}}
+        default_manifest = self._make_manifest({})
         if not self.manifest_path.exists():
             logger.warning("Manifest 파일이 없어 전체 재색인을 수행합니다.")
             return default_manifest
@@ -67,7 +70,7 @@ class PipelineOrchestrator:
                     for k, v in data.items():
                         if isinstance(v, str):
                             files_converted[k] = {"hash": v, "parser_type": self.parser_type}
-                data = {"version": "2.0", "global_parser_type": self.parser_type, "files": files_converted}
+                data = self._make_manifest(files_converted)
             return data
         except (json.JSONDecodeError, FileNotFoundError):
             logger.warning("Manifest 파일이 손상되었거나 찾을 수 없어 전체 재색인을 수행합니다.")
@@ -116,7 +119,7 @@ class PipelineOrchestrator:
             h = generate_file_hash(f, file_parser_type)
             new_files[rel_path] = {"hash": h, "parser_type": file_parser_type}
 
-        new_manifest = {"version": "2.0", "global_parser_type": self.parser_type, "files": new_files}
+        new_manifest = self._make_manifest(new_files)
 
         files_to_process = []
         for rel_path, info in new_files.items():
@@ -305,8 +308,7 @@ class PipelineOrchestrator:
                 }
                 for f in all_files
             }
-            new_manifest = {"version": "2.0", "global_parser_type": self.parser_type, "files": new_files}
-            return all_files, [], None, new_manifest
+            return all_files, [], None, self._make_manifest(new_files)
 
         files_to_process, source_ids_to_delete, new_manifest = self._calculate_delta(all_files, old_manifest)
         files_to_process_relative = [str(f.relative_to(RAW_DATA_DIR)) for f in files_to_process]

@@ -143,6 +143,10 @@ class CrossEncoderReranker(BaseReranker):
                 raise
         return self._model
 
+    @staticmethod
+    def _to_list(scores_pred) -> list:
+        return scores_pred.tolist() if hasattr(scores_pred, "tolist") else list(scores_pred)
+
     def _predict_with_cpu_fallback(self, pairs: list) -> list:
         try:
             model = self._load_model()
@@ -151,7 +155,7 @@ class CrossEncoderReranker(BaseReranker):
             finally:
                 if self.device == "cuda" and torch.cuda.is_available():
                     torch.cuda.empty_cache()
-            return scores_pred.tolist() if hasattr(scores_pred, "tolist") else list(scores_pred)
+            return self._to_list(scores_pred)
         except RuntimeError as e:
             err_msg = str(e).lower()
             if self.device != "cpu" and any(x in err_msg for x in ["cuda", "mps", "device", "out of memory", "oom"]):
@@ -164,7 +168,7 @@ class CrossEncoderReranker(BaseReranker):
                 try:
                     model = self._load_model()
                     scores_pred = model.predict(pairs, batch_size=settings.RERANKER_BATCH_SIZE)
-                    return scores_pred.tolist() if hasattr(scores_pred, "tolist") else list(scores_pred)
+                    return self._to_list(scores_pred)
                 except Exception as cpu_err:
                     logger.error(f"[{self.name}] Failed to run even on CPU fallback: {cpu_err}")
                     raise cpu_err

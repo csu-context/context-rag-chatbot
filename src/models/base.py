@@ -47,6 +47,18 @@ class BaseLLM(ABC):
     def __init__(self, model_name: str):
         self.model_name = model_name
 
+    @staticmethod
+    def extract_usage(response: Any) -> dict[str, int]:
+        """LangChain 응답 객체에서 토큰 사용량을 추출합니다."""
+        if not hasattr(response, "usage_metadata") or not response.usage_metadata:
+            return {}
+        meta = response.usage_metadata
+        return {
+            "input_tokens": meta.get("input_token_count") or meta.get("input_tokens") or 0,
+            "output_tokens": meta.get("output_token_count") or meta.get("output_tokens") or 0,
+            "total_tokens": meta.get("total_token_count") or meta.get("total_tokens") or 0,
+        }
+
     @abstractmethod
     def invoke(self, prompt: Any, **kwargs: Any) -> LLMResponse:
         """단일 질문에 대한 응답을 생성합니다."""
