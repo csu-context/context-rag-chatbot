@@ -127,11 +127,10 @@ class ChromaConnectionMixin:
             existing_metadata = self.collection.metadata
             current_model = self.embedding_fn.model_name
 
-            from src.processing.chunking import HierarchicalChunker
+            from src.processing.chunking import _CHILD_CHUNK_SIZE, _PARENT_CHUNK_SIZE
 
-            chunker = HierarchicalChunker()
-            current_parent_size = chunker.parent_chunk_size
-            current_child_size = chunker.child_chunk_size
+            current_parent_size = _PARENT_CHUNK_SIZE
+            current_child_size = _CHILD_CHUNK_SIZE
 
             needs_reset = False
             reset_reason = ""

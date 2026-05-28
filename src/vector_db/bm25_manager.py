@@ -1,6 +1,8 @@
+import hashlib
 import json
 import logging
 import traceback
+from pathlib import Path
 from typing import Any, ClassVar
 
 import numpy as np
@@ -15,6 +17,10 @@ logger = logging.getLogger(__name__)
 
 _CORPUS_FILE = "corpus.json"
 _MANIFEST_FILE = "manifest.json"
+
+
+def _file_hash(path: Path) -> str:
+    return hashlib.md5(path.read_bytes(), usedforsecurity=False).hexdigest()
 
 
 class BM25Manager(BaseRetriever):
@@ -123,14 +129,18 @@ class BM25Manager(BaseRetriever):
             manifest_path = self.cache_dir / _MANIFEST_FILE
 
             existing_corpus = []
+            existing_manifest: dict = {}
             if corpus_path.exists() and manifest_path.exists():
                 try:
                     with open(corpus_path, encoding="utf-8") as f:
                         existing_corpus = json.load(f)
+                    with open(manifest_path, encoding="utf-8") as f:
+                        existing_manifest = json.load(f)
                     self.bm25 = BM25PlusIndex.load(self.cache_dir)
                 except Exception as cache_err:
                     logger.warning(f"기존 캐시 로드 실패 (전체 재구성): {cache_err}")
                     existing_corpus = []
+                    existing_manifest = {}
 
             # 현재 폴더에 있는 source_id 목록 추출 (파일명이 source_id임)
             current_sids = {f.stem for f in json_files}
@@ -144,16 +154,14 @@ class BM25Manager(BaseRetriever):
 
             # 2. 변경된 파일 감지 (신규 추가, 수정됨, 삭제됨)
             modified_sids = set()
+            stored_hashes = existing_manifest.get("file_hashes", {})
+            current_hashes = {f.stem: _file_hash(f) for f in json_files}
 
-            # 캐시가 완전히 깨졌거나 로드 실패 시 전체 재구축
             if not existing_corpus or self.bm25 is None:
                 modified_sids = current_sids
             else:
-                cache_time = manifest_path.stat().st_mtime
-                for f in json_files:
-                    sid = f.stem
-                    # 파일 수정 시각이 캐시 기록 시각보다 최근이거나, 기존 코퍼스에 없는 경우
-                    if f.stat().st_mtime > cache_time or sid not in existing_sids:
+                for sid, h in current_hashes.items():
+                    if h != stored_hashes.get(sid) or sid not in existing_sids:
                         modified_sids.add(sid)
 
             deleted_sids = existing_sids - current_sids
@@ -219,7 +227,7 @@ class BM25Manager(BaseRetriever):
                 json.dump(self.corpus_data, f, ensure_ascii=False, separators=(",", ":"))
 
             with open(self.cache_dir / _MANIFEST_FILE, "w", encoding="utf-8") as f:
-                json.dump({"docs": len(self.corpus_data)}, f)
+                json.dump({"docs": len(self.corpus_data), "file_hashes": current_hashes}, f)
 
             logger.info(f"통합 인덱스 증분 업데이트 및 저장 완료: {len(self.corpus_data)} docs")
 
@@ -262,10 +270,8 @@ class BM25Manager(BaseRetriever):
         if not matching_indices:
             return []
 
-        # 매칭되는 문서들의 점수 중 최댓값을 구함 (전역 정규화 스케일러용)
         s_max = float(np.max(scores[matching_indices]))
-        s_min = 0.0
-        denom = s_max - s_min if s_max > 0.0 else 1.0
+        denom = s_max if s_max > 0.0 else 1.0
 
         # 매칭된 인덱스들에 대해서만 스코어 기반 정렬 수행
         matching_scores = scores[matching_indices]
@@ -280,7 +286,7 @@ class BM25Manager(BaseRetriever):
             sorted_sub_indices = top_k_sub[np.argsort(matching_scores[top_k_sub])[::-1]].tolist()
 
         top_indices = [matching_indices[i] for i in sorted_sub_indices]
-        normalized = [(float(scores[i]) - s_min) / denom for i in top_indices]
+        normalized = [float(scores[i]) / denom for i in top_indices]
 
         results = []
         for rank, (idx, norm_score) in enumerate(zip(top_indices, normalized, strict=False)):

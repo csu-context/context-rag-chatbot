@@ -371,12 +371,11 @@ class RerankerFactory:
                     "(ALLOW_EXTERNAL_API=True 및 ALLOW_EXTERNAL_RERANKER=True)."
                 )
 
-        if reranker_type == "cohere":
-            logger.info("Cohere 리랭커를 사용합니다.")
-            return CohereReranker(top_k=top_k)
-        elif reranker_type == "jina":
-            logger.info("Jina 리랭커를 사용합니다.")
-            return JinaReranker(top_k=top_k)
-        else:
-            logger.info(f"로컬 CrossEncoder 리랭커를 사용합니다. (모델: {settings.RERANKER_MODEL_NAME})")
-            return CrossEncoderReranker.get_instance(model_name=settings.RERANKER_MODEL_NAME, top_k=top_k)
+        _registry: dict[str, type] = {"cohere": CohereReranker, "jina": JinaReranker}
+        if reranker_type in _registry:
+            cls = _registry[reranker_type]
+            logger.info(f"{cls.__name__} 리랭커를 사용합니다.")
+            return cls(top_k=top_k)
+
+        logger.info(f"로컬 CrossEncoder 리랭커를 사용합니다. (모델: {settings.RERANKER_MODEL_NAME})")
+        return CrossEncoderReranker.get_instance(model_name=settings.RERANKER_MODEL_NAME, top_k=top_k)

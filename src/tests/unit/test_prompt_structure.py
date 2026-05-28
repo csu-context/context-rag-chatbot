@@ -2,7 +2,7 @@
 프롬프트 최적화 검증 테스트
 """
 
-from src.core.prompts import RAG_SYSTEM_PROMPT
+from src.core.prompts import get_system_prompt
 
 
 def test_prompt_structure():
@@ -15,8 +15,9 @@ def test_prompt_structure():
         "<Context>",  # 컨텍스트 태그
     ]
 
+    prompt = get_system_prompt()
     for elem in required_elements:
-        assert elem in RAG_SYSTEM_PROMPT, f"필수 요소 누락: '{elem}'"
+        assert elem in prompt, f"필수 요소 누락: '{elem}'"
 
 
 def test_chain_structure():

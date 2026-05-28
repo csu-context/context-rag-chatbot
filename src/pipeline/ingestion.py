@@ -54,23 +54,21 @@ def _get_parser_strategy_for_file(file_path: Path, file_parser_types: dict[str, 
     return ManualParserStrategy()
 
 
-def _chunk_sections(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """파싱된 섹션들을 계층적 청크 구조로 변환합니다."""
-    if not sections:
-        return []
+def _chunk_raw_markdown(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return create_parent_child_chunks(sections[0]["content"], sections[0]["metadata"])
 
-    file_chunks_accum = []
 
-    if sections[0].get("is_raw_markdown"):
-        return create_parent_child_chunks(sections[0]["content"], sections[0]["metadata"])
-
-    if sections[0].get("is_combined"):
-        for sec in sections:
-            file_chunks_accum.extend(create_parent_child_chunks(sec["content"], sec["metadata"]))
-        return file_chunks_accum
-
-    # 기존 ManualParser PDF 처리 방식 (Fallback 호환성)
+def _chunk_combined(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
     chunker = HierarchicalChunker()
+    result = []
+    for sec in sections:
+        result.extend(chunker.chunk(sec["content"], sec["metadata"]))
+    return result
+
+
+def _chunk_manual_pdf(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    chunker = HierarchicalChunker()
+    result = []
     for sec in sections:
         parent_id = str(uuid.uuid4())
         meta_for_children = sec["metadata"].copy()
@@ -93,7 +91,7 @@ def _chunk_sections(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 MetadataFields.IS_TABLE: False,
                 MetadataFields.RELATIVE_PATH: sec["metadata"].get(MetadataFields.RELATIVE_PATH, "UNKNOWN"),
             }
-            file_chunks_accum.append(
+            result.append(
                 {
                     "parent_id": parent_id,
                     "parent_text": sec["content"],
@@ -101,7 +99,18 @@ def _chunk_sections(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     "children": children,
                 }
             )
-    return file_chunks_accum
+    return result
+
+
+def _chunk_sections(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not sections:
+        return []
+    first = sections[0]
+    if first.get("is_raw_markdown"):
+        return _chunk_raw_markdown(sections)
+    if first.get("is_combined"):
+        return _chunk_combined(sections)
+    return _chunk_manual_pdf(sections)
 
 
 def _process_single_file_helper(
@@ -129,12 +138,11 @@ class IngestionPipeline:
         raw_dir: Path = RAW_DATA_DIR,
         processed_dir: Path = PROCESSED_DATA_DIR,
         collection_name: str = "rag_collection",
-        storage_manager: StorageManager = None,
+        storage_manager: StorageManager | None = None,
     ):
         self.strategy = strategy
         self.raw_dir = raw_dir
         self.processed_dir = processed_dir
-        self.chunker = HierarchicalChunker()
         self.db_manager = ChromaDBManager(collection_name=collection_name)
         # StorageManager 연동
         self.storage_manager = storage_manager if storage_manager else StorageManager(processed_dir, CACHE_DIR)

@@ -12,6 +12,9 @@ from src.common.constants import MetadataFields
 from src.common.schema import ChildChunk, ChunkMetadata, ParentChunk
 from src.utils.paths import ensure_directories
 
+_PARENT_CHUNK_SIZE: int = 1500
+_CHILD_CHUNK_SIZE: int = 400
+
 
 class MarkdownTableProtector:
     """마크다운 문서 내의 표(Table) 데이터를 식별, 보호 및 복원하는 유틸리티"""
@@ -49,6 +52,13 @@ class MarkdownTableProtector:
         return chunks
 
     @staticmethod
+    def _register_token(text: str, registry: dict[str, str]) -> str:
+        token_base = f"@@TABLE_{uuid.uuid4().hex}@@"
+        padded_token = token_base + "_" * max(0, len(text) - len(token_base))
+        registry[padded_token] = text
+        return padded_token
+
+    @staticmethod
     def protect_tables(text: str, max_chunk_size: int) -> tuple[str, dict[str, str]]:
         """표(Table) 데이터가 청킹 도중 잘리지 않도록 특수 토큰으로 일시 치환"""
         tables = {}
@@ -64,20 +74,9 @@ class MarkdownTableProtector:
             table_text = match.group(0).strip()
             if len(table_text) > max_chunk_size:
                 split_tables = MarkdownTableProtector.split_markdown_table(table_text, max_chunk_size)
-                result_tokens = []
-                for st in split_tables:
-                    token_base = f"@@TABLE_{uuid.uuid4().hex}@@"
-                    padding = "_" * max(0, len(st) - len(token_base))
-                    padded_token = token_base + padding
-                    tables[padded_token] = st
-                    result_tokens.append(f"\n\n{padded_token}\n\n")
-                return "".join(result_tokens)
-            else:
-                token_base = f"@@TABLE_{uuid.uuid4().hex}@@"
-                padding = "_" * max(0, len(table_text) - len(token_base))
-                padded_token = token_base + padding
-                tables[padded_token] = table_text
-                return f"\n\n{padded_token}\n\n"
+                tokens = [MarkdownTableProtector._register_token(st, tables) for st in split_tables]
+                return "".join(f"\n\n{t}\n\n" for t in tokens)
+            return f"\n\n{MarkdownTableProtector._register_token(table_text, tables)}\n\n"
 
         protected_text = table_pattern.sub(replace_with_token, text)
         return protected_text, tables
@@ -93,9 +92,9 @@ class MarkdownTableProtector:
 class HierarchicalChunker:
     def __init__(
         self,
-        parent_chunk_size: int = 1500,
+        parent_chunk_size: int = _PARENT_CHUNK_SIZE,
         parent_chunk_overlap: int = 150,
-        child_chunk_size: int = 400,
+        child_chunk_size: int = _CHILD_CHUNK_SIZE,
         child_chunk_overlap: int = 50,
         min_chunk_size: int = 50,
     ):

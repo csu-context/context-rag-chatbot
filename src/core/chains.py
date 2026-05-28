@@ -211,14 +211,10 @@ class RAGPipeline:
         final_k = input_dict.get("final_k", 5)
         history = input_dict.get("history", [])
 
-        # 대화 이력이 병합된 고유 캐시 쿼리 생성
-        cache_query = ContextBuilderNode.build_cache_query(query, history)
-        use_cache = True
-
         with self.tracing_logger.start_session(query=query) as session:
             # 1. Semantic Cache Check
             yield {"stage": "cache", "status": "running"}
-            cached_result = self.cache.get(cache_query) if use_cache else None
+            cached_result = self.cache.get(query)
             if cached_result:
                 session.data["cache_hit"] = True
                 yield {"stage": "cache", "status": "hit"}
@@ -268,8 +264,7 @@ class RAGPipeline:
                 for doc in final_docs
             ]
 
-            if use_cache:
-                self.cache.add(cache_query, full_answer, docs_for_cache)
+            self.cache.add(query, full_answer, docs_for_cache)
 
             yield {"stage": "citation", "status": "complete", "output": citations_str, "source_documents": final_docs}
 

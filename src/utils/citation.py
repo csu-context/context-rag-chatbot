@@ -8,7 +8,7 @@ def normalize_text(text: str) -> str:
     return normalize_to_nfc(text)
 
 
-def format_citations(docs: list[Document]) -> str:
+def format_citations(docs: list[Document]):
     """
     검색된 문서들(Document 객체 리스트)에서 메타데이터를 추출하여
     번호가 매겨진 '참조된 문서 목록' 형식을 생성합니다.

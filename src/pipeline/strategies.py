@@ -76,7 +76,6 @@ class DoclingPDFParserStrategy(ParserStrategy):
 
     def __init__(self):
         self.pdf_parser = DoclingPDFParser()  # AI 모델 1회만 로드
-        self.manual_parser = ManualParser  # PDF 외 파일 Fallback
 
     def parse(self, file_path: Path, storage_manager: Any = None) -> list[dict[str, Any]]:
         if file_path.suffix.lower() == ".pdf":
@@ -120,5 +119,4 @@ class DoclingPDFParserStrategy(ParserStrategy):
         else:
             # PDF가 아닌 경우 ManualParser로 Fallback
             relative_path = _safe_relative_to(file_path, RAW_DATA_DIR)
-            parser = self.manual_parser(str(relative_path), parser_type="docling")
-            return parser.parse()
+            return ManualParser(str(relative_path), parser_type="docling").parse()
