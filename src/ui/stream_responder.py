@@ -10,7 +10,6 @@ from src.common.config import settings
 logger = logging.getLogger(__name__)
 
 
-
 def _trim_chat_history() -> None:
     max_messages = settings.MAX_CHAT_HISTORY_TURNS * 2
     if len(st.session_state.messages) > max_messages:
