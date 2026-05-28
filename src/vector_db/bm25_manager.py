@@ -1,7 +1,7 @@
 import json
 import logging
 import traceback
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
 from kiwipiepy import Kiwi
@@ -18,18 +18,6 @@ _MANIFEST_FILE = "manifest.json"
 
 
 class BM25Manager(BaseRetriever):
-    """
-    키워드 기반 검색(BM25)을 관리하는 클래스.
-    가공된 JSON 데이터를 로드하여 인덱스를 빌드하고, 형태소 분석 기반의 키워드 검색을 수행함.
-
-    인덱스 캐시 구조 (.cache/bm25_v2/):
-      tf_matrix.npz  — scipy sparse CSC TF 행렬
-      arrays.npz     — numpy: idf 배열, doc_len 배열, 스칼라 파라미터
-      vocab.json     — 단어→열 인덱스 매핑
-      corpus.json    — 슬림 코퍼스 (content + metadata + chunk_id만 보존)
-      manifest.json  — 캐시 유효성 타임스탬프
-    """
-
     def __init__(self, data_dir=PROCESSED_DATA_DIR, cache_dir=BM25_CACHE_DIR):
         self.data_dir = data_dir
         self.cache_dir = cache_dir
@@ -57,32 +45,35 @@ class BM25Manager(BaseRetriever):
             text = text.replace(k, v)
         return text
 
+    STOPWORDS: ClassVar[set[str]] = {
+        "대한",
+        "대해",
+        "위해",
+        "통해",
+        "경우",
+        "또한",
+        "모든",
+        "의한",
+        "따라",
+        "기타",
+        "사항",
+        "있거나",
+        "있으며",
+        "의하여",
+        "관하여",
+        "다만",
+    }
+
     def _tokenizer(self, text: str) -> list[str]:
-        """한국어 형태소 분석을 통해 의미 있는 토큰(명사, 용언 등)만 추출함."""
+        """한국어 형태소 분석을 통해 의미 있는 토큰(명사, 용언 등)만 추출하고 불용어를 필터링함."""
         if not text:
             return []
         text = self._apply_synonyms(text)
         # N: 명사, V: 용언(동사/형용사), S: 외국어/숫자 추출 및 1글자 노이즈 제거
-        return [t.form for t in self.kiwi.tokenize(text) if t.tag.startswith(("N", "V", "S")) and len(t.form) > 1]
-
-    def _get_all_json_files(self) -> list:
-        return list(self.data_dir.glob("*.json"))
-
-    def _should_rebuild_index(self, json_files: list) -> bool:
-        """manifest.json 타임스탬프를 기준으로 재빌드 여부를 결정함."""
-        manifest_path = self.cache_dir / _MANIFEST_FILE
-        if not manifest_path.exists():
-            return True
-        last_mtime = max((f.stat().st_mtime for f in json_files), default=0)
-        return last_mtime > manifest_path.stat().st_mtime
+        tokens = [t.form for t in self.kiwi.tokenize(text) if t.tag.startswith(("N", "V", "S")) and len(t.form) > 1]
+        return [tok for tok in tokens if tok not in self.STOPWORDS]
 
     def _flatten_data(self, data: Any) -> list[dict]:
-        """
-        계층형 구조를 평탄화하며, 검색에 필요한 필드만 보존함.
-          - content  : 검색 본문 (text / content / parent_text 우선순위)
-          - metadata : 출처 메타데이터
-          - chunk_id : RRF 중복 제거용 (최상위 필드에 존재할 경우만)
-        """
         flattened = []
 
         if isinstance(data, list):
@@ -110,10 +101,13 @@ class BM25Manager(BaseRetriever):
 
         return flattened
 
-    def load_index(self):
+    def _get_all_json_files(self) -> list:
+        return [f for f in self.data_dir.glob("*.json") if f.name != "manifest.json"]
+
+    def load_index(self):  # noqa: C901
         """
         가공된 데이터를 로드하여 BM25 인덱스를 빌드함.
-        캐시가 유효하면 numpy/scipy 포맷으로 캐시를 로드하고, 그렇지 않으면 신규 빌드함.
+        [DataOps] 신규/수정/삭제된 파일만 부분 감지하여 인덱스를 증분 업데이트(Incremental Update)합니다.
         """
         json_files = self._get_all_json_files()
 
@@ -124,34 +118,91 @@ class BM25Manager(BaseRetriever):
             return
 
         try:
-            if not self._should_rebuild_index(json_files):
-                self.bm25 = BM25PlusIndex.load(self.cache_dir)
-                with open(self.cache_dir / _CORPUS_FILE, encoding="utf-8") as f:
-                    self.corpus_data = json.load(f)
-                logger.info(f"통합 인덱스 로드 완료 (Cache): {len(self.corpus_data)} docs")
+            # 1. 기존 캐시 및 코퍼스 로드 시도
+            corpus_path = self.cache_dir / _CORPUS_FILE
+            manifest_path = self.cache_dir / _MANIFEST_FILE
+
+            existing_corpus = []
+            if corpus_path.exists() and manifest_path.exists():
+                try:
+                    with open(corpus_path, encoding="utf-8") as f:
+                        existing_corpus = json.load(f)
+                    self.bm25 = BM25PlusIndex.load(self.cache_dir)
+                except Exception as cache_err:
+                    logger.warning(f"기존 캐시 로드 실패 (전체 재구성): {cache_err}")
+                    existing_corpus = []
+
+            # 현재 폴더에 있는 source_id 목록 추출 (파일명이 source_id임)
+            current_sids = {f.stem for f in json_files}
+
+            # 기존 코퍼스의 source_id 목록 추출
+            existing_sids = set()
+            for doc in existing_corpus:
+                sid = doc.get(DataFields.METADATA, {}).get(MetadataFields.SOURCE_ID)
+                if sid:
+                    existing_sids.add(sid)
+
+            # 2. 변경된 파일 감지 (신규 추가, 수정됨, 삭제됨)
+            modified_sids = set()
+
+            # 캐시가 완전히 깨졌거나 로드 실패 시 전체 재구축
+            if not existing_corpus or self.bm25 is None:
+                modified_sids = current_sids
+            else:
+                cache_time = manifest_path.stat().st_mtime
+                for f in json_files:
+                    sid = f.stem
+                    # 파일 수정 시각이 캐시 기록 시각보다 최근이거나, 기존 코퍼스에 없는 경우
+                    if f.stat().st_mtime > cache_time or sid not in existing_sids:
+                        modified_sids.add(sid)
+
+            deleted_sids = existing_sids - current_sids
+
+            # 변경 사항이 전혀 없는 경우
+            if not modified_sids and not deleted_sids and existing_corpus and self.bm25 is not None:
+                self.corpus_data = existing_corpus
+                logger.info(f"통합 인덱스 로드 완료 (Cache - 변경사항 없음): {len(self.corpus_data)} docs")
                 return
 
-            # 신규 빌드
-            logger.info(f"신규 통합 인덱스 빌드 시작 ({len(json_files)} files)")
-            all_raw_data = []
-            for json_file in json_files:
-                with open(json_file, encoding="utf-8") as f:
-                    try:
-                        all_raw_data.append(json.load(f))
-                    except json.JSONDecodeError as e:
-                        logger.error(f"JSON 파싱 오류 ({json_file.name}): {e}")
+            logger.info(f"증분 인덱스 업데이트 시작 (수정/추가: {len(modified_sids)}개, 삭제: {len(deleted_sids)}개)")
 
-            self.corpus_data = self._flatten_data(all_raw_data)
+            # 3. 코퍼스 데이터 증분 업데이트
+            # 삭제 및 수정된 기존 데이터 필터링 제거
+            sids_to_remove = modified_sids | deleted_sids
+            updated_corpus = [
+                doc
+                for doc in existing_corpus
+                if doc.get(DataFields.METADATA, {}).get(MetadataFields.SOURCE_ID) not in sids_to_remove
+            ]
+
+            # 신규 및 수정된 데이터 로드 및 추가
+            new_raw_data = []
+            for f in json_files:
+                sid = f.stem
+                if sid in modified_sids:
+                    with open(f, encoding="utf-8") as file_obj:
+                        try:
+                            new_raw_data.append(json.load(file_obj))
+                        except json.JSONDecodeError as e:
+                            logger.error(f"JSON 파싱 오류 ({f.name}): {e}")
+
+            new_flattened = self._flatten_data(new_raw_data)
+            updated_corpus.extend(new_flattened)
+
+            self.corpus_data = updated_corpus
 
             if not self.corpus_data:
                 logger.warning("유효한 텍스트 데이터가 없어 인덱스를 생성할 수 없습니다.")
+                self.bm25 = None
                 return
 
+            # 4. 토큰화 및 인덱스 재생성
             tokenized_corpus = [self._tokenizer(doc.get(DataFields.CONTENT, "")) for doc in self.corpus_data]
-
             valid_indices = [i for i, tokens in enumerate(tokenized_corpus) if tokens]
+
             if not valid_indices:
                 logger.warning("토큰화된 유효 데이터가 없습니다.")
+                self.bm25 = None
                 return
 
             self.corpus_data = [self.corpus_data[i] for i in valid_indices]
@@ -160,34 +211,39 @@ class BM25Manager(BaseRetriever):
             self.bm25 = BM25PlusIndex()
             self.bm25.build(tokenized_corpus)
 
-            # 직렬화 저장 (numpy/scipy 네이티브 포맷)
+            # 5. 인덱스 및 코퍼스 캐시 영속화
             self.cache_dir.mkdir(parents=True, exist_ok=True)
             self.bm25.save(self.cache_dir)
+
             with open(self.cache_dir / _CORPUS_FILE, "w", encoding="utf-8") as f:
                 json.dump(self.corpus_data, f, ensure_ascii=False, separators=(",", ":"))
+
             with open(self.cache_dir / _MANIFEST_FILE, "w", encoding="utf-8") as f:
                 json.dump({"docs": len(self.corpus_data)}, f)
 
-            logger.info(f"통합 인덱스 빌드 및 저장 완료: {len(self.corpus_data)} docs")
+            logger.info(f"통합 인덱스 증분 업데이트 및 저장 완료: {len(self.corpus_data)} docs")
 
         except Exception as e:
-            logger.error(f"인덱스 로드 중 오류 발생: {e}")
+            logger.error(f"증분 인덱스 로드 중 오류 발생: {e}")
             logger.error(traceback.format_exc())
             self.bm25 = None
             self.corpus_data = []
 
-    def get_top_n(self, query: str, n: int = 5, return_scores: bool = False) -> list[dict]:
-        """
-        질의어와 가장 유사한 상위 N개의 문서 조각을 반환함.
+    def _apply_metadata_filter(self, metadata_filter: dict) -> list[int]:
+        """주어진 메타데이터 필터에 부합하는 문서의 인덱스 목록을 반환합니다."""
+        return [
+            idx
+            for idx, doc in enumerate(self.corpus_data)
+            if all(doc.get("metadata", {}).get(k) == v for k, v in metadata_filter.items())
+        ]
 
-        Args:
-            query (str): 검색할 사용자 질의어.
-            n (int): 반환할 결과 개수.
-            return_scores (bool): 점수(정규화됨)를 포함하여 반환할지 여부.
-
-        Returns:
-            list[dict]: 검색된 문서 조각 및 메타데이터 리스트.
-        """
+    def get_top_n(
+        self,
+        query: str,
+        n: int = 5,
+        return_scores: bool = False,
+        metadata_filter: dict | None = None,
+    ) -> list[dict]:
         if not self.bm25 or not self.corpus_data:
             return []
 
@@ -196,21 +252,35 @@ class BM25Manager(BaseRetriever):
             return []
 
         scores = self.bm25.get_scores(tokenized_query)
-        if not scores.any():
+
+        # 메타데이터 필터링 적용 및 매칭되는 문서 인덱스 분류
+        if metadata_filter:
+            matching_indices = self._apply_metadata_filter(metadata_filter)
+        else:
+            matching_indices = list(range(len(self.corpus_data)))
+
+        if not matching_indices:
             return []
 
-        n_docs = len(scores)
-        if n_docs <= n:
-            top_indices = np.argsort(scores)[::-1].tolist()
-        else:
-            top_k = np.argpartition(scores, -n)[-n:]
-            top_indices = top_k[np.argsort(scores[top_k])[::-1]].tolist()
-        top_scores = [float(scores[i]) for i in top_indices]
+        # 매칭되는 문서들의 점수 중 최댓값을 구함 (전역 정규화 스케일러용)
+        s_max = float(np.max(scores[matching_indices]))
+        s_min = 0.0
+        denom = s_max - s_min if s_max > 0.0 else 1.0
 
-        # 타 검색 엔진과의 결합을 위한 점수 정규화 (Min-Max Scaling)
-        s_max, s_min = max(top_scores), min(top_scores)
-        denom = s_max - s_min if s_max != s_min else 1.0
-        normalized = [(s - s_min) / denom for s in top_scores]
+        # 매칭된 인덱스들에 대해서만 스코어 기반 정렬 수행
+        matching_scores = scores[matching_indices]
+        if not matching_scores.any():
+            return []
+
+        n_matching = len(matching_indices)
+        if n_matching <= n:
+            sorted_sub_indices = np.argsort(matching_scores)[::-1].tolist()
+        else:
+            top_k_sub = np.argpartition(matching_scores, -n)[-n:]
+            sorted_sub_indices = top_k_sub[np.argsort(matching_scores[top_k_sub])[::-1]].tolist()
+
+        top_indices = [matching_indices[i] for i in sorted_sub_indices]
+        normalized = [(float(scores[i]) - s_min) / denom for i in top_indices]
 
         results = []
         for rank, (idx, norm_score) in enumerate(zip(top_indices, normalized, strict=False)):
@@ -221,9 +291,9 @@ class BM25Manager(BaseRetriever):
                 results.append(doc)
         return results
 
-    def retrieve(self, query: str, n: int = 5) -> list[dict[str, Any]]:
+    def retrieve(self, query: str, n: int = 5, metadata_filter: dict | None = None) -> list[dict[str, Any]]:
         """BaseRetriever 인터페이스 구현. BM25 키워드 검색을 실행합니다."""
-        return self.get_top_n(query=query, n=n, return_scores=True)
+        return self.get_top_n(query=query, n=n, return_scores=True, metadata_filter=metadata_filter)
 
 
 if __name__ == "__main__":

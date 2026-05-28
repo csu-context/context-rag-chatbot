@@ -80,7 +80,7 @@ def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
         if st.button("데이터 파이프라인 가동 (Sync)", key="dialog_sync_btn", use_container_width=True):
             SyncController.trigger_sync(
                 parser_type=parser_type,
-                force=True,
+                force=False,
                 clear_cache_callback=initialize_rag_system_callback,
             )
 
@@ -146,7 +146,7 @@ def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
             if not parser_name:
                 parser_name = parser_type
                 if chunks:
-                    parser_name = chunks[0].get("metadata", {}).get("parser", parser_type)
+                    parser_name = chunks[0].get("metadata", {}).get("parser_type", parser_type)
 
             parser_options = ["manual", "docling"]
 
@@ -238,7 +238,7 @@ def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
             file_chunks = db_manager.get_source_chunks(file_name)
             old_parser = "manual"
             if file_chunks:
-                old_parser = file_chunks[0].get("metadata", {}).get("parser", "manual")
+                old_parser = file_chunks[0].get("metadata", {}).get("parser_type", "manual")
             change_details.append(f"- {file_name}: {old_parser} -> {new_parser}")
 
         st.markdown("\n".join(change_details))
@@ -290,12 +290,16 @@ def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
 
             if st.button("정합성 자동 복구 (Repair)", type="primary", use_container_width=True):
                 with st.spinner("복구 작업 진행 중..."):
-                    repair_integrity(anomalies)
-                    st.success("복구가 완료되었습니다. 상태를 재확인하세요.")
-                    del st.session_state.health_report
-                    initialize_rag_system_callback()
-                    time.sleep(0.5)
-                    st.rerun()
+                    try:
+                        repair_integrity(anomalies)
+                        del st.session_state.health_report
+                        initialize_rag_system_callback()
+                    except Exception as repair_err:
+                        st.error(f"복구 중 오류가 발생했습니다: {repair_err}")
+                    else:
+                        st.success("복구가 완료되었습니다. 상태를 재확인하세요.")
+                        time.sleep(0.5)
+                        st.rerun()
 
     st.divider()
     if st.button("관리 시스템 종료 (닫기)", use_container_width=True):

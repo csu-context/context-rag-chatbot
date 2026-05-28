@@ -106,10 +106,11 @@ class TestRAGPipelineMemory:
         assert called_args[2] == ("ai", "반갑습니다")
         assert called_args[3] == ("human", "{question}")
 
-    def test_semantic_cache_bypass_with_history(self, pipeline, mock_retriever, mock_llm, mock_reranker):
-        """대화 이력이 존재할 때 캐시를 조회 및 저장하지 않고 우회하는지 검증"""
+    def test_semantic_cache_with_history(self, pipeline, mock_retriever, mock_llm, mock_reranker):
+        """대화 이력이 존재할 때도 캐시를 정상적으로 조회 및 저장하는지 검증"""
         # pipeline 피스처 내부에 모킹된 캐시 가져오기
         mock_cache = pipeline.cache
+        mock_cache.get.return_value = None
 
         history = [{"role": "user", "content": "질문"}]
 
@@ -124,6 +125,6 @@ class TestRAGPipelineMemory:
         # generator 실행완료 처리
         list(pipeline.stream(input_data))
 
-        # 캐시의 get과 add가 호출되지 않았음을 검증
-        mock_cache.get.assert_not_called()
-        mock_cache.add.assert_not_called()
+        # 캐시의 get과 add가 호출되었음을 검증
+        mock_cache.get.assert_called_once()
+        mock_cache.add.assert_called_once()

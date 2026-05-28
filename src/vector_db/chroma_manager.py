@@ -1,7 +1,9 @@
 import logging
 import os
+import shutil
 import time
 import warnings
+from pathlib import Path
 from typing import Any
 
 import chromadb
@@ -12,7 +14,7 @@ from src.common.config import settings
 from src.common.constants import MetadataFields
 from src.core.base_retriever import BaseRetriever
 from src.models.embedder import BGEEmbedder
-from src.utils.paths import VECTOR_DB_DIR, ensure_directories
+from src.utils.paths import BM25_CACHE_DIR, CACHE_DIR, PROCESSED_DATA_DIR, VECTOR_DB_DIR, ensure_directories
 from src.utils.unicode import normalize_to_nfc, normalize_to_nfd
 
 # 경고 숨기기 로직 추가
@@ -46,56 +48,52 @@ class BGEChromaEmbeddingFunction(EmbeddingFunction):
         return embeddings.tolist()
 
 
-class ChromaDBManager(BaseRetriever):
-    _shared_client = None  # 동일 프로세스 내에서 중복 클라이언트 생성 및 파일 락 충돌 방지를 위한 공유 클라이언트
+class ChromaConnectionMixin:
+    """ChromaDB 연결, 재시도 및 클라이언트 세션 관리를 담당하는 Mixin 클래스"""
 
-    def __init__(self, collection_name: str = "rag_collection"):
-        """
-        ChromaDB 클라이언트 및 컬렉션을 초기화합니다.
-        환경 변수 CHROMA_SERVER_HOST 존재 여부에 따라 로컬(Persistent) 또는 서버(Http) 모드로 동작하며,
-        DB 연결 실패 시 재시도(Retry) 로직을 수행합니다.
-        """
-        self.collection_name = collection_name
-        self.embedding_fn = BGEChromaEmbeddingFunction()
-
-        # 클라이언트 초기화 및 DB 연결 재시도 로직
-        self._initialize_client_with_retry()
+    _shared_client = None
 
     def _initialize_client_with_retry(self, max_retries: int = 3, retry_delay: int = 2):
         chroma_host = os.getenv("CHROMA_SERVER_HOST")
         chroma_port = os.getenv("CHROMA_SERVER_PORT", "8000")
-
-        # 공통 설정 변수로 추출 (DRY 원칙 적용)
         common_settings = Settings(anonymized_telemetry=False)
 
         for attempt in range(max_retries):
             try:
-                if ChromaDBManager._shared_client is not None:
-                    self.client = ChromaDBManager._shared_client
+                if self.__class__._shared_client is not None:
+                    self.client = self.__class__._shared_client
                 else:
-                    if chroma_host:
-                        logger.info(f"ChromaDB 서버 모드 접속 시도 (Host: {chroma_host}, Port: {chroma_port})")
-                        self.client = chromadb.HttpClient(
-                            host=chroma_host, port=int(chroma_port), settings=common_settings
-                        )
-                    else:
-                        ensure_directories()
-                        logger.info(f"ChromaDB 로컬 모드 활성화 (Path: {VECTOR_DB_DIR})")
-                        self.client = chromadb.PersistentClient(path=str(VECTOR_DB_DIR), settings=common_settings)
-                    ChromaDBManager._shared_client = self.client
+                    self.client = self._create_client(chroma_host, chroma_port, common_settings)
+                    self.__class__._shared_client = self.client
 
-                # 컬렉션 로드 (실질적인 연결 테스트 구간)
-                # hnsw:num_threads=1: Python 3.13 + chromadb Rust 바인딩의 멀티스레드 segfault 방지
                 self.collection = self.client.get_or_create_collection(
                     name=self.collection_name,
                     embedding_function=self.embedding_fn,
                     metadata={"hnsw:space": "cosine", "hnsw:num_threads": 1},
                 )
 
+                self._check_config_and_auto_reset()
                 logger.info(f"ChromaDB 로드 완료. (컬렉션: {self.collection_name})")
-                return  # 성공 시 루프 탈출
+                return
 
             except Exception as e:
+                # DB 손상 또는 메타데이터 에러 감지 시 자가 치유 시도
+                if not chroma_host and attempt < max_retries - 1:
+                    logger.warning(
+                        f"[자가 치유] ChromaDB 초기화 중 오류 감지 (DB 손상 또는 버전 불일치 가능성): {e}. "
+                        "로컬 DB 디렉토리를 완전히 삭제하고 자동 재구성을 수행합니다."
+                    )
+                    self.__class__._shared_client = None
+                    self.client = None
+                    if VECTOR_DB_DIR.exists():
+                        try:
+                            shutil.rmtree(VECTOR_DB_DIR)
+                        except Exception as rm_e:
+                            logger.error(f"로컬 DB 디렉토리 삭제 실패: {rm_e}")
+                    ensure_directories()
+                    time.sleep(retry_delay)
+                    continue
+
                 if attempt < max_retries - 1:
                     logger.warning(
                         f"ChromaDB 연결 실패. {retry_delay}초 후 재시도합니다. "
@@ -104,8 +102,92 @@ class ChromaDBManager(BaseRetriever):
                     time.sleep(retry_delay)
                 else:
                     logger.error("ChromaDB 연결에 최종적으로 실패했습니다. DB 상태를 확인하시기 바랍니다.")
-                    # 재시도 최종 실패 시 빈 컬렉션 객체 방지 처리가 필요할 수 있으나, 여기서는 에러를 발생시킵니다.
                     raise RuntimeError("ChromaDB initialization failed.") from e
+
+    def _create_client(self, chroma_host, chroma_port, common_settings):
+        if chroma_host:
+            logger.info(f"ChromaDB 서버 모드 접속 시도 (Host: {chroma_host}, Port: {chroma_port})")
+            return chromadb.HttpClient(host=chroma_host, port=int(chroma_port), settings=common_settings)
+
+        ensure_directories()
+        logger.info(f"ChromaDB 로컬 모드 활성화 (Path: {VECTOR_DB_DIR})")
+        try:
+            return chromadb.PersistentClient(path=str(VECTOR_DB_DIR), settings=common_settings)
+        except Exception as e:
+            logger.error(f"ChromaDB PersistentClient 초기화 실패 (DB 파일 손상 가능성): {e}")
+            logger.info("기존 DB 폴더를 삭제하고 재생성하여 자동 초기화를 시도합니다.")
+            if VECTOR_DB_DIR.exists():
+                shutil.rmtree(VECTOR_DB_DIR)
+            ensure_directories()
+            return chromadb.PersistentClient(path=str(VECTOR_DB_DIR), settings=common_settings)
+
+    def _check_config_and_auto_reset(self):
+        """임베딩 모델 및 청크 크기 변경을 감지하여 자동 리셋을 수행합니다."""
+        try:
+            existing_metadata = self.collection.metadata
+            current_model = self.embedding_fn.model_name
+
+            from src.processing.chunking import HierarchicalChunker
+
+            chunker = HierarchicalChunker()
+            current_parent_size = chunker.parent_chunk_size
+            current_child_size = chunker.child_chunk_size
+
+            needs_reset = False
+            reset_reason = ""
+
+            if existing_metadata:
+                existing_model = existing_metadata.get("embedding_model")
+                existing_parent = existing_metadata.get("parent_chunk_size")
+                existing_child = existing_metadata.get("child_chunk_size")
+
+                if existing_model is not None and existing_model != current_model:
+                    needs_reset = True
+                    reset_reason = f"임베딩 모델 변경 ({existing_model} -> {current_model})"
+                elif existing_parent is not None and int(existing_parent) != current_parent_size:
+                    needs_reset = True
+                    reset_reason = f"부모 청크 크기 변경 ({existing_parent} -> {current_parent_size})"
+                elif existing_child is not None and int(existing_child) != current_child_size:
+                    needs_reset = True
+                    reset_reason = f"자식 청크 크기 변경 ({existing_child} -> {current_child_size})"
+
+            if needs_reset:
+                logger.warning(
+                    f"[자가 치유] {reset_reason} 감지. "
+                    "데이터 정합성 및 무결성 유지를 위해 기존 데이터를 자동 초기화하고 전체 재색인을 유도합니다."
+                )
+                self.reset_collection()
+                self._clear_processed_and_cache_files()
+
+            # 메타데이터 업데이트 (120자 라인 한도 준수하여 가로 분할)
+            new_metadata = dict(existing_metadata or {})
+            new_metadata["hnsw:space"] = "cosine"
+            new_metadata["hnsw:num_threads"] = 1
+            new_metadata["embedding_model"] = current_model
+            new_metadata["parent_chunk_size"] = current_parent_size
+            new_metadata["child_chunk_size"] = current_child_size
+
+            # 메타데이터에 변화가 있는 경우에만 modify 호출
+            if not existing_metadata or any(new_metadata.get(k) != existing_metadata.get(k) for k in new_metadata):
+                # ChromaDB는 컬렉션 생성 후 hnsw: 관련 메타데이터 변경을 지원하지 않으므로 제외하고 수정함
+                modify_metadata = {k: v for k, v in new_metadata.items() if not k.startswith("hnsw:")}
+                self.collection.modify(metadata=modify_metadata)
+
+        except Exception as e:
+            logger.error(f"설정 검증 및 자동 초기화 중 오류 발생: {e}")
+            raise
+
+
+class ChromaDBManager(ChromaConnectionMixin, BaseRetriever):
+    def __init__(self, collection_name: str = "rag_collection"):
+        """
+        ChromaDB 클라이언트 및 컬렉션을 초기화합니다.
+        환경 변수 CHROMA_SERVER_HOST 존재 여부에 따라 로컬(Persistent) 또는 서버(Http) 모드로 동작하며,
+        DB 연결 실패 시 재시도(Retry) 로직을 수행합니다.
+        """
+        self.collection_name = collection_name
+        self.embedding_fn = BGEChromaEmbeddingFunction()
+        self._initialize_client_with_retry()
 
     def embed_query(self, query_text: str) -> list[float]:
         """
@@ -121,6 +203,23 @@ class ChromaDBManager(BaseRetriever):
             logger.error(f"쿼리 임베딩 중 오류 발생: {e}")
             # 빈 리스트를 반환하지 않고 에러를 명시적으로 발생시킴
             raise RuntimeError(f"Failed to embed query: '{query_text}'") from e
+
+    def _get_valid_collection(self):
+        """
+        ChromaDB 서버 리셋 등으로 컬렉션 레퍼런스가 만료되었을 때
+        'does not exist' 에러를 방지하기 위해 유효성을 검증하고 필요시 재로딩합니다.
+        """
+        try:
+            self.collection.count()
+        except Exception as e:
+            if "does not exist" in str(e):
+                logger.warning(f"컬렉션 '{self.collection_name}'이 존재하지 않아 재초기화합니다.")
+                self.collection = self.client.get_or_create_collection(
+                    name=self.collection_name,
+                    embedding_function=self.embedding_fn,
+                    metadata={"hnsw:space": "cosine", "hnsw:num_threads": 1},
+                )
+        return self.collection
 
     def upsert_documents(
         self,
@@ -146,19 +245,21 @@ class ChromaDBManager(BaseRetriever):
                 cleaned_metadatas.append(cleaned)
 
         try:
-            self.collection.upsert(ids=ids, documents=documents, metadatas=cleaned_metadatas)
+            collection = self._get_valid_collection()
+            collection.upsert(ids=ids, documents=documents, metadatas=cleaned_metadatas)
             logger.info(f"{len(ids)}개의 문서 청크가 ChromaDB에 성공적으로 업서트되었습니다.")
         except Exception as e:
             logger.error(f"문서 업서트 중 오류 발생: {e}")
 
-    def search(self, query_text: str, k: int = 3) -> list[dict[str, Any]]:
+    def search(self, query_text: str, k: int = 3, where: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         """
         주어진 쿼리 텍스트와 가장 유사한 문서를 검색하고,
         하이브리드 리트리버와 호환되는 표준화된 dict 리스트 형태로 반환합니다.
         """
         try:
+            collection = self._get_valid_collection()
             # ChromaDB query 호출
-            results = self.collection.query(query_texts=[query_text], n_results=k)
+            results = collection.query(query_texts=[query_text], n_results=k, where=where)
 
             # 검색 결과가 없는 경우 빈 리스트 반환 (에러 전파 방지)
             if not results or not results.get("documents") or len(results["documents"][0]) == 0:
@@ -190,14 +291,23 @@ class ChromaDBManager(BaseRetriever):
             logger.error(f"DB 검색 중 오류 발생: {e}")
             return []  # 에러 발생 시에도 빈 리스트를 반환하여 프로세스 중단 방지
 
-    def retrieve(self, query: str, n: int = 5) -> list[dict[str, Any]]:
+    @staticmethod
+    def _build_where_clause(metadata_filter: dict | None) -> dict | None:
+        if not metadata_filter:
+            return None
+        if len(metadata_filter) == 1:
+            return metadata_filter
+        return {"$and": [{k: {"$eq": v}} for k, v in metadata_filter.items()]}
+
+    def retrieve(self, query: str, n: int = 5, metadata_filter: dict | None = None) -> list[dict[str, Any]]:
         """BaseRetriever 인터페이스 구현. ChromaDB 검색을 실행합니다."""
-        return self.search(query_text=query, k=n)
+        return self.search(query_text=query, k=n, where=self._build_where_clause(metadata_filter))
 
     def get_count(self) -> int:
         """현재 컬렉션에 저장된 총 청크 수를 반환합니다."""
         try:
-            return self.collection.count()
+            collection = self._get_valid_collection()
+            return collection.count()
         except Exception:
             return 0
 
@@ -206,42 +316,23 @@ class ChromaDBManager(BaseRetriever):
         nfc_name = normalize_to_nfc(source_name)
         nfd_name = normalize_to_nfd(source_name)
         try:
-            results = self.collection.get(
+            collection = self._get_valid_collection()
+            results = collection.get(
                 where={MetadataFields.SRC_NAME: {"$in": [nfc_name, nfd_name]}},
                 include=[],  # 실제 데이터는 필요 없으므로 빈 리스트
             )
             return len(results["ids"])
         except Exception as e:
-            if "does not exist" in str(e):
-                logger.warning(
-                    f"Collection '{self.collection_name}' not found during count. "
-                    f"It might have been reset. Attempting to refetch and retry."
-                )
-                try:
-                    # 컬렉션 객체를 다시 가져와서 재시도
-                    self.collection = self.client.get_or_create_collection(
-                        name=self.collection_name,
-                        embedding_function=self.embedding_fn,
-                        metadata={"hnsw:space": "cosine", "hnsw:num_threads": 1},
-                    )
-                    results = self.collection.get(
-                        where={MetadataFields.SRC_NAME: {"$in": [nfc_name, nfd_name]}},
-                        include=[],
-                    )
-                    return len(results["ids"])
-                except Exception as retry_e:
-                    logger.error(f"소스별 카운트 조회 재시도 중 오류 발생 ({source_name}): {retry_e}")
-                    return 0
-            else:
-                logger.error(f"소스별 카운트 조회 중 오류 발생 ({source_name}): {e}")
-                return 0
+            logger.error(f"소스별 카운트 조회 중 오류 발생 ({source_name}): {e}")
+            return 0
 
     def get_source_chunks(self, source_name: str) -> list[dict[str, Any]]:
         """특정 소스 파일명(metadata.src_name)에 해당하는 청크 텍스트와 메타데이터 목록을 반환합니다."""
         nfc_name = normalize_to_nfc(source_name)
         nfd_name = normalize_to_nfd(source_name)
         try:
-            results = self.collection.get(
+            collection = self._get_valid_collection()
+            results = collection.get(
                 where={MetadataFields.SRC_NAME: {"$in": [nfc_name, nfd_name]}},
                 include=["documents", "metadatas"],
             )
@@ -270,8 +361,9 @@ class ChromaDBManager(BaseRetriever):
             return
 
         try:
+            collection = self._get_valid_collection()
             # 1. where 필터를 사용해 삭제 대상 문서들의 ID를 먼저 조회
-            results_to_delete = self.collection.get(where=where, include=[])
+            results_to_delete = collection.get(where=where, include=[])
             ids_to_delete = results_to_delete["ids"]
 
             if not ids_to_delete:
@@ -280,7 +372,7 @@ class ChromaDBManager(BaseRetriever):
 
             # 2. 조회된 ID 리스트를 기반으로 명시적 삭제
             logger.info(f"ChromaDB에서 {len(ids_to_delete)}개 도큐먼트 삭제 시도 (조건: {where})")
-            self.collection.delete(ids=ids_to_delete)
+            collection.delete(ids=ids_to_delete)
             logger.info("삭제 작업 완료.")
 
         except Exception as e:
@@ -290,16 +382,50 @@ class ChromaDBManager(BaseRetriever):
     def reset_collection(self):
         """컬렉션의 모든 문서를 삭제하여 초기화합니다."""
         try:
+            collection = self._get_valid_collection()
             # delete_collection() + create_collection() 방식은 Windows에서
             # 다른 클라이언트가 세그먼트 파일을 열고 있을 때 WinError 32가 발생하므로,
             # 문서 전체를 ID 기반으로 삭제하는 방식을 사용합니다.
-            all_ids = self.collection.get(include=[])["ids"]
+            all_ids = collection.get(include=[])["ids"]
             if all_ids:
-                self.collection.delete(ids=all_ids)
+                collection.delete(ids=all_ids)
             logger.info(f"ChromaDB 컬렉션 '{self.collection_name}' 초기화 완료. ({len(all_ids)}개 문서 삭제)")
         except Exception as e:
             logger.error(f"ChromaDB 컬렉션 초기화 중 오류 발생: {e}")
             raise
+
+    def _clear_processed_and_cache_files(self):
+        """임베딩 모델 또는 설정 변경 시, 로컬 가공 및 캐시 파일들을 제거합니다."""
+
+        logger.info("가공 데이터(processed) 및 파서 캐시(cache) 초기화 중...")
+
+        if PROCESSED_DATA_DIR.exists():
+            for f in PROCESSED_DATA_DIR.glob("*.json"):
+                self._safe_unlink(f)
+            self._safe_unlink(PROCESSED_DATA_DIR / "manifest.json")
+
+        if CACHE_DIR.exists():
+            for f in CACHE_DIR.glob("*.pkl"):
+                self._safe_unlink(f)
+
+        self._clear_bm25_cache_directory()
+        logger.info("가공 및 캐시 파일 물리적 삭제 완료.")
+
+    def _safe_unlink(self, file_path: Path):
+        """안전하게 파일을 삭제합니다."""
+        try:
+            file_path.unlink(missing_ok=True)
+        except Exception as ex:
+            logger.error(f"파일 {file_path.name} 삭제 실패: {ex}")
+
+    def _clear_bm25_cache_directory(self):
+        """BM25 캐시 디렉토리를 안전하게 삭제합니다."""
+        bm25_cache_dir = BM25_CACHE_DIR
+        if bm25_cache_dir.exists():
+            try:
+                shutil.rmtree(bm25_cache_dir)
+            except Exception as ex:
+                logger.error(f"BM25 캐시 디렉토리 삭제 실패: {ex}")
 
 
 if __name__ == "__main__":
