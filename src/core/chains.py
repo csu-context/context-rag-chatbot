@@ -51,9 +51,10 @@ class RAGPipeline:
         self.cache = SemanticCache()
 
     def _resolve_parent_documents(self, docs: list[Document]) -> list[Document]:
-        """자식 청크로 검색된 문서들을 부모 청크의 원문으로 전환하며, 동일 부모 중복을 제거합니다."""
+        """자식 청크로 검색된 문서들을 부모 청크의 원문으로 전환하며, 동일 부모 및 동일 텍스트 중복을 제거합니다."""
         resolved_docs = []
         seen_parents = set()
+        seen_texts = set()
 
         for doc in docs:
             parent_id = doc.metadata.get(MetadataFields.PARENT_ID)
@@ -74,6 +75,12 @@ class RAGPipeline:
                                 break
                 except Exception as e:
                     logger.error(f"부모 청크 로드 실패: {e}")
+
+            # 텍스트 기반 중복 제거 (내용이 완전히 동일한 청크 필터링)
+            text_hash = hash("".join(doc.page_content.split()))
+            if text_hash in seen_texts:
+                continue
+            seen_texts.add(text_hash)
 
             resolved_docs.append(doc)
 
