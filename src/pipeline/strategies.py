@@ -14,6 +14,15 @@ from src.utils.paths import RAW_DATA_DIR
 logger = logging.getLogger(__name__)
 
 
+def _safe_relative_to(file_path: Path, base: Path) -> Path:
+    """relative_to 실패 시 절대 경로 반환 (RAW_DATA_DIR 외부 파일 방어)"""
+    try:
+        return file_path.relative_to(base)
+    except ValueError:
+        logger.warning(f"파일이 RAW_DATA_DIR 외부에 위치: {file_path}. 절대 경로 사용.")
+        return file_path
+
+
 class ParserStrategy(ABC):
     """문서 파싱 전략을 위한 추상 베이스 클래스"""
 
@@ -27,7 +36,7 @@ class ManualParserStrategy(ParserStrategy):
 
     def parse(self, file_path: Path, storage_manager: Any = None) -> list[dict[str, Any]]:
         # ManualParser는 RAW_DATA_DIR 기준 상대 경로를 받음
-        relative_path = file_path.relative_to(RAW_DATA_DIR)
+        relative_path = _safe_relative_to(file_path, RAW_DATA_DIR)
         parser = ManualParser(str(relative_path), parser_type="manual")
         return parser.parse()
 
@@ -47,7 +56,7 @@ class MarkdownParserStrategy(ParserStrategy):
         base_metadata = {
             MetadataFields.SOURCE_ID: generate_file_hash(file_path, parser_type),
             MetadataFields.SRC_NAME: file_path.name,
-            MetadataFields.RELATIVE_PATH: str(file_path.relative_to(RAW_DATA_DIR)),
+            MetadataFields.RELATIVE_PATH: str(_safe_relative_to(file_path, RAW_DATA_DIR)),
             MetadataFields.PARSER_TYPE: parser_type,
             MetadataFields.DOC_TYPE: file_path.suffix.lower().replace(".", ""),
             MetadataFields.PG_NUM: 1,
@@ -91,7 +100,7 @@ class DoclingPDFParserStrategy(ParserStrategy):
                     "metadata": {
                         MetadataFields.SOURCE_ID: source_id,
                         MetadataFields.SRC_NAME: file_path.name,
-                        MetadataFields.RELATIVE_PATH: str(file_path.relative_to(RAW_DATA_DIR)),
+                        MetadataFields.RELATIVE_PATH: str(_safe_relative_to(file_path, RAW_DATA_DIR)),
                         MetadataFields.PARSER_TYPE: "docling",
                         MetadataFields.PG_NUM: 1,
                         MetadataFields.DOC_TYPE: "pdf",
@@ -110,6 +119,6 @@ class DoclingPDFParserStrategy(ParserStrategy):
             return results
         else:
             # PDF가 아닌 경우 ManualParser로 Fallback
-            relative_path = file_path.relative_to(RAW_DATA_DIR)
+            relative_path = _safe_relative_to(file_path, RAW_DATA_DIR)
             parser = self.manual_parser(str(relative_path), parser_type="docling")
             return parser.parse()

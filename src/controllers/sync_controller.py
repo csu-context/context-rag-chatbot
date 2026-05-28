@@ -13,7 +13,22 @@ class SyncController:
         """데이터베이스 전체 동기화를 실행하고 진행 피드백을 UI에 업데이트합니다."""
         progress_bar = st.progress(0)
 
-        with st.status("데이터베이스 동기화 중...", expanded=True) as status:
+        with st.status("데이터 정합성 점검 및 복구 중...", expanded=True) as status:
+            from src.utils.health_check import repair_integrity, run_full_diagnostics
+
+            # 1. 정합성 점검 및 자가 치유
+            st.write("DB 상태를 스캔하고 있습니다...")
+            _, report = run_full_diagnostics(silent=True, check_model=False)
+            anomalies = report.get("db", {}).get("anomalies", {})
+            if anomalies and any(anomalies.values()):
+                st.write("이상 데이터 감지: 자동 복구를 진행합니다.")
+                repair_integrity(anomalies, target_parser=parser_type)
+                st.write("정합성 복구 완료.")
+            else:
+                st.write("데이터 정합성 이상 없음.")
+
+            # 2. 파이프라인 동기화 진행
+            status.update(label="새 데이터 동기화 중...", state="running")
 
             def sync_callback(current, total, file_name, pb=progress_bar, st_status=status):
                 if total > 0:

@@ -80,7 +80,7 @@ def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
         if st.button("데이터 파이프라인 가동 (Sync)", key="dialog_sync_btn", use_container_width=True):
             SyncController.trigger_sync(
                 parser_type=parser_type,
-                force=True,
+                force=False,
                 clear_cache_callback=initialize_rag_system_callback,
             )
 
@@ -146,7 +146,7 @@ def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
             if not parser_name:
                 parser_name = parser_type
                 if chunks:
-                    parser_name = chunks[0].get("metadata", {}).get("parser", parser_type)
+                    parser_name = chunks[0].get("metadata", {}).get("parser_type", parser_type)
 
             parser_options = ["manual", "docling"]
 
@@ -238,7 +238,7 @@ def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
             file_chunks = db_manager.get_source_chunks(file_name)
             old_parser = "manual"
             if file_chunks:
-                old_parser = file_chunks[0].get("metadata", {}).get("parser", "manual")
+                old_parser = file_chunks[0].get("metadata", {}).get("parser_type", "manual")
             change_details.append(f"- {file_name}: {old_parser} -> {new_parser}")
 
         st.markdown("\n".join(change_details))

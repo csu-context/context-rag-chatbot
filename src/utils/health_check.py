@@ -192,7 +192,7 @@ def _analyze_anomalies(local_files_info: dict, db_rel_path_map: dict) -> dict:
 
 def _get_parser_type(meta: dict) -> str:
     """메타데이터에서 파서 타입을 추출 (구 스키마 호환)"""
-    return meta.get(MetadataFields.PARSER_TYPE) or meta.get("parser") or "manual"
+    return meta.get(MetadataFields.PARSER_TYPE) or meta.get("parser") or settings.PARSER_TYPE
 
 
 def _check_local_db_mismatch(rel_path: str, local_info: dict, db_chunks: list, anomalies: dict):
@@ -256,11 +256,11 @@ def _repair_duplicate_parsers(pipeline, duplicates: list[str]):
             pipeline.cleanup_db(source_ids_to_delete=list(set(sids_to_delete)))
 
 
-def repair_integrity(anomalies: dict):
+def repair_integrity(anomalies: dict, target_parser: str | None = None):
     """
-    탐지된 정합성 오류를 복구합니다.
-    - ghost_chunks: DB에서 삭제
-    - duplicate_parsers: 현재 설정 이외의 파서 데이터 삭제
+    탐지된 이상 징후를 바탕으로 DB 정합성을 자동 복구합니다.
+    - ghost_chunks: DB에서만 존재하는 찌꺼기 삭제
+    - duplicate_parsers: 파서 중복 청크 클린업
     - mismatched_hash: 해시 불일치 파일 재색인 및 업데이트
     """
     if not anomalies:
@@ -293,7 +293,9 @@ def repair_integrity(anomalies: dict):
                 where={MetadataFields.SRC_NAME: file_name}, include=["metadatas"]
             )
             parser_type = settings.PARSER_TYPE
-            if db_data and db_data["metadatas"]:
+            if target_parser:
+                parser_type = target_parser
+            elif db_data and db_data["metadatas"]:
                 parser_type = _get_parser_type(db_data["metadatas"][0])
 
             logger.info(f"  재색인 파일 ({rel_path}) | 적용 파서: {parser_type}")
