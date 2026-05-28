@@ -37,13 +37,11 @@ class BaseReranker(ABC):
     """리랭커 기본 클래스"""
 
     MAX_INFER_TIME_SEC = 5  # API 타임아웃
-    PERFORMANCE_THRESHOLD_SEC = 3.0  # 지연 기준 시간 (이 시간 초과 시 top_k 동적 조정)
 
     def __init__(self, name: str, top_k: int = 5, threshold: float = 0.45):
         self.name = name
         self.top_k = top_k
         self.threshold = threshold
-        self._last_latency = 0.0
 
     @abstractmethod
     def rerank(
@@ -56,37 +54,23 @@ class BaseReranker(ABC):
         """문서 목록을 재정렬하고 관련성이 높은 순으로 반환합니다."""
         pass
 
-    def _adjust_top_k(self, top_k: int) -> int:
-        """이전 추론 지연 시간에 따라 top_k를 동적으로 조정합니다."""
-        if self._last_latency > self.PERFORMANCE_THRESHOLD_SEC:
-            adjusted = max(1, top_k // 2)
-            logger.warning(
-                f"[{self.name}] High latency detected ({self._last_latency:.2f}s). "
-                f"Adjusting top_k from {top_k} to {adjusted}."
-            )
-            return adjusted
-        return top_k
-
     def rerank_with_timeout(self, query: str, documents: list[Document], **kwargs: Any) -> RerankResult:
         target_top_k = kwargs.get("top_k") or self.top_k
-        adjusted_top_k = self._adjust_top_k(target_top_k)
-        kwargs["top_k"] = adjusted_top_k
+        kwargs["top_k"] = target_top_k
 
         start_time = time.time()
         try:
-            result = self.rerank(query, documents, **kwargs)
-            self._last_latency = time.time() - start_time
-            return result
+            return self.rerank(query, documents, **kwargs)
         except Exception as e:
-            self._last_latency = time.time() - start_time
+            elapsed = time.time() - start_time
             logger.warning(f"Reranking failed in {self.name}: {e}. Returning original documents.")
             # 실패 시 원본 문서에서 top_k만큼 잘라서 반환
             return RerankResult(
-                documents=documents[:adjusted_top_k],
-                scores=[0.0] * min(len(documents), adjusted_top_k),
+                documents=documents[:target_top_k],
+                scores=[0.0] * min(len(documents), target_top_k),
                 model_name=self.name,
-                filtered_count=max(0, len(documents) - adjusted_top_k),
-                elapsed_time_sec=self._last_latency,
+                filtered_count=max(0, len(documents) - target_top_k),
+                elapsed_time_sec=elapsed,
             )
 
 
@@ -215,9 +199,8 @@ class CrossEncoderReranker(BaseReranker):
         raw_scores = self._predict_with_cpu_fallback(pairs)
 
         elapsed_time = time.time() - start_time
-        # ms-marco 등 raw logit(범위 -10~15)을 [0, 1]로 정규화
-        # temperature=5로 스케일링하여 sigmoid 포화 방지
-        scores = torch.sigmoid(torch.tensor(raw_scores) / 5.0).tolist()
+        # ms-marco 등 raw logit을 [0, 1] 확률값으로 직관적으로 정규화 (temperature 스케일링 제거)
+        scores = torch.sigmoid(torch.tensor(raw_scores)).tolist()
 
         scored_docs = sorted(zip(scores, documents, strict=True), key=lambda x: x[0], reverse=True)
         filtered = [(s, d) for s, d in scored_docs if s >= effective_threshold]
