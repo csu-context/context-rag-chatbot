@@ -118,6 +118,11 @@ class CrossEncoderReranker(BaseReranker):
             with cls._singleton_lock:
                 if cls._instance is None:
                     cls._instance = cls(model_name, top_k, threshold, device)
+        else:
+            # 기존 인스턴스가 존재하면 top_k와 threshold만 업데이트하여 재사용
+            cls._instance.top_k = top_k
+            if threshold is not None:
+                cls._instance.threshold = threshold
         return cls._instance
 
     @classmethod

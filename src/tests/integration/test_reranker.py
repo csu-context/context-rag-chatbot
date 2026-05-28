@@ -38,17 +38,17 @@ class TestCrossEncoderReranker:
         """리랭킹 정렬 검증: 모델 점수가 높은 순서대로 정렬되어야 함"""
         with patch.object(CrossEncoderReranker, "_load_model") as mock_load:
             mock_model = MagicMock()
-            # raw logit: Python=4.0, JS=-4.0, Java=1.0
-            # sigmoid/5 후: Python≈0.690, Java≈0.550, JS≈0.310
-            mock_model.predict.return_value = [4.0, -4.0, 1.0]
+            # raw logit: Python=4.0, JS=-2.0, Java=1.0
+            # sigmoid 후 (temperature 스케일링 제거됨): Python≈0.98, Java≈0.73, JS≈0.119
+            mock_model.predict.return_value = [4.0, -2.0, 1.0]
             mock_load.return_value = mock_model
 
             reranker = CrossEncoderReranker.get_instance(threshold=0.1)
             result = reranker.rerank("Python 특징", sample_docs)
 
             assert len(result.documents) == 3
-            assert result.scores[0] == pytest.approx(0.690, abs=1e-2)
-            assert result.scores[1] == pytest.approx(0.550, abs=1e-2)
+            assert result.scores[0] == pytest.approx(0.98, abs=1e-2)
+            assert result.scores[1] == pytest.approx(0.73, abs=1e-2)
             assert "Python" in result.documents[0].page_content
             assert "Java" in result.documents[1].page_content
 
@@ -56,10 +56,10 @@ class TestCrossEncoderReranker:
         """임계치 필터링 검증: threshold 미만인 문서는 결과에서 제거되어야 함"""
         with patch.object(CrossEncoderReranker, "_load_model") as mock_load:
             mock_model = MagicMock()
-            # raw logit: -5.0, 2.0, 4.0
-            # sigmoid/5 후: ≈0.269, 0.599, 0.690
+            # raw logit: -1.0, 2.0, 4.0
+            # sigmoid 후: ≈0.269, 0.880, 0.982
             # threshold=0.3 → 0.269인 문서는 필터링
-            mock_model.predict.return_value = [-5.0, 2.0, 4.0]
+            mock_model.predict.return_value = [-1.0, 2.0, 4.0]
             mock_load.return_value = mock_model
 
             reranker = CrossEncoderReranker.get_instance(threshold=0.3)

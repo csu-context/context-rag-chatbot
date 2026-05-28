@@ -1,4 +1,6 @@
 import logging
+import threading
+from typing import Optional
 
 import torch
 from sentence_transformers import SentenceTransformer
@@ -10,6 +12,23 @@ logger = logging.getLogger(__name__)
 
 
 class BGEEmbedder:
+    _instance: Optional["BGEEmbedder"] = None
+    _singleton_lock = threading.Lock()
+
+    @classmethod
+    def get_instance(cls, model_name="BAAI/bge-m3") -> "BGEEmbedder":
+        if cls._instance is None:
+            with cls._singleton_lock:
+                if cls._instance is None:
+                    cls._instance = cls(model_name=model_name)
+        return cls._instance
+
+    @classmethod
+    def reset_instance(cls):
+        """테스트용 싱글톤 리셋"""
+        with cls._singleton_lock:
+            cls._instance = None
+
     def __init__(self, model_name="BAAI/bge-m3"):
         if torch.cuda.is_available():
             self.device = "cuda"

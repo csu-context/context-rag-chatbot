@@ -40,7 +40,7 @@ class BGEChromaEmbeddingFunction(EmbeddingFunction):
     def embedder(self) -> BGEEmbedder:
         if self._embedder is None:
             logger.info("Initializing BGEEmbedder (Lazy Loading)...")
-            self._embedder = BGEEmbedder(model_name=self.model_name)
+            self._embedder = BGEEmbedder.get_instance(model_name=self.model_name)
         return self._embedder
 
     def __call__(self, input: Documents) -> Embeddings:
