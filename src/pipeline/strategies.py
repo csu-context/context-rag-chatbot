@@ -1,8 +1,11 @@
 import logging
+import re
 import time
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
+
+import fitz
 
 from src.common.config import settings
 from src.common.constants import MetadataFields
@@ -103,11 +106,15 @@ class DoclingPDFParserStrategy(ParserStrategy):
         elapsed = time.time() - start_time
         logger.info(f"Docling 표 추출 완료: {file_path.name} ({elapsed:.2f}초, 표 {parsed['table_count']}개)")
 
+        # 표 제목 컨텍스트 추출: PDF 페이지별 비-표 텍스트 캐싱
+        page_title_cache: dict[int, str] = {}
+        pdf_doc = fitz.open(str(file_path))
+
         table_sections = [
             {
                 "chapter": f"표 (p.{tbl['page']})",
                 "article": f"표 {tbl['table_index'] + 1}",
-                "content": tbl["markdown"],
+                "content": self._build_table_content(tbl, pdf_doc, page_title_cache),
                 "metadata": {
                     MetadataFields.SOURCE_ID: source_id,
                     MetadataFields.SRC_NAME: file_path.name,
@@ -123,9 +130,54 @@ class DoclingPDFParserStrategy(ParserStrategy):
             if tbl.get("markdown", "").strip()
         ]
 
+        pdf_doc.close()
         results = text_sections + table_sections
 
         if storage_manager:
             storage_manager.save_cache(source_id, results)
 
         return results
+
+    def _build_table_content(
+        self,
+        tbl: dict,
+        pdf_doc: "fitz.Document",
+        page_title_cache: dict[int, str],
+    ) -> str:
+        """표 마크다운 앞에 해당 페이지의 비-표 텍스트(표 제목/설명)를 붙여 반환한다."""
+        page_num = tbl["page"]
+        if page_num not in page_title_cache:
+            page_title_cache[page_num] = self._extract_non_table_text(pdf_doc, page_num)
+        title_ctx = page_title_cache[page_num]
+        md = tbl["markdown"]
+        return f"{title_ctx}\n\n{md}" if title_ctx else md
+
+    @staticmethod
+    def _extract_non_table_text(pdf_doc: "fitz.Document", page_num: int) -> str:
+        """PDF 페이지에서 표 셀이 아닌 텍스트(표 제목/절 제목 등)를 추출한다.
+
+        sort=True로 읽기 순서 확보 후, 표 구분자('|')가 없는 비-표 라인만 수집한다.
+        페이지 헤더(반복 출현 패턴)와 개정일 등 메타 노이즈는 제거한다.
+        """
+        if page_num < 1 or page_num > len(pdf_doc):
+            return ""
+        page = pdf_doc[page_num - 1]
+        raw = page.get_text("text", sort=True)
+
+        non_table_lines = []
+        for line in raw.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if "|" in stripped:
+                continue
+            # 개정일/신설 메타 노이즈 제거
+            if re.match(r"^<?(개정|신설|삭제)", stripped):
+                continue
+            non_table_lines.append(stripped)
+
+        # 앞 1줄(페이지 헤더)은 제거
+        if non_table_lines:
+            non_table_lines = non_table_lines[1:]
+
+        return " ".join(non_table_lines[:5]).strip()  # 최대 5줄 컨텍스트
