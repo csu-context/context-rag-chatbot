@@ -44,6 +44,14 @@ class Settings(BaseSettings):
     # 4. 파이프라인 및 파싱 설정
     PARSER_TYPE: Literal["manual", "docling"] = Field(default="docling")
     OLLAMA_BASE_URL: str = "http://localhost:11434"
+    # PDF 헤더/푸터 동적 제거 임계치: 전체 페이지 중 이 비율 이상 반복되는 라인을 노이즈로 분류
+    PDF_HEADER_FOOTER_THRESHOLD: float = Field(default=0.8)
+    # PDF 잔여 노이즈 패턴 (범용 정규식). 환경 변수로 오버라이드 가능: PDF_NOISE_PATTERNS='["pattern1"]'
+    PDF_NOISE_PATTERNS: list[str] = Field(
+        default=[
+            r"(?im)^\s*-\s*\d+\s*-\s*$",  # 페이지 번호 (예: "- 1 -", "- 12 -")
+        ]
+    )
 
     # 5. 평가(Evaluation) 관련 설정
     EVAL_MAX_SAMPLES: int = 50
