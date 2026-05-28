@@ -86,16 +86,29 @@ class TestCrossEncoderReranker:
             assert len(result.documents) == 0
             assert result.filtered_count == 3
 
-    def test_skip_rerank_few_documents(self):
-        """문서가 2개 미만인 경우 리랭킹을 수행하지 않고 원본을 반환해야 함"""
+    def test_single_document_gets_real_score(self):
+        """문서가 1개인 경우에도 모델을 실행하여 실제 점수를 반환해야 함"""
         docs = [Document(page_content="단일 문서", metadata={"source": "doc"})]
 
-        reranker = CrossEncoderReranker.get_instance()
-        result = reranker.rerank("질문", docs)
+        with patch.object(CrossEncoderReranker, "_load_model") as mock_load:
+            mock_model = MagicMock()
+            mock_model.predict.return_value = [2.0]  # sigmoid(2.0) ≈ 0.88
+            mock_load.return_value = mock_model
 
-        assert len(result.documents) == 1
-        assert result.scores == [0.5]  # 코드상 기본값 0.5
-        assert result.elapsed_time_sec == 0.0
+            reranker = CrossEncoderReranker.get_instance(threshold=0.1)
+            result = reranker.rerank("질문", docs)
+
+            assert len(result.documents) == 1
+            assert result.scores[0] == pytest.approx(0.88, abs=1e-2)
+            mock_model.predict.assert_called_once()
+
+    def test_empty_documents_returns_empty(self):
+        """빈 문서 리스트는 빈 결과를 즉시 반환해야 함"""
+        reranker = CrossEncoderReranker.get_instance()
+        result = reranker.rerank("질문", [])
+
+        assert result.documents == []
+        assert result.scores == []
 
     def test_exception_handling(self, sample_docs):
         """모델 추론 중 예외 발생 시 원본 순서를 유지하여 반환해야 함"""

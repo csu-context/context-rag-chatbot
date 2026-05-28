@@ -194,13 +194,8 @@ class CrossEncoderReranker(BaseReranker):
         effective_top_k = min(settings.RERANKER_MAX_DOCS, top_k or self.top_k)
         effective_threshold = threshold if threshold is not None else self.threshold
 
-        if len(documents) < 2:
-            return RerankResult(
-                documents=documents,
-                scores=[0.5] * len(documents),
-                model_name=self.name,
-                elapsed_time_sec=0.0,
-            )
+        if not documents:
+            return RerankResult(documents=[], scores=[], model_name=self.name, elapsed_time_sec=0.0)
 
         pairs = [(query, doc.page_content) for doc in documents]
 
