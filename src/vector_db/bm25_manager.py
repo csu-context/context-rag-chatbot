@@ -117,8 +117,6 @@ class BM25Manager(BaseRetriever):
             self.corpus_data = []
             return
 
-        cache_manager = BM25CacheManager(self.cache_dir)
-
         try:
             # 1. 기존 캐시 및 코퍼스 로드 시도
             corpus_path = self.cache_dir / _CORPUS_FILE

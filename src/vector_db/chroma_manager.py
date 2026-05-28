@@ -64,7 +64,7 @@ class ChromaConnectionMixin:
                     self.client = self.__class__._shared_client
                 else:
                     self.client = self._create_client(chroma_host, chroma_port, common_settings)
-                    ChromaDBManager._shared_client = self.client
+                    self.__class__._shared_client = self.client
 
                 self.collection = self.client.get_or_create_collection(
                     name=self.collection_name,
@@ -83,7 +83,7 @@ class ChromaConnectionMixin:
                         f"[자가 치유] ChromaDB 초기화 중 오류 감지 (DB 손상 또는 버전 불일치 가능성): {e}. "
                         "로컬 DB 디렉토리를 완전히 삭제하고 자동 재구성을 수행합니다."
                     )
-                    ChromaDBManager._shared_client = None
+                    self.__class__._shared_client = None
                     self.client = None
                     if VECTOR_DB_DIR.exists():
                         try:
@@ -176,6 +176,18 @@ class ChromaConnectionMixin:
         except Exception as e:
             logger.error(f"설정 검증 및 자동 초기화 중 오류 발생: {e}")
             raise
+
+
+class ChromaDBManager(ChromaConnectionMixin, BaseRetriever):
+    def __init__(self, collection_name: str = "rag_collection"):
+        """
+        ChromaDB 클라이언트 및 컬렉션을 초기화합니다.
+        환경 변수 CHROMA_SERVER_HOST 존재 여부에 따라 로컬(Persistent) 또는 서버(Http) 모드로 동작하며,
+        DB 연결 실패 시 재시도(Retry) 로직을 수행합니다.
+        """
+        self.collection_name = collection_name
+        self.embedding_fn = BGEChromaEmbeddingFunction()
+        self._initialize_client_with_retry()
 
     def embed_query(self, query_text: str) -> list[float]:
         """
