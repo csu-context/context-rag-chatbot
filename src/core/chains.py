@@ -64,17 +64,21 @@ class RAGPipeline:
                 if parent_id in seen_parents:
                     continue  # 이미 부모 청크가 추가되었으므로 중복 자식은 생략
 
-                try:
-                    json_path = PROCESSED_DATA_DIR / f"{source_id}.json"
-                    parents_list = _load_source_json(json_path)
-                    if parents_list:
-                        for p in parents_list:
-                            if p.get("parent_id") == parent_id:
-                                doc.page_content = p.get("parent_text", doc.page_content)
-                                seen_parents.add(parent_id)
-                                break
-                except Exception as e:
-                    logger.error(f"부모 청크 로드 실패: {e}")
+                # IS_TABLE child는 sub-table 단위로 LLM 컨텍스트에 전달 (full table 크기 초과 방지)
+                if not doc.metadata.get(MetadataFields.IS_TABLE, False):
+                    try:
+                        json_path = PROCESSED_DATA_DIR / f"{source_id}.json"
+                        parents_list = _load_source_json(json_path)
+                        if parents_list:
+                            for p in parents_list:
+                                if p.get("parent_id") == parent_id:
+                                    doc.page_content = p.get("parent_text", doc.page_content)
+                                    seen_parents.add(parent_id)
+                                    break
+                    except Exception as e:
+                        logger.error(f"부모 청크 로드 실패: {e}")
+                else:
+                    seen_parents.add(parent_id)
 
             # 텍스트 기반 중복 제거 (내용이 완전히 동일한 청크 필터링)
             text_hash = hash("".join(doc.page_content.split()))

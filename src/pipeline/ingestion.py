@@ -66,6 +66,46 @@ def _chunk_combined(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return result
 
 
+def _split_table_into_row_chunks(content: str, parent_id: str, base_meta: dict) -> list[dict[str, Any]]:
+    """표를 행(row) 단위 청크로 분할. 각 청크에 표 제목 컨텍스트 + 헤더 행 보존.
+
+    24행*10열 대형 표도 각 데이터 행이 독립 청크(200~400자)가 되어
+    LLM 컨텍스트 한도 내에서 검색·답변 가능하게 한다.
+    """
+    # 표 제목(비-마크다운 텍스트)과 표 본체 분리
+    parts = content.split("\n\n", 1)
+    if len(parts) == 2 and "|" in parts[1]:
+        title_ctx, table_md = parts[0].strip(), parts[1].strip()
+    else:
+        title_ctx, table_md = "", content.strip()
+
+    lines = [ln for ln in table_md.split("\n") if ln.strip()]
+    if len(lines) < 3:
+        return []
+
+    header, separator = lines[0], lines[1]
+    data_rows = lines[2:]
+
+    children = []
+    for i, row in enumerate(data_rows):
+        if not row.strip() or set(row.strip()) <= {"|", "-", " ", ":"}:
+            continue
+        row_content_parts = [header, separator, row]
+        if title_ctx:
+            row_content_parts = [title_ctx, "", *row_content_parts]
+        row_text = "\n".join(row_content_parts).strip()
+        child_id = f"{parent_id}_r{i}"
+        child_meta = {
+            **base_meta,
+            MetadataFields.CHUNK_ID: child_id,
+            MetadataFields.PARENT_ID: parent_id,
+            MetadataFields.IS_TABLE: True,
+        }
+        children.append({"chunk_id": child_id, "metadata": child_meta, "text": row_text})
+
+    return children
+
+
 def _chunk_manual_pdf(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
     chunker = HierarchicalChunker()
     result = []
@@ -76,17 +116,8 @@ def _chunk_manual_pdf(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
         meta_for_children[MetadataFields.SEC_TITLE] = sec_title
         meta_for_children[MetadataFields.HEADER_PATH] = sec_title
 
-        # 표 섹션은 분할 없이 단일 청크로 저장 — MarkdownTableProtector 토큰이
-        # child_splitter에 의해 분할되면 복원 불가능하므로 전체를 하나의 child로 처리
         if sec["metadata"].get(MetadataFields.IS_TABLE, False):
-            child_id = f"{parent_id}_c0"
-            child_meta = {
-                **meta_for_children,
-                MetadataFields.CHUNK_ID: child_id,
-                MetadataFields.PARENT_ID: parent_id,
-                MetadataFields.IS_TABLE: True,
-            }
-            children = [{"chunk_id": child_id, "metadata": child_meta, "text": sec["content"]}]
+            children = _split_table_into_row_chunks(sec["content"], parent_id, meta_for_children)
         else:
             children = chunker.split_into_children(sec["content"], parent_id, meta_for_children)
 

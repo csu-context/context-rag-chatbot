@@ -63,7 +63,7 @@ class ContextBuilderNode:
         for doc in ranked:
             doc_tokens = estimate_tokens(doc.page_content, ratio)
             if total + doc_tokens > available:
-                break
+                continue  # 큰 문서 skip, 더 작은 나머지 문서는 계속 시도
             kept.append(doc)
             total += doc_tokens
 

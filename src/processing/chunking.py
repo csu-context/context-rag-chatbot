@@ -53,10 +53,10 @@ class MarkdownTableProtector:
 
     @staticmethod
     def _register_token(text: str, registry: dict[str, str]) -> str:
-        token_base = f"@@TABLE_{uuid.uuid4().hex}@@"
-        padded_token = token_base + "_" * max(0, len(text) - len(token_base))
-        registry[padded_token] = text
-        return padded_token
+        # 패딩 없이 짧은 토큰 사용 — 패딩 시 child_splitter가 토큰 자체를 분할하여 복원 불가
+        token = f"@@TABLE_{uuid.uuid4().hex}@@"
+        registry[token] = text
+        return token
 
     @staticmethod
     def protect_tables(text: str, max_chunk_size: int) -> tuple[str, dict[str, str]]:
