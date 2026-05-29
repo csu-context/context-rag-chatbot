@@ -48,9 +48,9 @@ def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
     with col1:
         st.subheader("신규 문서 업로드")
         uploaded_files = st.file_uploader(
-            "파일 선택 (PDF, MD)",
+            "파일 선택 (PDF, MD, HWP, HWPX)",
             accept_multiple_files=True,
-            type=["pdf", "md", "markdown"],
+            type=["pdf", "md", "markdown", "hwp", "hwpx"],
             key="dialog_uploader",
             label_visibility="collapsed",
         )
@@ -101,7 +101,7 @@ def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
 
     current_files = []
     # 하위 디렉토리까지 포함하여 재귀적으로 스캔
-    for ext in ["*.pdf", "*.md", "*.markdown"]:
+    for ext in ["*.pdf", "*.md", "*.markdown", "*.hwp", "*.hwpx"]:
         current_files.extend(list(RAW_DATA_DIR.glob(f"**/{ext}")))
 
     if not current_files:

@@ -11,6 +11,7 @@ from src.core.chains import invalidate_source_json_cache
 from src.core.storage import StorageManager
 from src.pipeline.strategies import (
     DoclingPDFParserStrategy,
+    HwpParserStrategy,
     ManualParserStrategy,
     MarkdownParserStrategy,
     ParserStrategy,
@@ -33,7 +34,12 @@ def _safe_invoke_progress(callback, current: int, total: int, name: str) -> None
 
 def _get_parser_strategy_for_file(file_path: Path, file_parser_types: dict[str, str] | None) -> ParserStrategy:
     """파일 경로와 매니페스트 설정을 기반으로 적절한 파서 전략을 반환합니다."""
-    if file_path.suffix.lower() != ".pdf":
+    ext = file_path.suffix.lower()
+
+    if ext in (".hwp", ".hwpx"):
+        return HwpParserStrategy()
+
+    if ext != ".pdf":
         return MarkdownParserStrategy()
 
     from src.utils.paths import RAW_DATA_DIR
@@ -191,7 +197,7 @@ class IngestionPipeline:
 
     def scan_files(self, supported_exts: list[str] | None = None) -> list[Path]:
         if supported_exts is None:
-            supported_exts = [".pdf", ".md", ".markdown"]
+            supported_exts = [".pdf", ".md", ".markdown", ".hwp", ".hwpx"]
         files = []
         for ext in supported_exts:
             # 모든 하위 디렉토리를 포함하여 검색
