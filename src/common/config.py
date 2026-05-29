@@ -44,10 +44,9 @@ class Settings(BaseSettings):
     RERANKER_MAX_DOCS: int = Field(default=5)
     RERANKER_BATCH_SIZE: int = Field(default=5)
     RERANKER_THRESHOLD: float = Field(default=0.5)
-    # 보안 설정 (Issue 51/57/44)
+    # 보안 설정 (Issue 51/57)
     SEMANTIC_CACHE_ENABLED: bool = Field(default=True)
     ADMIN_PASSWORD: str | None = Field(default=None)
-    LANGCHAIN_TRACING_V2: bool = Field(default=False)
 
     # 4. 파이프라인 및 파싱 설정
     PARSER_TYPE: Literal["manual", "docling"] = Field(default="docling")
