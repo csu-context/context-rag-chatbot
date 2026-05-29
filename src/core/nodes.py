@@ -1,6 +1,5 @@
 import logging
 import re
-from typing import Any
 
 from langchain_core.documents import Document
 
@@ -64,7 +63,7 @@ class ContextBuilderNode:
         for doc in ranked:
             doc_tokens = estimate_tokens(doc.page_content, ratio)
             if total + doc_tokens > available:
-                break
+                continue  # 큰 문서 skip, 더 작은 나머지 문서는 계속 시도
             kept.append(doc)
             total += doc_tokens
 
@@ -72,13 +71,3 @@ class ContextBuilderNode:
             logger.warning(f"컨텍스트 토큰 한도 초과: {len(docs)}개 → {len(kept)}개 문서로 트리밍")
 
         return kept
-
-    @staticmethod
-    def build_cache_query(query: str, history: list[dict[str, Any]]) -> str:
-        """대화 맥락에 따른 캐시 오염을 방지하기 위해 최근 대화 이력을 쿼리에 결합합니다."""
-        if not history:
-            return query
-        history_str = "\n".join(
-            f"{m.get('role', '')}: {m.get('content', '')}" for m in history[-_MAX_HISTORY_MESSAGES:]
-        )
-        return f"[History]\n{history_str}\n\n[Current Query]\n{query}"

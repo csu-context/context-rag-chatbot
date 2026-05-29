@@ -1,4 +1,6 @@
 import logging
+import threading
+from typing import Optional
 
 import torch
 from sentence_transformers import SentenceTransformer
@@ -10,6 +12,23 @@ logger = logging.getLogger(__name__)
 
 
 class BGEEmbedder:
+    _instance: Optional["BGEEmbedder"] = None
+    _singleton_lock = threading.Lock()
+
+    @classmethod
+    def get_instance(cls, model_name="BAAI/bge-m3") -> "BGEEmbedder":
+        if cls._instance is None:
+            with cls._singleton_lock:
+                if cls._instance is None:
+                    cls._instance = cls(model_name=model_name)
+        return cls._instance
+
+    @classmethod
+    def reset_instance(cls):
+        """테스트용 싱글톤 리셋"""
+        with cls._singleton_lock:
+            cls._instance = None
+
     def __init__(self, model_name="BAAI/bge-m3"):
         if torch.cuda.is_available():
             self.device = "cuda"
@@ -43,7 +62,11 @@ class BGEEmbedder:
         logger.info(f"모델이 다음 장치에 로드되었습니다: {self.device}")
 
     def encode(self, sentences):
-        return self.model.encode(sentences, normalize_embeddings=True)
+        try:
+            return self.model.encode(sentences, normalize_embeddings=True)
+        finally:
+            if self.device == "cuda":
+                torch.cuda.empty_cache()
 
     def get_dimension(self):
         return self.model.get_sentence_embedding_dimension()

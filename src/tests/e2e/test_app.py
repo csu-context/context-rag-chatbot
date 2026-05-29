@@ -51,16 +51,14 @@ def rag_setup():
 
     # 리트리버는 실제 DB를 사용하되, LLM과 Reranker는 모킹하여 시스템 부하를 줄임
     with (
-        patch("src.models.factory.LLMFactory.create_llm") as mock_llm_factory,
+        patch("src.models.factory.LLMFactory.create_llm_with_fallback") as mock_llm_factory,
         patch("src.core.reranker.RerankerFactory.create") as mock_reranker_factory,
     ):
         # Mock LLM 설정
-        mock_llm_inst = MagicMock()
         mock_model = MagicMock()
         mock_model.model_name = "mock-llama"
         mock_model.temperature = 0.0
-        mock_llm_inst.get_model.return_value = mock_model
-        mock_llm_factory.return_value = mock_llm_inst
+        mock_llm_factory.return_value = mock_model
 
         # Mock Reranker 설정
         mock_reranker = MagicMock()

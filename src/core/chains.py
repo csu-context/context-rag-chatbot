@@ -51,24 +51,40 @@ class RAGPipeline:
         self.cache = SemanticCache()
 
     def _resolve_parent_documents(self, docs: list[Document]) -> list[Document]:
-        """자식 청크로 검색된 문서들을 부모 청크의 원문으로 전환합니다."""
+        """자식 청크로 검색된 문서들을 부모 청크의 원문으로 전환하며, 동일 부모 및 동일 텍스트 중복을 제거합니다."""
         resolved_docs = []
+        seen_parents = set()
+        seen_texts = set()
 
         for doc in docs:
             parent_id = doc.metadata.get(MetadataFields.PARENT_ID)
             source_id = doc.metadata.get(MetadataFields.SOURCE_ID)
 
             if parent_id and source_id:
-                try:
-                    json_path = PROCESSED_DATA_DIR / f"{source_id}.json"
-                    parents_list = _load_source_json(json_path)
-                    if parents_list:
-                        for p in parents_list:
-                            if p.get("parent_id") == parent_id:
-                                doc.page_content = p.get("parent_text", doc.page_content)
-                                break
-                except Exception as e:
-                    logger.error(f"부모 청크 로드 실패: {e}")
+                if parent_id in seen_parents:
+                    continue  # 이미 부모 청크가 추가되었으므로 중복 자식은 생략
+
+                # IS_TABLE child는 sub-table 단위로 LLM 컨텍스트에 전달 (full table 크기 초과 방지)
+                if not doc.metadata.get(MetadataFields.IS_TABLE, False):
+                    try:
+                        json_path = PROCESSED_DATA_DIR / f"{source_id}.json"
+                        parents_list = _load_source_json(json_path)
+                        if parents_list:
+                            for p in parents_list:
+                                if p.get("parent_id") == parent_id:
+                                    doc.page_content = p.get("parent_text", doc.page_content)
+                                    seen_parents.add(parent_id)
+                                    break
+                    except Exception as e:
+                        logger.error(f"부모 청크 로드 실패: {e}")
+                else:
+                    seen_parents.add(parent_id)
+
+            # 텍스트 기반 중복 제거 (내용이 완전히 동일한 청크 필터링)
+            text_hash = hash("".join(doc.page_content.split()))
+            if text_hash in seen_texts:
+                continue
+            seen_texts.add(text_hash)
 
             resolved_docs.append(doc)
 
@@ -211,14 +227,10 @@ class RAGPipeline:
         final_k = input_dict.get("final_k", 5)
         history = input_dict.get("history", [])
 
-        # 대화 이력이 병합된 고유 캐시 쿼리 생성
-        cache_query = ContextBuilderNode.build_cache_query(query, history)
-        use_cache = True
-
         with self.tracing_logger.start_session(query=query) as session:
             # 1. Semantic Cache Check
             yield {"stage": "cache", "status": "running"}
-            cached_result = self.cache.get(cache_query) if use_cache else None
+            cached_result = self.cache.get(query)
             if cached_result:
                 session.data["cache_hit"] = True
                 yield {"stage": "cache", "status": "hit"}
@@ -268,8 +280,7 @@ class RAGPipeline:
                 for doc in final_docs
             ]
 
-            if use_cache:
-                self.cache.add(cache_query, full_answer, docs_for_cache)
+            self.cache.add(query, full_answer, docs_for_cache)
 
             yield {"stage": "citation", "status": "complete", "output": citations_str, "source_documents": final_docs}
 

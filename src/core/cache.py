@@ -1,6 +1,7 @@
 import json
 import logging
 import uuid
+from typing import Any
 
 from src.common.config import settings
 from src.vector_db.chroma_manager import ChromaDBManager
@@ -15,7 +16,7 @@ class SemanticCache:
         self.db_manager = ChromaDBManager(collection_name=self.collection_name)
         self.collection = self.db_manager.collection
 
-    def _get_valid_collection(self):
+    def _get_valid_collection(self) -> Any:
         # 파이프라인이 flush하면 stale 컬렉션 참조가 'does not exist' 에러를 냄 → 사용 전 재검증
         try:
             self.collection.count()
@@ -29,7 +30,7 @@ class SemanticCache:
             self.db_manager.collection = self.collection
         return self.collection
 
-    def get(self, query_text):
+    def get(self, query_text: str) -> dict | None:
         try:
             collection = self._get_valid_collection()
             query_embedding = self.db_manager.embed_query(query_text)
@@ -56,7 +57,7 @@ class SemanticCache:
             logger.error(f"시맨틱 캐시 조회 중 오류 발생: {e}")
         return None
 
-    def add(self, query_text, answer, sources):
+    def add(self, query_text: str, answer: str, sources: list) -> None:
         try:
             collection = self._get_valid_collection()
             sources_json = json.dumps(sources) if sources else ""
@@ -72,42 +73,7 @@ class SemanticCache:
         except Exception as e:
             logger.error(f"시맨틱 캐시 추가 중 오류 발생: {e}")
 
-    def invalidate_by_sources(self, relative_paths: list[str]) -> int:
-        """변경된 파일과 관련된 캐시 엔트리만 선택적으로 삭제합니다."""
-        if not relative_paths:
-            return 0
-        try:
-            collection = self._get_valid_collection()
-            all_entries = collection.get(include=["metadatas"])
-            if not all_entries["ids"]:
-                return 0
-
-            paths_set = set(relative_paths)
-            ids_to_delete = []
-
-            for entry_id, meta in zip(all_entries["ids"], all_entries["metadatas"], strict=False):
-                sources_raw = meta.get("sources", "")
-                try:
-                    sources = json.loads(sources_raw) if sources_raw else []
-                except json.JSONDecodeError as e:
-                    logger.warning(f"캐시 엔트리 파싱 실패, 건너뜀 (id: {entry_id}): {e}")
-                    continue
-                for src in sources:
-                    src_meta = src.get("metadata", {})
-                    rel_path = src_meta.get("relative_path") or src_meta.get("src_name")
-                    if rel_path in paths_set:
-                        ids_to_delete.append(entry_id)
-                        break
-
-            if ids_to_delete:
-                collection.delete(ids=ids_to_delete)
-                logger.info(f"시맨틱 캐시 선택적 무효화: {len(ids_to_delete)}개 엔트리 삭제 ({relative_paths})")
-            return len(ids_to_delete)
-        except Exception as e:
-            logger.error(f"시맨틱 캐시 선택적 무효화 중 오류 발생: {e}")
-            return 0
-
-    def flush(self):
+    def flush(self) -> None:
         try:
             self.db_manager.client.delete_collection(name=self.collection_name)
             self.collection = self.db_manager.client.get_or_create_collection(

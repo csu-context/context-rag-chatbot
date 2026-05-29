@@ -125,7 +125,7 @@ class DoclingPDFParser:
             cleaned = "\n".join(line for line in page.split("\n") if line.strip() not in noise_lines)
             result_pages.append(cleaned)
 
-        combined = "\n\n".join(result_pages)
+        combined = f"\n\n{_PAGE_BREAK_PLACEHOLDER}\n\n".join(result_pages)
         return combined.strip()
 
     def _clean_pdf_noise(self, text: str) -> str:

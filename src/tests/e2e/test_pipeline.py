@@ -59,8 +59,7 @@ async def test_full_rag_pipeline():
     # 4. RAG 체인 호출 및 검증 (Mock LLM)
     test_query = "복수전공의 정의가 뭐야?"
 
-    with patch("src.models.factory.LLMFactory.create_llm") as mock_factory:
-        mock_llm_inst = MagicMock()
+    with patch("src.models.factory.LLMFactory.create_llm_with_fallback") as mock_factory:
         mock_model = MagicMock()
         mock_model.model_name = "test-model"
         mock_model.temperature = 0.1
@@ -74,8 +73,7 @@ async def test_full_rag_pipeline():
             return_value=MagicMock(content="복수전공은 주전공 외에 추가로 이수하는 전공을 의미합니다.")
         )
 
-        mock_llm_inst.get_model.return_value = mock_model
-        mock_factory.return_value = mock_llm_inst
+        mock_factory.return_value = mock_model
 
         rag_chain = get_rag_chain(db_manager)
 

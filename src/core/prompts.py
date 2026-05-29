@@ -91,4 +91,3 @@ class PromptManager:
 
 prompt_manager = PromptManager()
 get_system_prompt = prompt_manager.get_system_prompt
-RAG_SYSTEM_PROMPT: str = get_system_prompt()

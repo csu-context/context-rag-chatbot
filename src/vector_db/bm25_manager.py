@@ -1,6 +1,8 @@
+import hashlib
 import json
 import logging
 import traceback
+from pathlib import Path
 from typing import Any, ClassVar
 
 import numpy as np
@@ -15,6 +17,10 @@ logger = logging.getLogger(__name__)
 
 _CORPUS_FILE = "corpus.json"
 _MANIFEST_FILE = "manifest.json"
+
+
+def _file_hash(path: Path) -> str:
+    return hashlib.md5(path.read_bytes(), usedforsecurity=False).hexdigest()
 
 
 class BM25Manager(BaseRetriever):
@@ -104,13 +110,90 @@ class BM25Manager(BaseRetriever):
     def _get_all_json_files(self) -> list:
         return [f for f in self.data_dir.glob("*.json") if f.name != "manifest.json"]
 
-    def load_index(self):  # noqa: C901
+    def _load_existing_cache(self) -> tuple[list, dict]:
+        """기존 캐시 코퍼스와 매니페스트를 로드합니다. 실패 시 빈 값 반환."""
+        corpus_path = self.cache_dir / _CORPUS_FILE
+        manifest_path = self.cache_dir / _MANIFEST_FILE
+        if not (corpus_path.exists() and manifest_path.exists()):
+            return [], {}
+        try:
+            with open(corpus_path, encoding="utf-8") as f:
+                corpus = json.load(f)
+            with open(manifest_path, encoding="utf-8") as f:
+                manifest = json.load(f)
+            self.bm25 = BM25PlusIndex.load(self.cache_dir)
+            return corpus, manifest
+        except Exception as cache_err:
+            logger.warning(f"기존 캐시 로드 실패 (전체 재구성): {cache_err}")
+            return [], {}
+
+    def _detect_changes(
+        self, json_files: list, existing_corpus: list, existing_manifest: dict
+    ) -> tuple[set, set, dict]:
+        """신규/수정/삭제된 source_id를 감지합니다."""
+        current_sids = {f.stem for f in json_files}
+        current_hashes = {f.stem: _file_hash(f) for f in json_files}
+        existing_sids = {
+            doc.get(DataFields.METADATA, {}).get(MetadataFields.SOURCE_ID)
+            for doc in existing_corpus
+            if doc.get(DataFields.METADATA, {}).get(MetadataFields.SOURCE_ID)
+        }
+        stored_hashes = existing_manifest.get("file_hashes", {})
+
+        if not existing_corpus or self.bm25 is None:
+            modified_sids = current_sids
+        else:
+            modified_sids = {
+                sid for sid, h in current_hashes.items() if h != stored_hashes.get(sid) or sid not in existing_sids
+            }
+        deleted_sids = existing_sids - current_sids
+        return modified_sids, deleted_sids, current_hashes
+
+    def _update_corpus(self, existing_corpus: list, modified_sids: set, deleted_sids: set, json_files: list) -> list:
+        """코퍼스를 증분 업데이트합니다."""
+        sids_to_remove = modified_sids | deleted_sids
+        updated = [
+            doc
+            for doc in existing_corpus
+            if doc.get(DataFields.METADATA, {}).get(MetadataFields.SOURCE_ID) not in sids_to_remove
+        ]
+        new_raw_data = []
+        for f in json_files:
+            if f.stem in modified_sids:
+                with open(f, encoding="utf-8") as file_obj:
+                    try:
+                        new_raw_data.append(json.load(file_obj))
+                    except json.JSONDecodeError as e:
+                        logger.error(f"JSON 파싱 오류 ({f.name}): {e}")
+        updated.extend(self._flatten_data(new_raw_data))
+        return updated
+
+    def _build_and_save_index(self, current_hashes: dict) -> None:
+        """토큰화, 인덱스 빌드, 캐시 저장을 수행합니다."""
+        tokenized_corpus = [self._tokenizer(doc.get(DataFields.CONTENT, "")) for doc in self.corpus_data]
+        valid_indices = [i for i, tokens in enumerate(tokenized_corpus) if tokens]
+        if not valid_indices:
+            logger.warning("토큰화된 유효 데이터가 없습니다.")
+            self.bm25 = None
+            return
+        self.corpus_data = [self.corpus_data[i] for i in valid_indices]
+        tokenized_corpus = [tokenized_corpus[i] for i in valid_indices]
+        self.bm25 = BM25PlusIndex()
+        self.bm25.build(tokenized_corpus)
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.bm25.save(self.cache_dir)
+        with open(self.cache_dir / _CORPUS_FILE, "w", encoding="utf-8") as f:
+            json.dump(self.corpus_data, f, ensure_ascii=False, separators=(",", ":"))
+        with open(self.cache_dir / _MANIFEST_FILE, "w", encoding="utf-8") as f:
+            json.dump({"docs": len(self.corpus_data), "file_hashes": current_hashes}, f)
+        logger.info(f"통합 인덱스 증분 업데이트 및 저장 완료: {len(self.corpus_data)} docs")
+
+    def load_index(self) -> None:
         """
         가공된 데이터를 로드하여 BM25 인덱스를 빌드함.
         [DataOps] 신규/수정/삭제된 파일만 부분 감지하여 인덱스를 증분 업데이트(Incremental Update)합니다.
         """
         json_files = self._get_all_json_files()
-
         if not json_files:
             logger.warning(f"데이터가 없습니다: {self.data_dir} 에 JSON 파일이 없습니다.")
             self.bm25 = None
@@ -118,110 +201,25 @@ class BM25Manager(BaseRetriever):
             return
 
         try:
-            # 1. 기존 캐시 및 코퍼스 로드 시도
-            corpus_path = self.cache_dir / _CORPUS_FILE
-            manifest_path = self.cache_dir / _MANIFEST_FILE
+            existing_corpus, existing_manifest = self._load_existing_cache()
+            modified_sids, deleted_sids, current_hashes = self._detect_changes(
+                json_files, existing_corpus, existing_manifest
+            )
 
-            existing_corpus = []
-            if corpus_path.exists() and manifest_path.exists():
-                try:
-                    with open(corpus_path, encoding="utf-8") as f:
-                        existing_corpus = json.load(f)
-                    self.bm25 = BM25PlusIndex.load(self.cache_dir)
-                except Exception as cache_err:
-                    logger.warning(f"기존 캐시 로드 실패 (전체 재구성): {cache_err}")
-                    existing_corpus = []
-
-            # 현재 폴더에 있는 source_id 목록 추출 (파일명이 source_id임)
-            current_sids = {f.stem for f in json_files}
-
-            # 기존 코퍼스의 source_id 목록 추출
-            existing_sids = set()
-            for doc in existing_corpus:
-                sid = doc.get(DataFields.METADATA, {}).get(MetadataFields.SOURCE_ID)
-                if sid:
-                    existing_sids.add(sid)
-
-            # 2. 변경된 파일 감지 (신규 추가, 수정됨, 삭제됨)
-            modified_sids = set()
-
-            # 캐시가 완전히 깨졌거나 로드 실패 시 전체 재구축
-            if not existing_corpus or self.bm25 is None:
-                modified_sids = current_sids
-            else:
-                cache_time = manifest_path.stat().st_mtime
-                for f in json_files:
-                    sid = f.stem
-                    # 파일 수정 시각이 캐시 기록 시각보다 최근이거나, 기존 코퍼스에 없는 경우
-                    if f.stat().st_mtime > cache_time or sid not in existing_sids:
-                        modified_sids.add(sid)
-
-            deleted_sids = existing_sids - current_sids
-
-            # 변경 사항이 전혀 없는 경우
             if not modified_sids and not deleted_sids and existing_corpus and self.bm25 is not None:
                 self.corpus_data = existing_corpus
                 logger.info(f"통합 인덱스 로드 완료 (Cache - 변경사항 없음): {len(self.corpus_data)} docs")
                 return
 
             logger.info(f"증분 인덱스 업데이트 시작 (수정/추가: {len(modified_sids)}개, 삭제: {len(deleted_sids)}개)")
-
-            # 3. 코퍼스 데이터 증분 업데이트
-            # 삭제 및 수정된 기존 데이터 필터링 제거
-            sids_to_remove = modified_sids | deleted_sids
-            updated_corpus = [
-                doc
-                for doc in existing_corpus
-                if doc.get(DataFields.METADATA, {}).get(MetadataFields.SOURCE_ID) not in sids_to_remove
-            ]
-
-            # 신규 및 수정된 데이터 로드 및 추가
-            new_raw_data = []
-            for f in json_files:
-                sid = f.stem
-                if sid in modified_sids:
-                    with open(f, encoding="utf-8") as file_obj:
-                        try:
-                            new_raw_data.append(json.load(file_obj))
-                        except json.JSONDecodeError as e:
-                            logger.error(f"JSON 파싱 오류 ({f.name}): {e}")
-
-            new_flattened = self._flatten_data(new_raw_data)
-            updated_corpus.extend(new_flattened)
-
-            self.corpus_data = updated_corpus
+            self.corpus_data = self._update_corpus(existing_corpus, modified_sids, deleted_sids, json_files)
 
             if not self.corpus_data:
                 logger.warning("유효한 텍스트 데이터가 없어 인덱스를 생성할 수 없습니다.")
                 self.bm25 = None
                 return
 
-            # 4. 토큰화 및 인덱스 재생성
-            tokenized_corpus = [self._tokenizer(doc.get(DataFields.CONTENT, "")) for doc in self.corpus_data]
-            valid_indices = [i for i, tokens in enumerate(tokenized_corpus) if tokens]
-
-            if not valid_indices:
-                logger.warning("토큰화된 유효 데이터가 없습니다.")
-                self.bm25 = None
-                return
-
-            self.corpus_data = [self.corpus_data[i] for i in valid_indices]
-            tokenized_corpus = [tokenized_corpus[i] for i in valid_indices]
-
-            self.bm25 = BM25PlusIndex()
-            self.bm25.build(tokenized_corpus)
-
-            # 5. 인덱스 및 코퍼스 캐시 영속화
-            self.cache_dir.mkdir(parents=True, exist_ok=True)
-            self.bm25.save(self.cache_dir)
-
-            with open(self.cache_dir / _CORPUS_FILE, "w", encoding="utf-8") as f:
-                json.dump(self.corpus_data, f, ensure_ascii=False, separators=(",", ":"))
-
-            with open(self.cache_dir / _MANIFEST_FILE, "w", encoding="utf-8") as f:
-                json.dump({"docs": len(self.corpus_data)}, f)
-
-            logger.info(f"통합 인덱스 증분 업데이트 및 저장 완료: {len(self.corpus_data)} docs")
+            self._build_and_save_index(current_hashes)
 
         except Exception as e:
             logger.error(f"증분 인덱스 로드 중 오류 발생: {e}")
@@ -262,10 +260,8 @@ class BM25Manager(BaseRetriever):
         if not matching_indices:
             return []
 
-        # 매칭되는 문서들의 점수 중 최댓값을 구함 (전역 정규화 스케일러용)
         s_max = float(np.max(scores[matching_indices]))
-        s_min = 0.0
-        denom = s_max - s_min if s_max > 0.0 else 1.0
+        denom = s_max if s_max > 0.0 else 1.0
 
         # 매칭된 인덱스들에 대해서만 스코어 기반 정렬 수행
         matching_scores = scores[matching_indices]
@@ -280,7 +276,7 @@ class BM25Manager(BaseRetriever):
             sorted_sub_indices = top_k_sub[np.argsort(matching_scores[top_k_sub])[::-1]].tolist()
 
         top_indices = [matching_indices[i] for i in sorted_sub_indices]
-        normalized = [(float(scores[i]) - s_min) / denom for i in top_indices]
+        normalized = [float(scores[i]) / denom for i in top_indices]
 
         results = []
         for rank, (idx, norm_score) in enumerate(zip(top_indices, normalized, strict=False)):

@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     # 3. 벡터 DB 및 검색 설정
     RETRIEVER_TYPE: Literal["vector", "hybrid"] = Field(default="hybrid")
     RERANKER_TYPE: Literal["local", "cohere", "jina"] = Field(default="local")
-    RERANKER_MODEL_NAME: str = Field(default="BAAI/bge-reranker-base")
+    RERANKER_MODEL_NAME: str = Field(default="BAAI/bge-reranker-v2-m3")
     RERANKER_USE_FP16: bool = Field(default=True)
     EMBEDDER_USE_FP16: bool = Field(default=True)
     ALLOW_EXTERNAL_RERANKER: bool = Field(default=False)
@@ -41,8 +41,9 @@ class Settings(BaseSettings):
     HYBRID_WEIGHT_BM25: float = 0.5
     HYBRID_WEIGHT_VECTOR: float = 0.5
     RETRIEVER_CANDIDATE_POOL_MIN: int = Field(default=15)
-    RERANKER_MAX_DOCS: int = Field(default=3)
-    RERANKER_BATCH_SIZE: int = Field(default=8)
+    RERANKER_MAX_DOCS: int = Field(default=5)
+    RERANKER_BATCH_SIZE: int = Field(default=5)
+    RERANKER_THRESHOLD: float = Field(default=0.5)
 
     # 4. 파이프라인 및 파싱 설정
     PARSER_TYPE: Literal["manual", "docling"] = Field(default="docling")
@@ -69,7 +70,7 @@ class Settings(BaseSettings):
 
     # 7. 시맨틱 캐시 설정
     SEMANTIC_CACHE_COLLECTION_NAME: str = Field(default="semantic_cache")
-    SEMANTIC_CACHE_THRESHOLD: float = Field(default=0.90)
+    SEMANTIC_CACHE_THRESHOLD: float = Field(default=0.95)
     MAX_CHAT_HISTORY_TURNS: int = Field(default=5)
 
     # 8. Ollama 추론 제어

@@ -37,13 +37,11 @@ class BaseReranker(ABC):
     """리랭커 기본 클래스"""
 
     MAX_INFER_TIME_SEC = 5  # API 타임아웃
-    PERFORMANCE_THRESHOLD_SEC = 3.0  # 지연 기준 시간 (이 시간 초과 시 top_k 동적 조정)
 
-    def __init__(self, name: str, top_k: int = 5, threshold: float = 0.45):
+    def __init__(self, name: str, top_k: int = 5, threshold: float | None = None):
         self.name = name
         self.top_k = top_k
-        self.threshold = threshold
-        self._last_latency = 0.0
+        self.threshold = threshold if threshold is not None else settings.RERANKER_THRESHOLD
 
     @abstractmethod
     def rerank(
@@ -56,37 +54,23 @@ class BaseReranker(ABC):
         """문서 목록을 재정렬하고 관련성이 높은 순으로 반환합니다."""
         pass
 
-    def _adjust_top_k(self, top_k: int) -> int:
-        """이전 추론 지연 시간에 따라 top_k를 동적으로 조정합니다."""
-        if self._last_latency > self.PERFORMANCE_THRESHOLD_SEC:
-            adjusted = max(1, top_k // 2)
-            logger.warning(
-                f"[{self.name}] High latency detected ({self._last_latency:.2f}s). "
-                f"Adjusting top_k from {top_k} to {adjusted}."
-            )
-            return adjusted
-        return top_k
-
     def rerank_with_timeout(self, query: str, documents: list[Document], **kwargs: Any) -> RerankResult:
         target_top_k = kwargs.get("top_k") or self.top_k
-        adjusted_top_k = self._adjust_top_k(target_top_k)
-        kwargs["top_k"] = adjusted_top_k
+        kwargs["top_k"] = target_top_k
 
         start_time = time.time()
         try:
-            result = self.rerank(query, documents, **kwargs)
-            self._last_latency = time.time() - start_time
-            return result
+            return self.rerank(query, documents, **kwargs)
         except Exception as e:
-            self._last_latency = time.time() - start_time
+            elapsed = time.time() - start_time
             logger.warning(f"Reranking failed in {self.name}: {e}. Returning original documents.")
             # 실패 시 원본 문서에서 top_k만큼 잘라서 반환
             return RerankResult(
-                documents=documents[:adjusted_top_k],
-                scores=[0.0] * min(len(documents), adjusted_top_k),
+                documents=documents[:target_top_k],
+                scores=[0.0] * min(len(documents), target_top_k),
                 model_name=self.name,
-                filtered_count=max(0, len(documents) - adjusted_top_k),
-                elapsed_time_sec=self._last_latency,
+                filtered_count=max(0, len(documents) - target_top_k),
+                elapsed_time_sec=elapsed,
             )
 
 
@@ -104,23 +88,9 @@ class CrossEncoderReranker(BaseReranker):
         threshold: float | None = None,
         device: str | None = None,
     ):
-        super().__init__(name="Local CrossEncoder", top_k=top_k, threshold=threshold or 0.3)
+        super().__init__(name="Local CrossEncoder", top_k=top_k, threshold=threshold)
         self.model_name = model_name or settings.RERANKER_MODEL_NAME
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-
-        if threshold is None:
-            self._set_model_defaults()
-
-    def _set_model_defaults(self) -> None:
-        # sigmoid 정규화 후 [0, 1] 기준 임계값
-        # sigmoid(0) = 0.5 (중립), sigmoid(1) ≈ 0.73 (긍정적)
-        model_lower = self.model_name.lower()
-        if "bge" in model_lower:
-            self.threshold = 0.4
-        elif "ko-reranker" in model_lower or "skesarmom" in model_lower or "kor" in model_lower:
-            self.threshold = 0.5
-        else:
-            self.threshold = 0.45
 
     @classmethod
     def get_instance(
@@ -134,6 +104,11 @@ class CrossEncoderReranker(BaseReranker):
             with cls._singleton_lock:
                 if cls._instance is None:
                     cls._instance = cls(model_name, top_k, threshold, device)
+        else:
+            # 기존 인스턴스가 존재하면 top_k와 threshold만 업데이트하여 재사용
+            cls._instance.top_k = top_k
+            if threshold is not None:
+                cls._instance.threshold = threshold
         return cls._instance
 
     @classmethod
@@ -168,11 +143,19 @@ class CrossEncoderReranker(BaseReranker):
                 raise
         return self._model
 
+    @staticmethod
+    def _to_list(scores_pred) -> list:
+        return scores_pred.tolist() if hasattr(scores_pred, "tolist") else list(scores_pred)
+
     def _predict_with_cpu_fallback(self, pairs: list) -> list:
         try:
             model = self._load_model()
-            scores_pred = model.predict(pairs, batch_size=settings.RERANKER_BATCH_SIZE)
-            return scores_pred.tolist() if hasattr(scores_pred, "tolist") else list(scores_pred)
+            try:
+                scores_pred = model.predict(pairs, batch_size=settings.RERANKER_BATCH_SIZE)
+            finally:
+                if self.device == "cuda" and torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            return self._to_list(scores_pred)
         except RuntimeError as e:
             err_msg = str(e).lower()
             if self.device != "cpu" and any(x in err_msg for x in ["cuda", "mps", "device", "out of memory", "oom"]):
@@ -180,13 +163,15 @@ class CrossEncoderReranker(BaseReranker):
                 self.device = "cpu"
                 with self._singleton_lock:
                     self._model = None
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
                 try:
                     model = self._load_model()
                     scores_pred = model.predict(pairs, batch_size=settings.RERANKER_BATCH_SIZE)
-                    return scores_pred.tolist() if hasattr(scores_pred, "tolist") else list(scores_pred)
+                    return self._to_list(scores_pred)
                 except Exception as cpu_err:
                     logger.error(f"[{self.name}] Failed to run even on CPU fallback: {cpu_err}")
-                    raise cpu_err
+                    raise
             else:
                 raise
 
@@ -201,13 +186,8 @@ class CrossEncoderReranker(BaseReranker):
         effective_top_k = min(settings.RERANKER_MAX_DOCS, top_k or self.top_k)
         effective_threshold = threshold if threshold is not None else self.threshold
 
-        if len(documents) < 2:
-            return RerankResult(
-                documents=documents,
-                scores=[0.5] * len(documents),
-                model_name=self.name,
-                elapsed_time_sec=0.0,
-            )
+        if not documents:
+            return RerankResult(documents=[], scores=[], model_name=self.name, elapsed_time_sec=0.0)
 
         pairs = [(query, doc.page_content) for doc in documents]
 
@@ -215,9 +195,8 @@ class CrossEncoderReranker(BaseReranker):
         raw_scores = self._predict_with_cpu_fallback(pairs)
 
         elapsed_time = time.time() - start_time
-        # ms-marco 등 raw logit(범위 -10~15)을 [0, 1]로 정규화
-        # temperature=5로 스케일링하여 sigmoid 포화 방지
-        scores = torch.sigmoid(torch.tensor(raw_scores) / 5.0).tolist()
+        # ms-marco 등 raw logit을 [0, 1] 확률값으로 직관적으로 정규화 (temperature 스케일링 제거)
+        scores = torch.sigmoid(torch.tensor(raw_scores)).tolist()
 
         scored_docs = sorted(zip(scores, documents, strict=True), key=lambda x: x[0], reverse=True)
         filtered = [(s, d) for s, d in scored_docs if s >= effective_threshold]
@@ -320,7 +299,7 @@ class APIBaseReranker(BaseReranker):
 class CohereReranker(APIBaseReranker):
     """Cohere API 기반 리랭커."""
 
-    def __init__(self, api_key: str | None = None, top_k: int = 5, threshold: float = 0.3):
+    def __init__(self, api_key: str | None = None, top_k: int = 5, threshold: float | None = None):
         super().__init__(
             api_key=api_key or os.getenv("COHERE_API_KEY"),
             model_name="rerank-multilingual-v3.0",
@@ -339,7 +318,7 @@ class CohereReranker(APIBaseReranker):
 class JinaReranker(APIBaseReranker):
     """Jina API 기반 리랭커."""
 
-    def __init__(self, api_key: str | None = None, top_k: int = 5, threshold: float = 0.3):
+    def __init__(self, api_key: str | None = None, top_k: int = 5, threshold: float | None = None):
         super().__init__(
             api_key=api_key or os.getenv("JINA_API_KEY"),
             model_name="jina-reranker-v2-base-multilingual",
@@ -371,12 +350,11 @@ class RerankerFactory:
                     "(ALLOW_EXTERNAL_API=True 및 ALLOW_EXTERNAL_RERANKER=True)."
                 )
 
-        if reranker_type == "cohere":
-            logger.info("Cohere 리랭커를 사용합니다.")
-            return CohereReranker(top_k=top_k)
-        elif reranker_type == "jina":
-            logger.info("Jina 리랭커를 사용합니다.")
-            return JinaReranker(top_k=top_k)
-        else:
-            logger.info(f"로컬 CrossEncoder 리랭커를 사용합니다. (모델: {settings.RERANKER_MODEL_NAME})")
-            return CrossEncoderReranker.get_instance(model_name=settings.RERANKER_MODEL_NAME, top_k=top_k)
+        _registry: dict[str, type] = {"cohere": CohereReranker, "jina": JinaReranker}
+        if reranker_type in _registry:
+            cls = _registry[reranker_type]
+            logger.info(f"{cls.__name__} 리랭커를 사용합니다.")
+            return cls(top_k=top_k)
+
+        logger.info(f"로컬 CrossEncoder 리랭커를 사용합니다. (모델: {settings.RERANKER_MODEL_NAME})")
+        return CrossEncoderReranker.get_instance(model_name=settings.RERANKER_MODEL_NAME, top_k=top_k)

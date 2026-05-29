@@ -1,3 +1,4 @@
+import importlib.util
 import logging
 import os
 import uuid
@@ -43,34 +44,69 @@ def _get_parser_strategy_for_file(file_path: Path, file_parser_types: dict[str, 
     file_parser = normalized_parser_types.get(rel_path, "manual").lower()
 
     if file_parser == "docling":
-        try:
-            import docling  # noqa: F401
-
+        if importlib.util.find_spec("docling") is not None:
             return DoclingPDFParserStrategy()
-        except ImportError:
-            logger.error("docling 라이브러리가 없어 manual 전략으로 대체합니다.")
-            return ManualParserStrategy()
+        logger.error("docling 라이브러리가 없어 manual 전략으로 대체합니다.")
+        return ManualParserStrategy()
 
     return ManualParserStrategy()
 
 
-def _chunk_sections(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """파싱된 섹션들을 계층적 청크 구조로 변환합니다."""
-    if not sections:
+def _chunk_raw_markdown(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return create_parent_child_chunks(sections[0]["content"], sections[0]["metadata"])
+
+
+def _chunk_combined(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    chunker = HierarchicalChunker()
+    result = []
+    for sec in sections:
+        result.extend(chunker.chunk(sec["content"], sec["metadata"]))
+    return result
+
+
+def _split_table_into_row_chunks(content: str, parent_id: str, base_meta: dict) -> list[dict[str, Any]]:
+    """표를 행(row) 단위 청크로 분할. 각 청크에 표 제목 컨텍스트 + 헤더 행 보존.
+
+    24행*10열 대형 표도 각 데이터 행이 독립 청크(200~400자)가 되어
+    LLM 컨텍스트 한도 내에서 검색·답변 가능하게 한다.
+    """
+    # 표 제목(비-마크다운 텍스트)과 표 본체 분리
+    parts = content.split("\n\n", 1)
+    if len(parts) == 2 and "|" in parts[1]:
+        title_ctx, table_md = parts[0].strip(), parts[1].strip()
+    else:
+        title_ctx, table_md = "", content.strip()
+
+    lines = [ln for ln in table_md.split("\n") if ln.strip()]
+    if len(lines) < 3:
         return []
 
-    file_chunks_accum = []
+    header, separator = lines[0], lines[1]
+    data_rows = lines[2:]
 
-    if sections[0].get("is_raw_markdown"):
-        return create_parent_child_chunks(sections[0]["content"], sections[0]["metadata"])
+    children = []
+    for i, row in enumerate(data_rows):
+        if not row.strip() or set(row.strip()) <= {"|", "-", " ", ":"}:
+            continue
+        row_content_parts = [header, separator, row]
+        if title_ctx:
+            row_content_parts = [title_ctx, "", *row_content_parts]
+        row_text = "\n".join(row_content_parts).strip()
+        child_id = f"{parent_id}_r{i}"
+        child_meta = {
+            **base_meta,
+            MetadataFields.CHUNK_ID: child_id,
+            MetadataFields.PARENT_ID: parent_id,
+            MetadataFields.IS_TABLE: True,
+        }
+        children.append({"chunk_id": child_id, "metadata": child_meta, "text": row_text})
 
-    if sections[0].get("is_combined"):
-        for sec in sections:
-            file_chunks_accum.extend(create_parent_child_chunks(sec["content"], sec["metadata"]))
-        return file_chunks_accum
+    return children
 
-    # 기존 ManualParser PDF 처리 방식 (Fallback 호환성)
+
+def _chunk_manual_pdf(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
     chunker = HierarchicalChunker()
+    result = []
     for sec in sections:
         parent_id = str(uuid.uuid4())
         meta_for_children = sec["metadata"].copy()
@@ -78,7 +114,10 @@ def _chunk_sections(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
         meta_for_children[MetadataFields.SEC_TITLE] = sec_title
         meta_for_children[MetadataFields.HEADER_PATH] = sec_title
 
-        children = chunker.split_into_children(sec["content"], parent_id, meta_for_children)
+        if sec["metadata"].get(MetadataFields.IS_TABLE, False):
+            children = _split_table_into_row_chunks(sec["content"], parent_id, meta_for_children)
+        else:
+            children = chunker.split_into_children(sec["content"], parent_id, meta_for_children)
 
         if children:
             parent_metadata = {
@@ -90,10 +129,10 @@ def _chunk_sections(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 MetadataFields.CHUNK_ID: parent_id,
                 MetadataFields.PARENT_ID: None,
                 MetadataFields.HEADER_PATH: sec_title,
-                MetadataFields.IS_TABLE: False,
+                MetadataFields.IS_TABLE: sec["metadata"].get(MetadataFields.IS_TABLE, False),
                 MetadataFields.RELATIVE_PATH: sec["metadata"].get(MetadataFields.RELATIVE_PATH, "UNKNOWN"),
             }
-            file_chunks_accum.append(
+            result.append(
                 {
                     "parent_id": parent_id,
                     "parent_text": sec["content"],
@@ -101,7 +140,18 @@ def _chunk_sections(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     "children": children,
                 }
             )
-    return file_chunks_accum
+    return result
+
+
+def _chunk_sections(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not sections:
+        return []
+    first = sections[0]
+    if first.get("is_raw_markdown"):
+        return _chunk_raw_markdown(sections)
+    if first.get("is_combined"):
+        return _chunk_combined(sections)
+    return _chunk_manual_pdf(sections)
 
 
 def _process_single_file_helper(
@@ -129,12 +179,11 @@ class IngestionPipeline:
         raw_dir: Path = RAW_DATA_DIR,
         processed_dir: Path = PROCESSED_DATA_DIR,
         collection_name: str = "rag_collection",
-        storage_manager: StorageManager = None,
+        storage_manager: StorageManager | None = None,
     ):
         self.strategy = strategy
         self.raw_dir = raw_dir
         self.processed_dir = processed_dir
-        self.chunker = HierarchicalChunker()
         self.db_manager = ChromaDBManager(collection_name=collection_name)
         # StorageManager 연동
         self.storage_manager = storage_manager if storage_manager else StorageManager(processed_dir, CACHE_DIR)
@@ -152,79 +201,90 @@ class IngestionPipeline:
             files.extend(filtered_files)
         return files
 
+    def _process_non_pdf_parallel(
+        self, files: list[Path], file_parser_types: dict | None, total: int, offset: int, progress_callback
+    ) -> tuple[list, int]:
+        data, completed = [], offset
+        max_workers = min(len(files), os.cpu_count() or 4)
+        logger.info(f"비-PDF 파일 병렬 파싱 활성화 ({len(files)}개 파일, Workers: {max_workers})")
+        futures_map = {}
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            for f in files:
+                futures_map[
+                    executor.submit(
+                        _process_single_file_helper,
+                        f,
+                        file_parser_types,
+                        self.storage_manager.processed_dir,
+                        self.storage_manager.cache_dir,
+                    )
+                ] = f
+            for future in as_completed(futures_map):
+                file_path = futures_map[future]
+                completed += 1
+                try:
+                    data.extend(future.result())
+                except Exception as e:
+                    logger.error(f"병렬 파일 처리 실패: {file_path.name} - {e}")
+                _safe_invoke_progress(progress_callback, completed, total, file_path.name)
+        return data, completed
+
+    def _process_pdf_sequential(
+        self, files: list[Path], file_parser_types: dict | None, total: int, offset: int, progress_callback
+    ) -> tuple[list, int]:
+        data, completed = [], offset
+        logger.info(f"PDF 파일 순차 처리 시작 ({len(files)}개 파일, 메모리 보호 모드)")
+        for file_path in files:
+            try:
+                data.extend(
+                    _process_single_file_helper(
+                        file_path,
+                        file_parser_types,
+                        self.storage_manager.processed_dir,
+                        self.storage_manager.cache_dir,
+                    )
+                )
+            except Exception as e:
+                logger.error(f"PDF 파일 처리 실패: {file_path.name} - {e}")
+            completed += 1
+            _safe_invoke_progress(progress_callback, completed, total, file_path.name)
+        return data, completed
+
     def process_and_chunk(
         self, files: list[Path], progress_callback=None, file_parser_types: dict[str, str] | None = None
     ) -> list[dict[str, Any]]:
-        all_hierarchical_data = []
-        total_files = len(files)
-        if total_files == 0:
+        total = len(files)
+        if total == 0:
             return []
 
-        # 단일 파일인 경우 불필요한 프로세스 풀 생성 오버헤드 방지
-        if total_files == 1:
-            _safe_invoke_progress(progress_callback, 0, total_files, files[0].name)
-            res = _process_single_file_helper(
+        if total == 1:
+            _safe_invoke_progress(progress_callback, 0, total, files[0].name)
+            result = _process_single_file_helper(
                 files[0],
                 file_parser_types,
                 self.storage_manager.processed_dir,
                 self.storage_manager.cache_dir,
             )
-            all_hierarchical_data.extend(res)
-            _safe_invoke_progress(progress_callback, total_files, total_files, "모든 파일 처리 완료")
-            return all_hierarchical_data
+            _safe_invoke_progress(progress_callback, total, total, "모든 파일 처리 완료")
+            return result
 
-        # 하이브리드 처리: MD 파일은 프로세스 풀 병렬, PDF 파일은 OOM 방지를 위해 순차 처리
         pdf_files = [f for f in files if f.suffix.lower() == ".pdf"]
         non_pdf_files = [f for f in files if f.suffix.lower() != ".pdf"]
-        completed_count = 0
+        all_data, completed = [], 0
 
-        # Phase 1: 비-PDF 파일 병렬 처리
         if non_pdf_files:
-            max_workers = min(len(non_pdf_files), os.cpu_count() or 4)
-            logger.info(f"비-PDF 파일 병렬 파싱 활성화 ({len(non_pdf_files)}개 파일, Workers: {max_workers})")
+            chunk, completed = self._process_non_pdf_parallel(
+                non_pdf_files, file_parser_types, total, completed, progress_callback
+            )
+            all_data.extend(chunk)
 
-            futures_map = {}
-            with ProcessPoolExecutor(max_workers=max_workers) as executor:
-                for file_path in non_pdf_files:
-                    future = executor.submit(
-                        _process_single_file_helper,
-                        file_path,
-                        file_parser_types,
-                        self.storage_manager.processed_dir,
-                        self.storage_manager.cache_dir,
-                    )
-                    futures_map[future] = file_path
-
-                for future in as_completed(futures_map):
-                    file_path = futures_map[future]
-                    completed_count += 1
-                    try:
-                        res = future.result()
-                        all_hierarchical_data.extend(res)
-                    except Exception as e:
-                        logger.error(f"병렬 파일 처리 실패: {file_path.name} - {e}")
-
-                    _safe_invoke_progress(progress_callback, completed_count, total_files, file_path.name)
-
-        # Phase 2: PDF 파일 순차 처리 (Docling heavy AI 모델 OOM 방지)
         if pdf_files:
-            logger.info(f"PDF 파일 순차 처리 시작 ({len(pdf_files)}개 파일, 메모리 보호 모드)")
-            for file_path in pdf_files:
-                try:
-                    res = _process_single_file_helper(
-                        file_path,
-                        file_parser_types,
-                        self.storage_manager.processed_dir,
-                        self.storage_manager.cache_dir,
-                    )
-                    all_hierarchical_data.extend(res)
-                except Exception as e:
-                    logger.error(f"PDF 파일 처리 실패: {file_path.name} - {e}")
+            chunk, completed = self._process_pdf_sequential(
+                pdf_files, file_parser_types, total, completed, progress_callback
+            )
+            all_data.extend(chunk)
 
-                completed_count += 1
-                _safe_invoke_progress(progress_callback, completed_count, total_files, file_path.name)
-
-        return all_hierarchical_data
+        return all_data
 
     def save_processed_data(self, data: list[dict[str, Any]]) -> list[Path]:
         """전처리된 데이터를 source_id별 개별 JSON 파일로 저장합니다.
@@ -316,7 +376,9 @@ class IngestionPipeline:
 
         logger.info("데이터 정합성 검증 및 클린업 작업이 완료되었습니다.")
 
-    def _delete_from_vector_db(self, source_ids_to_delete: list[str], relative_paths_to_delete: list[str] | None):
+    def _delete_from_vector_db(
+        self, source_ids_to_delete: list[str], relative_paths_to_delete: list[str] | None
+    ) -> None:
         """벡터 DB에서 데이터 삭제"""
         # 상대 경로 기반 삭제 (원자적 정리 강화)
         if relative_paths_to_delete:
@@ -376,7 +438,7 @@ class IngestionPipeline:
                 logger.warning(f"파일 스캔 중 오류 ({json_file.name}): {e}")
         return deleted_count
 
-    def upsert_to_db(self, data: list[dict[str, Any]]):
+    def upsert_to_db(self, data: list[dict[str, Any]]) -> None:
         ids, docs, metas = [], [], []
         for parent in data:
             for child in parent["children"]:

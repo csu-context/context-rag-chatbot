@@ -91,35 +91,67 @@ class ManualParser:
             }
         )
 
+    @staticmethod
+    def _collect_chars_from_span(span: dict) -> list[tuple[float, float, str, float, float]]:
+        """span에서 (y, x0, char, size, x1) 튜플 목록을 수집한다."""
+        size = span["size"]
+        chars = []
+        if "chars" in span:
+            for ch in span["chars"]:
+                c = ch["c"]
+                if c.strip():
+                    x0 = ch["origin"][0]
+                    y0 = ch["origin"][1]
+                    x1 = ch["bbox"][2] if "bbox" in ch else x0 + size * 0.55
+                    chars.append((round(y0, 1), round(x0, 1), c, size, round(x1, 1)))
+        else:
+            x, y = span["origin"]
+            char_w = size * 0.55
+            for i, c in enumerate(span["text"]):
+                if c.strip():
+                    x0 = x + i * char_w
+                    chars.append((round(y, 1), round(x0, 1), c, size, round(x0 + char_w, 1)))
+        return chars
+
+    @staticmethod
+    def _join_sorted_chars(all_chars: list[tuple[float, float, str, float, float]]) -> str:
+        """(y, x0, char, size, x1) 목록을 읽기 순서대로 조합해 문자열로 반환한다."""
+        result: list[str] = []
+        prev_y, prev_x1, prev_size = all_chars[0][0], -1.0, all_chars[0][3]
+        for y, x0, c, size, x1 in all_chars:
+            if abs(y - prev_y) > size * 0.5:
+                if result and result[-1] != " ":
+                    result.append(" ")
+                prev_y, prev_x1 = y, -1.0
+            elif prev_x1 != -1.0 and x0 - prev_x1 > prev_size * 0.35:
+                result.append(" ")
+            result.append(c)
+            prev_x1, prev_size = x1, size
+        return "".join(result).strip()
+
     def _extract_block_info(self, block: dict) -> tuple[str, float]:
-        """블록 내 텍스트와 최대 폰트 크기를 추출"""
+        """블록 내 텍스트와 최대 폰트 크기를 추출.
+
+        rawdict 모드의 문자(char) 단위 좌표로 정렬하여 숫자가 별도 span으로 저장된
+        PDF 레이아웃(예: '제1학기' → '제'+'1'+'학기' 분리)을 올바르게 복원한다.
+        """
         if "lines" not in block:
             return "", 0.0
 
-        all_spans = []
+        all_chars: list[tuple[float, float, str, float, float]] = []
+        max_size = 0.0
+
         for line in block["lines"]:
             for span in line["spans"]:
-                all_spans.append(span)
+                if span["size"] > max_size:
+                    max_size = span["size"]
+                all_chars.extend(self._collect_chars_from_span(span))
 
-        all_spans.sort(key=lambda x: (x["origin"][1], x["origin"][0]))
+        if not all_chars:
+            return "", round(max_size, 1)
 
-        block_text = ""
-        max_size = 0.0
-        last_y = -1.0
-        for span in all_spans:
-            text = span["text"]
-            if not text.strip():
-                continue
-
-            if last_y != -1 and abs(span["origin"][1] - last_y) > 2:
-                block_text += " "
-
-            block_text += text
-            last_y = span["origin"][1]
-            if span["size"] > max_size:
-                max_size = span["size"]
-
-        return block_text.strip(), round(max_size, 1)
+        all_chars.sort(key=lambda v: (v[0], v[1]))
+        return self._join_sorted_chars(all_chars), round(max_size, 1)
 
     def _parse_pdf(self) -> list[dict[str, Any]]:
         """폰트 크기 분석 기반 PDF 파싱 로직"""
@@ -138,7 +170,8 @@ class ManualParser:
 
         for page_num in range(len(doc)):
             page = doc[page_num]
-            blocks = page.get_text("dict").get("blocks", [])
+            # rawdict: char 단위 좌표 포함 (dict의 superset)
+            blocks = page.get_text("rawdict").get("blocks", [])
 
             for block in blocks:
                 self._process_pdf_block(block, page_num, base_font_size, state, structured_data)

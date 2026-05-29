@@ -3,6 +3,7 @@ import logging
 import os
 import threading
 import time
+from collections.abc import Iterator
 from typing import Any, ClassVar
 
 from langchain_ollama import ChatOllama
@@ -116,19 +117,8 @@ class OllamaModel(BaseLLM):
                 "Ollama가 실행되지 않으면 RAG 응답을 생성할 수 없습니다."
             )
 
-    def check_health(self) -> bool:
-        """Ollama 서비스 구동 상태를 확인합니다."""
-        import urllib.request
-
-        try:
-            url = self.base_url.rstrip("/") + "/api/tags"
-            with urllib.request.urlopen(url, timeout=2.0) as response:
-                return response.status == 200
-        except Exception:
-            return False
-
-    def is_model_available(self) -> bool:
-        """Ollama 서비스에 대상 모델이 다운로드 완료되었는지 확인합니다."""
+    def _fetch_tags(self) -> dict | None:
+        """Ollama /api/tags 엔드포인트를 호출하고 응답 JSON을 반환합니다. 실패 시 None."""
         import json
         import urllib.request
 
@@ -136,26 +126,38 @@ class OllamaModel(BaseLLM):
             url = self.base_url.rstrip("/") + "/api/tags"
             with urllib.request.urlopen(url, timeout=2.0) as response:
                 if response.status != 200:
-                    return False
-                data = json.loads(response.read().decode("utf-8"))
-                models = data.get("models", [])
+                    return None
+                return json.loads(response.read().decode("utf-8"))
+        except Exception:
+            return None
 
-                target = self.model_name
-                for m in models:
-                    name = m.get("name", "")
-                    if name == target:
-                        return True
-                    if ":" not in target and name == f"{target}:latest":
-                        return True
-                    if ":" in name and name.split(":")[0] == target:
-                        return True
-                    if name.startswith(target + ":") or target.startswith(name + ":"):
-                        return True
-                return False
+    def check_health(self) -> bool:
+        """Ollama 서비스 구동 상태를 확인합니다."""
+        return self._fetch_tags() is not None
+
+    def is_model_available(self) -> bool:
+        """Ollama 서비스에 대상 모델이 다운로드 완료되었는지 확인합니다."""
+        data = self._fetch_tags()
+        if data is None:
+            return False
+        try:
+            models = data.get("models", [])
+            target = self.model_name
+            for m in models:
+                name = m.get("name", "")
+                if name == target:
+                    return True
+                if ":" not in target and name == f"{target}:latest":
+                    return True
+                if ":" in name and name.split(":")[0] == target:
+                    return True
+                if name.startswith(target + ":") or target.startswith(name + ":"):
+                    return True
+            return False
         except Exception:
             return False
 
-    def pull_model_progress(self) -> Any:
+    def pull_model_progress(self) -> Iterator[dict[str, Any]]:
         """Ollama pull API를 스트리밍으로 호출해 진행 상태 dict를 yield합니다."""
         import json
 
@@ -185,15 +187,7 @@ class OllamaModel(BaseLLM):
             response = self.model.invoke(prompt, **kwargs)
             latency = time.time() - start_time
 
-            # Ollama는 로컬 구동이므로 명시적으로 비용을 0.0으로 설정
-            usage = {}
-            if hasattr(response, "usage_metadata"):
-                meta = response.usage_metadata
-                usage = {
-                    "input_tokens": meta.get("input_token_count") or meta.get("input_tokens") or 0,
-                    "output_tokens": meta.get("output_token_count") or meta.get("output_tokens") or 0,
-                    "total_tokens": meta.get("total_token_count") or meta.get("total_tokens") or 0,
-                }
+            usage = self.extract_usage(response)
 
             return LLMResponse(
                 content=response.content,
@@ -213,7 +207,7 @@ class OllamaModel(BaseLLM):
                 logger.error(msg)
                 raise ConnectionError(msg) from e
             logger.error(f"Ollama({self.model_name}) 호출 중 오류 발생: {e}")
-            raise e
+            raise
 
     def get_model(self) -> ChatOllama:
         return self.model

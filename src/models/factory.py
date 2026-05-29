@@ -1,4 +1,5 @@
 import logging
+from typing import Any
 
 from src.common.config import settings
 from src.common.constants import LLMDefaults
@@ -26,7 +27,7 @@ class LLMFactory:
             )
             type_ = "ollama"
             if not name_ or any(ext in name_.lower() for ext in ["gemini", "claude", "gpt"]):
-                name_ = "llama3.2:1b"
+                name_ = LLMDefaults.OLLAMA_DEFAULT
         elif settings.ALLOW_EXTERNAL_API and type_ in ["gemini", "claude"]:
             logger.warning(
                 f"보안 경고: 외부 API 모델 '{type_}' 인스턴스를 생성합니다. "
@@ -35,39 +36,38 @@ class LLMFactory:
 
         logger.info(f"LLM 인스턴스 생성 시도 (타입: {type_}, 이름: {name_})")
 
-        if type_ == "gemini":
-            name_ = name_ or LLMDefaults.GEMINI_DEFAULT
-            api_key = settings.GEMINI_API_KEY or settings.GOOGLE_API_KEY
-            return GeminiModel(model_name=name_, api_key=api_key, temperature=temp_)
-
-        elif type_ == "claude":
-            name_ = name_ or LLMDefaults.CLAUDE_DEFAULT
-            api_key = settings.ANTHROPIC_API_KEY
-            return ClaudeModel(model_name=name_, api_key=api_key, temperature=temp_)
-
-        elif type_ == "ollama":
-            name_ = name_ or "llama3"
-            base_url = settings.OLLAMA_BASE_URL
-            return OllamaModel(model_name=name_, base_url=base_url, temperature=temp_)
-
-        else:
-            if not settings.ALLOW_EXTERNAL_API:
-                logger.warning(
-                    f"지원하지 않는 모델 타입 '{type_}'이며 외부 API가 비허용되어 로컬 sLLM(ollama)으로 전환합니다."
-                )
+        match type_:
+            case "gemini":
+                name_ = name_ or LLMDefaults.GEMINI_DEFAULT
+                api_key = settings.GEMINI_API_KEY or settings.GOOGLE_API_KEY
+                return GeminiModel(model_name=name_, api_key=api_key, temperature=temp_)
+            case "claude":
+                name_ = name_ or LLMDefaults.CLAUDE_DEFAULT
+                api_key = settings.ANTHROPIC_API_KEY
+                return ClaudeModel(model_name=name_, api_key=api_key, temperature=temp_)
+            case "ollama":
+                name_ = name_ or LLMDefaults.OLLAMA_DEFAULT
                 base_url = settings.OLLAMA_BASE_URL
-                return OllamaModel(model_name="llama3.2:1b", base_url=base_url, temperature=temp_)
-            else:
+                return OllamaModel(model_name=name_, base_url=base_url, temperature=temp_)
+            case _:
+                if not settings.ALLOW_EXTERNAL_API:
+                    logger.warning(
+                        f"지원하지 않는 모델 타입 '{type_}'이며 외부 API가 비허용되어 로컬 sLLM(ollama)으로 전환합니다."
+                    )
+                    return OllamaModel(
+                        model_name=LLMDefaults.OLLAMA_DEFAULT, base_url=settings.OLLAMA_BASE_URL, temperature=temp_
+                    )
                 logger.warning(
                     f"지원하지 않는 모델 타입 '{type_}'입니다. "
                     f"기본 설정({LLMDefaults.CLAUDE_DEFAULT})으로 Fallback 합니다. "
                     "보안 경고: 외부 API 호출이 허용되어 있습니다 (ALLOW_EXTERNAL_API=True)."
                 )
-                api_key = settings.ANTHROPIC_API_KEY
-                return ClaudeModel(model_name=LLMDefaults.CLAUDE_DEFAULT, api_key=api_key, temperature=temp_)
+                return ClaudeModel(
+                    model_name=LLMDefaults.CLAUDE_DEFAULT, api_key=settings.ANTHROPIC_API_KEY, temperature=temp_
+                )
 
     @staticmethod
-    def create_llm_with_fallback(model_type: str | None = None, model_name: str | None = None, **kwargs):
+    def create_llm_with_fallback(model_type: str | None = None, model_name: str | None = None, **kwargs) -> Any:
         """Fallback 체인(Ollama → Gemini → Claude). FALLBACK_ENABLED=False 또는 외부API 비허용 시 primary만 반환."""
         primary = LLMFactory.create_llm(model_type, model_name, **kwargs)
         primary_model = primary.get_model()

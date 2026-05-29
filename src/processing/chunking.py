@@ -12,6 +12,9 @@ from src.common.constants import MetadataFields
 from src.common.schema import ChildChunk, ChunkMetadata, ParentChunk
 from src.utils.paths import ensure_directories
 
+_PARENT_CHUNK_SIZE: int = 1500
+_CHILD_CHUNK_SIZE: int = 400
+
 
 class MarkdownTableProtector:
     """마크다운 문서 내의 표(Table) 데이터를 식별, 보호 및 복원하는 유틸리티"""
@@ -49,6 +52,13 @@ class MarkdownTableProtector:
         return chunks
 
     @staticmethod
+    def _register_token(text: str, registry: dict[str, str]) -> str:
+        # 패딩 없이 짧은 토큰 사용 — 패딩 시 child_splitter가 토큰 자체를 분할하여 복원 불가
+        token = f"@@TABLE_{uuid.uuid4().hex}@@"
+        registry[token] = text
+        return token
+
+    @staticmethod
     def protect_tables(text: str, max_chunk_size: int) -> tuple[str, dict[str, str]]:
         """표(Table) 데이터가 청킹 도중 잘리지 않도록 특수 토큰으로 일시 치환"""
         tables = {}
@@ -64,20 +74,9 @@ class MarkdownTableProtector:
             table_text = match.group(0).strip()
             if len(table_text) > max_chunk_size:
                 split_tables = MarkdownTableProtector.split_markdown_table(table_text, max_chunk_size)
-                result_tokens = []
-                for st in split_tables:
-                    token_base = f"@@TABLE_{uuid.uuid4().hex}@@"
-                    padding = "_" * max(0, len(st) - len(token_base))
-                    padded_token = token_base + padding
-                    tables[padded_token] = st
-                    result_tokens.append(f"\n\n{padded_token}\n\n")
-                return "".join(result_tokens)
-            else:
-                token_base = f"@@TABLE_{uuid.uuid4().hex}@@"
-                padding = "_" * max(0, len(table_text) - len(token_base))
-                padded_token = token_base + padding
-                tables[padded_token] = table_text
-                return f"\n\n{padded_token}\n\n"
+                tokens = [MarkdownTableProtector._register_token(st, tables) for st in split_tables]
+                return "".join(f"\n\n{t}\n\n" for t in tokens)
+            return f"\n\n{MarkdownTableProtector._register_token(table_text, tables)}\n\n"
 
         protected_text = table_pattern.sub(replace_with_token, text)
         return protected_text, tables
@@ -93,9 +92,9 @@ class MarkdownTableProtector:
 class HierarchicalChunker:
     def __init__(
         self,
-        parent_chunk_size: int = 1500,
+        parent_chunk_size: int = _PARENT_CHUNK_SIZE,
         parent_chunk_overlap: int = 150,
-        child_chunk_size: int = 400,
+        child_chunk_size: int = _CHILD_CHUNK_SIZE,
         child_chunk_overlap: int = 50,
         min_chunk_size: int = 50,
     ):
@@ -152,12 +151,24 @@ class HierarchicalChunker:
                 merged_docs.append(doc_text)
 
         children_list: list[ChildChunk] = []
+        current_child_page = base_metadata.get(MetadataFields.PG_NUM, 1)
+
         for idx, child_text in enumerate(merged_docs):
             # 복원 전 텍스트에 표 토큰이 포함되어 있다면 해당 청크는 표 데이터를 포함함을 의미함
             has_table = "@@TABLE_" in child_text
 
             restored_text = MarkdownTableProtector.restore_tables(child_text, tables).strip()
-            if not restored_text:
+
+            child_page_breaks = restored_text.count("<!-- page break -->")
+            if idx > 0:
+                # 이전 child split 끝 overlap 구간과 중복된 마커만 제거
+                prev_tail = merged_docs[idx - 1][-self.child_chunk_overlap :]
+                child_page_breaks -= prev_tail.count("<!-- page break -->")
+            child_page_breaks = max(0, child_page_breaks)
+            clean_text = restored_text.replace("<!-- page break -->", "").strip()
+
+            if not clean_text:
+                current_child_page += child_page_breaks
                 continue
 
             child_id = f"{parent_id}_c{idx}"
@@ -166,7 +177,7 @@ class HierarchicalChunker:
                 MetadataFields.SOURCE_ID: base_metadata.get(MetadataFields.SOURCE_ID, "UNKNOWN"),
                 MetadataFields.SRC_NAME: base_metadata.get(MetadataFields.SRC_NAME, "UNKNOWN_FILE"),
                 MetadataFields.DOC_TYPE: base_metadata.get(MetadataFields.DOC_TYPE, "markdown"),
-                MetadataFields.PG_NUM: base_metadata.get(MetadataFields.PG_NUM, 1),
+                MetadataFields.PG_NUM: current_child_page,
                 MetadataFields.SEC_TITLE: base_metadata.get(MetadataFields.SEC_TITLE, "기본 섹션"),
                 MetadataFields.CHUNK_ID: child_id,
                 MetadataFields.PARENT_ID: parent_id,
@@ -180,9 +191,11 @@ class HierarchicalChunker:
                 {
                     "chunk_id": child_id,
                     "metadata": child_metadata_dict,
-                    "text": restored_text,
+                    "text": clean_text,
                 }
             )
+
+            current_child_page += child_page_breaks
 
         return children_list
 
@@ -191,8 +204,13 @@ class HierarchicalChunker:
         header_docs = self.md_splitter.split_text(markdown_text)
         hierarchical_data: list[ParentChunk] = []
 
+        current_page = base_metadata.get(MetadataFields.PG_NUM, 1)
+
         for doc in header_docs:
+            page_breaks_in_header = doc.page_content.count("<!-- page break -->")
+
             if not doc.page_content.strip():
+                current_page += page_breaks_in_header
                 continue
 
             header_path = self._get_header_path(doc.metadata)
@@ -206,23 +224,33 @@ class HierarchicalChunker:
             # 부모(Parent) 단위로 한 번 더 분할 (너무 긴 문맥 단위 처리)
             parent_splits = self.parent_splitter.split_text(doc.page_content)
 
-            for p_text in parent_splits:
+            for p_idx, p_text in enumerate(parent_splits):
                 parent_id = str(uuid.uuid4())
 
                 meta_for_children = base_metadata.copy()
                 meta_for_children[MetadataFields.SEC_TITLE] = sec_title
                 meta_for_children[MetadataFields.HEADER_PATH] = header_path
+                meta_for_children[MetadataFields.PG_NUM] = current_page
 
                 children_list = self.split_into_children(p_text, parent_id, meta_for_children)
 
+                page_breaks_in_parent = p_text.count("<!-- page break -->")
+                if p_idx > 0:
+                    # 이전 split 끝 overlap 구간에도 포함된 마커만 중복으로 제거
+                    # (RecursiveCharacterTextSplitter가 이전 split 마지막 overlap 문자를 다음 split 앞에 복사하므로)
+                    prev_tail = parent_splits[p_idx - 1][-self.parent_chunk_overlap :]
+                    page_breaks_in_parent -= prev_tail.count("<!-- page break -->")
+                page_breaks_in_parent = max(0, page_breaks_in_parent)
+
                 if not children_list:
+                    current_page += page_breaks_in_parent
                     continue
 
                 parent_metadata: ChunkMetadata = {
                     MetadataFields.SOURCE_ID: base_metadata.get(MetadataFields.SOURCE_ID, "UNKNOWN"),
                     MetadataFields.SRC_NAME: base_metadata.get(MetadataFields.SRC_NAME, "UNKNOWN_FILE"),
                     MetadataFields.DOC_TYPE: base_metadata.get(MetadataFields.DOC_TYPE, "markdown"),
-                    MetadataFields.PG_NUM: base_metadata.get(MetadataFields.PG_NUM, 1),
+                    MetadataFields.PG_NUM: current_page,
                     MetadataFields.SEC_TITLE: sec_title,
                     MetadataFields.CHUNK_ID: parent_id,
                     MetadataFields.PARENT_ID: None,
@@ -231,14 +259,18 @@ class HierarchicalChunker:
                     MetadataFields.RELATIVE_PATH: base_metadata.get(MetadataFields.RELATIVE_PATH, "UNKNOWN"),
                 }
 
+                clean_p_text = p_text.replace("<!-- page break -->", "").strip()
+
                 hierarchical_data.append(
                     {
                         "parent_id": parent_id,
-                        "parent_text": p_text,
+                        "parent_text": clean_p_text,
                         "metadata": parent_metadata,
                         "children": children_list,
                     }
                 )
+
+                current_page += page_breaks_in_parent
 
         return hierarchical_data
 

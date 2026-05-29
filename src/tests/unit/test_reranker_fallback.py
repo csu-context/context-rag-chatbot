@@ -8,7 +8,7 @@ from src.core.reranker import CrossEncoderReranker
 
 
 def _sigmoid(x: float) -> float:
-    return 1.0 / (1.0 + math.exp(-x / 5.0))
+    return 1.0 / (1.0 + math.exp(-x))
 
 
 def test_reranker_cpu_fallback_on_gpu_error():

@@ -185,8 +185,8 @@ def test_reranker_strict_context_pruning():
     res_short = reranker.rerank("질문", short_docs)
     assert len(res_short.documents) == 1
 
-    # 2. 3개 초과의 문서를 입력하고 top_k=5를 요구하더라도,
-    # 최종 결과는 엄격하게 최대 3개(effective_top_k)로 제한되는지 검증
+    # 2. 3개 초과의 문서를 입력하고 top_k=5를 요구할 때,
+    # 최종 결과는 10개(RERANKER_MAX_DOCS) 제한 내이므로 top_k인 5개로 반환되는지 검증
     with patch.object(CrossEncoderReranker, "_load_model") as mock_load:
         mock_model = MagicMock()
         # 10개 문서에 대해 임의의 높은 점수 반환
@@ -194,5 +194,5 @@ def test_reranker_strict_context_pruning():
         mock_load.return_value = mock_model
 
         res = reranker.rerank("질문", docs, top_k=5, threshold=0.1)
-        assert len(res.documents) == 3
-        assert res.filtered_count == 7
+        assert len(res.documents) == 5
+        assert res.filtered_count == 5
