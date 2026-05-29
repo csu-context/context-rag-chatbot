@@ -20,6 +20,19 @@ def reset_admin_active():
 
 @st.dialog("데이터 관리 시스템", width="large", on_dismiss=reset_admin_active)
 def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
+    # Issue 57: ADMIN_PASSWORD 설정 시 관리자 인증 요구
+    if settings.ADMIN_PASSWORD:
+        if not st.session_state.get("admin_authenticated"):
+            st.subheader("관리자 인증")
+            pw = st.text_input("관리자 비밀번호", type="password", key="admin_pw_input")
+            if st.button("확인", key="admin_pw_confirm"):
+                if pw == settings.ADMIN_PASSWORD:
+                    st.session_state.admin_authenticated = True
+                    st.rerun()
+                else:
+                    st.error("비밀번호가 틀렸습니다.")
+            return
+
     st.markdown("지식 베이스(RAW_DATA) 관리 및 데이터베이스 동기화를 수행합니다.")
 
     # 상단 옵션 영역

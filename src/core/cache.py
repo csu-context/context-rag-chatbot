@@ -31,6 +31,9 @@ class SemanticCache:
         return self.collection
 
     def get(self, query_text: str) -> dict | None:
+        # Issue 51: 멀티세션 Data Bleed 방지 — SEMANTIC_CACHE_ENABLED=False로 비활성화 가능
+        if not settings.SEMANTIC_CACHE_ENABLED:
+            return None
         try:
             collection = self._get_valid_collection()
             query_embedding = self.db_manager.embed_query(query_text)
@@ -58,6 +61,8 @@ class SemanticCache:
         return None
 
     def add(self, query_text: str, answer: str, sources: list) -> None:
+        if not settings.SEMANTIC_CACHE_ENABLED:
+            return
         try:
             collection = self._get_valid_collection()
             sources_json = json.dumps(sources) if sources else ""

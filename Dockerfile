@@ -59,12 +59,18 @@ ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
-# 소스 코드 및 관련 디렉토리 구조 생성
-RUN mkdir -p data/raw data/processed vector_db logs
+# Issue 53: non-root 사용자 생성으로 컨테이너 Root 권한 실행 취약점 제거
+RUN groupadd -r appgroup && useradd -r -g appgroup -u 1000 appuser
+
+# 소스 코드 및 관련 디렉토리 구조 생성 (appuser 소유)
+RUN mkdir -p data/raw data/processed vector_db logs && \
+    chown -R appuser:appgroup /app
 
 # 소스 코드 복사
-COPY src/ /app/src/
-COPY prompts/ /app/prompts/
+COPY --chown=appuser:appgroup src/ /app/src/
+COPY --chown=appuser:appgroup prompts/ /app/prompts/
+
+USER appuser
 
 # 포트 설정
 EXPOSE 8501
