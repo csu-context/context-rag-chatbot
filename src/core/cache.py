@@ -10,8 +10,10 @@ logger = logging.getLogger(__name__)
 
 
 class SemanticCache:
-    def __init__(self):
-        self.collection_name = settings.SEMANTIC_CACHE_COLLECTION_NAME
+    def __init__(self, namespace: str | None = None):
+        # Issue 56: namespace(권한/역할)별 캐시 컬렉션 분리 — 권한 우회 방지
+        base_name = settings.SEMANTIC_CACHE_COLLECTION_NAME
+        self.collection_name = f"{base_name}_{namespace}" if namespace else base_name
         self.threshold = settings.SEMANTIC_CACHE_THRESHOLD
         self.db_manager = ChromaDBManager(collection_name=self.collection_name)
         self.collection = self.db_manager.collection

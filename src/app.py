@@ -74,6 +74,19 @@ ensure_directories()
 # --- 2. 세션 상태 초기화 (중앙 이관 호출) ---
 init_session_state()
 
+# Issue 49: APP_PASSWORD 설정 시 앱 전체 인증 게이트
+if settings.APP_PASSWORD:
+    if not st.session_state.get("app_authenticated"):
+        st.title("🔒 RAG 챗봇")
+        pw = st.text_input("접속 비밀번호", type="password", key="app_pw")
+        if st.button("로그인"):
+            if pw == settings.APP_PASSWORD:
+                st.session_state.app_authenticated = True
+                st.rerun()
+            else:
+                st.error("비밀번호가 올바르지 않습니다.")
+        st.stop()
+
 
 def reset_doc_dialog():
     st.session_state.dialog_doc_to_show = None

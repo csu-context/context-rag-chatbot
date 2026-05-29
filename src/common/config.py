@@ -44,7 +44,8 @@ class Settings(BaseSettings):
     RERANKER_MAX_DOCS: int = Field(default=5)
     RERANKER_BATCH_SIZE: int = Field(default=5)
     RERANKER_THRESHOLD: float = Field(default=0.5)
-    # 보안 설정 (Issue 51/57)
+    # 보안 설정 (Issue 49/51/57)
+    APP_PASSWORD: str | None = Field(default=None)
     SEMANTIC_CACHE_ENABLED: bool = Field(default=True)
     ADMIN_PASSWORD: str | None = Field(default=None)
 
