@@ -1,6 +1,7 @@
-import pytest
 from unittest.mock import MagicMock, patch
-from pathlib import Path
+
+import pytest
+
 from src.processing.pdf_parser import DoclingPDFParser
 
 
@@ -24,19 +25,13 @@ def test_docling_pdf_parser_parse():
     mock_converter = MagicMock()
     mock_result = MagicMock()
     mock_doc = MagicMock()
-    
+
     mock_converter.convert.return_value = mock_result
     mock_result.document = mock_doc
-    
+
     # Mock export_to_markdown
     mock_doc.export_to_markdown.return_value = (
-        "Header text\n"
-        "Some content\n"
-        "Footer text\n"
-        "<!-- page break -->\n"
-        "Header text\n"
-        "Page two content\n"
-        "Footer text"
+        "Header text\nSome content\nFooter text\n<!-- page break -->\nHeader text\nPage two content\nFooter text"
     )
 
     # Mock doc.pages for get_page_count
@@ -47,20 +42,20 @@ def test_docling_pdf_parser_parse():
     mock_table1.prov = [MagicMock(page_no=1)]
     mock_table1.export_to_markdown.return_value = "| A | B |"
     mock_table1.data.grid = [["A", "B"], ["1", "2"]]
-    
+
     mock_doc.tables = [mock_table1]
 
     # Mock settings.PDF_HEADER_FOOTER_THRESHOLD
     # Since they are imported inside setting/helper, let's patch Settings
     with (
         patch("src.processing.pdf_parser.settings") as mock_settings,
-        patch("src.processing.pdf_parser.DoclingPDFParser._get_converter", return_value=mock_converter)
+        patch("src.processing.pdf_parser.DoclingPDFParser._get_converter", return_value=mock_converter),
     ):
         mock_settings.PDF_HEADER_FOOTER_THRESHOLD = 0.5
         mock_settings.PDF_NOISE_PATTERNS = [r"Page \d+"]
 
         res = parser.parse("dummy_path.pdf")
-        
+
         assert res["page_count"] == 2
         assert res["table_count"] == 1
         assert len(res["tables"]) == 1
@@ -73,7 +68,7 @@ def test_docling_pdf_parser_parse():
 
 def test_clean_pdf_noise_and_remove_repeated_lines():
     parser = DoclingPDFParser()
-    
+
     # Check fallback path when pages < 2
     res_single = parser._remove_repeated_lines("Only one page", threshold=0.5)
     assert "Only one page" in res_single

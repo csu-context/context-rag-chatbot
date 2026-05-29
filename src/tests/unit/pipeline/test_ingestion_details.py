@@ -1,9 +1,6 @@
-import importlib.util
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from langchain_core.documents import Document
 
 from src.common.constants import MetadataFields
 from src.pipeline.ingestion import (
@@ -49,8 +46,7 @@ def test_get_parser_strategy_for_file():
 
     # 3. manifest 설정에 따른 파서 설정 검증
     file_parser_types = {"test.pdf": "docling"}
-    # docling 라이브러리 존재 여부 패치
-    with patch("importlib.util.find_spec", return_value=MagicMock()) as mock_find:
+    with patch("importlib.util.find_spec", return_value=MagicMock()):
         strategy = _get_parser_strategy_for_file(RAW_DATA_DIR / "test.pdf", file_parser_types)
         assert isinstance(strategy, DoclingPDFParserStrategy)
 
@@ -62,11 +58,7 @@ def test_get_parser_strategy_for_file():
 def test_split_table_into_row_chunks():
     # 1. 정상 마크다운 표 구조 청킹 검증
     table_content = (
-        "학부 졸업 이수 요건 표\n\n"
-        "| 학년 | 학점 | 비고 |\n"
-        "|---|---|---|\n"
-        "| 1학년 | 30 | - |\n"
-        "| 2학년 | 60 | 필수 |\n"
+        "학부 졸업 이수 요건 표\n\n| 학년 | 학점 | 비고 |\n|---|---|---|\n| 1학년 | 30 | - |\n| 2학년 | 60 | 필수 |\n"
     )
     parent_id = "parent-123"
     base_meta = {"src_name": "rules.pdf"}

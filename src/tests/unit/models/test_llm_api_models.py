@@ -1,8 +1,10 @@
-import pytest
 from unittest.mock import MagicMock, patch
-from src.models.llm_gemini import GeminiModel
-from src.models.llm_claude import ClaudeModel
+
+import pytest
+
 from src.models.base import LLMResponse
+from src.models.llm_claude import ClaudeModel
+from src.models.llm_gemini import GeminiModel
 
 
 def test_gemini_model_init_and_invoke():
@@ -14,18 +16,14 @@ def test_gemini_model_init_and_invoke():
     mock_chat_model = MagicMock()
     mock_response = MagicMock()
     mock_response.content = "mocked gemini response"
-    mock_response.usage_metadata = {
-        "input_token_count": 10,
-        "output_token_count": 20,
-        "total_token_count": 30
-    }
+    mock_response.usage_metadata = {"input_token_count": 10, "output_token_count": 20, "total_token_count": 30}
     mock_response.response_metadata = {"finish_reason": "stop"}
     mock_chat_model.invoke.return_value = mock_response
 
     with patch("src.models.llm_gemini.ChatGoogleGenerativeAI", return_value=mock_chat_model):
         model = GeminiModel(model_name="gemini-1.5-pro", api_key="fake-key", temperature=0.2)
         assert model.get_model() == mock_chat_model
-        
+
         # Invoke
         res = model.invoke("Hello")
         assert isinstance(res, LLMResponse)
@@ -52,18 +50,14 @@ def test_claude_model_init_and_invoke():
     mock_chat_model = MagicMock()
     mock_response = MagicMock()
     mock_response.content = "mocked claude response"
-    mock_response.usage_metadata = {
-        "input_token_count": 15,
-        "output_token_count": 25,
-        "total_token_count": 40
-    }
+    mock_response.usage_metadata = {"input_token_count": 15, "output_token_count": 25, "total_token_count": 40}
     mock_response.response_metadata = {"stop_reason": "end_turn"}
     mock_chat_model.invoke.return_value = mock_response
 
     with patch("src.models.llm_claude.ChatAnthropic", return_value=mock_chat_model):
         model = ClaudeModel(model_name="claude-3-opus", api_key="fake-key", temperature=0.3)
         assert model.get_model() == mock_chat_model
-        
+
         # Invoke
         res = model.invoke("Hello Claude")
         assert isinstance(res, LLMResponse)

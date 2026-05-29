@@ -1,6 +1,6 @@
-import json
-import pytest
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from src.core.cache import SemanticCache
 
@@ -27,10 +27,13 @@ def test_semantic_cache_get_hit_and_miss():
 
     with (
         patch("src.core.cache.ChromaDBManager", return_value=mock_db),
-        patch("src.core.cache.logger.error", side_effect=lambda msg, *args, **kwargs: pytest.fail(f"logger.error called with: {msg}"))
+        patch(
+            "src.core.cache.logger.error",
+            side_effect=lambda msg, *args, **kwargs: pytest.fail(f"logger.error called with: {msg}"),
+        ),
     ):
         cache = SemanticCache()
-        
+
         # Test Case 1: Cache Miss (no results)
         mock_collection.query.return_value = {}
         assert cache.get("hello") is None
@@ -38,7 +41,7 @@ def test_semantic_cache_get_hit_and_miss():
         # Test Case 2: Cache Miss (score below threshold)
         mock_collection.query.return_value = {
             "distances": [[0.8]],  # score = 1.0 - 0.8 = 0.2 < threshold
-            "metadatas": [[{"answer": "yes", "sources": "[]"}]]
+            "metadatas": [[{"answer": "yes", "sources": "[]"}]],
         }
         assert cache.get("hello") is None
 
@@ -46,13 +49,12 @@ def test_semantic_cache_get_hit_and_miss():
         cache.threshold = 0.9
         mock_collection.query.return_value = {
             "distances": [[0.01]],  # score = 1.0 - 0.01 = 0.99 >= threshold
-            "metadatas": [[{"answer": "cached answer", "sources": '["source1"]'}]]
+            "metadatas": [[{"answer": "cached answer", "sources": '["source1"]'}]],
         }
         res = cache.get("hello")
         assert res is not None
         assert res["answer"] == "cached answer"
         assert res["sources"] == ["source1"]
-
 
 
 def test_semantic_cache_add_and_flush():

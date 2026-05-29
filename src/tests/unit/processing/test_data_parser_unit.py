@@ -1,6 +1,6 @@
-import pytest
 from unittest.mock import MagicMock, patch
-from pathlib import Path
+
+import pytest
 
 from src.data.parser import ManualParser
 
@@ -54,22 +54,10 @@ def test_manual_parser_parse_pdf(mock_file_setup):
     mock_doc = MagicMock()
     mock_doc.__len__.return_value = 1
     mock_page = MagicMock()
-    
+
     # _calculate_base_font_size를 위한 dict 모킹
     mock_page.get_text.side_effect = lambda mode, **kwargs: {
-        "dict": {
-            "blocks": [
-                {
-                    "lines": [
-                        {
-                            "spans": [
-                                {"text": "본문", "size": 10.0}
-                            ]
-                        }
-                    ]
-                }
-            ]
-        },
+        "dict": {"blocks": [{"lines": [{"spans": [{"text": "본문", "size": 10.0}]}]}]},
         "rawdict": {
             "blocks": [
                 {
@@ -84,34 +72,22 @@ def test_manual_parser_parse_pdf(mock_file_setup):
                                         {"c": "제", "origin": (10.0, 20.0), "bbox": (10.0, 20.0, 15.0, 30.0)},
                                         {"c": "1", "origin": (15.0, 20.0), "bbox": (15.0, 20.0, 20.0, 30.0)},
                                         {"c": "조", "origin": (20.0, 20.0), "bbox": (20.0, 20.0, 25.0, 30.0)},
-                                    ]
+                                    ],
                                 }
                             ]
                         }
                     ]
                 },
-                {
-                    "lines": [
-                        {
-                            "spans": [
-                                {
-                                    "text": "본문 내용입니다.",
-                                    "size": 10.0,
-                                    "origin": (10.0, 40.0)
-                                }
-                            ]
-                        }
-                    ]
-                }
+                {"lines": [{"spans": [{"text": "본문 내용입니다.", "size": 10.0, "origin": (10.0, 40.0)}]}]},
             ]
-        }
+        },
     }.get(mode, {})
 
     mock_doc.__getitem__.return_value = mock_page
 
     with (
         patch("src.data.parser.generate_file_hash", return_value="hash_pdf"),
-        patch("fitz.open", return_value=mock_doc)
+        patch("fitz.open", return_value=mock_doc),
     ):
         parser = ManualParser("test.pdf")
         parsed = parser.parse()
@@ -122,11 +98,7 @@ def test_manual_parser_parse_pdf(mock_file_setup):
 def test_manual_parser_chars_collect_and_join():
     # staticmethod 직접 호출하여 특이 분기 검증
     # chars가 없는 경우 (span["text"] 사용 분기)
-    span_no_chars = {
-        "size": 10.0,
-        "origin": (10.0, 20.0),
-        "text": "hello"
-    }
+    span_no_chars = {"size": 10.0, "origin": (10.0, 20.0), "text": "hello"}
     chars = ManualParser._collect_chars_from_span(span_no_chars)
     assert len(chars) == 5
     assert chars[0][2] == "h"

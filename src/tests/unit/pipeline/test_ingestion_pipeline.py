@@ -1,9 +1,9 @@
 import json
-from pathlib import Path
-import pytest
 from unittest.mock import MagicMock, patch
 
-from src.pipeline.ingestion import IngestionPipeline, _process_single_file_helper
+import pytest
+
+from src.pipeline.ingestion import IngestionPipeline
 
 
 @pytest.fixture
@@ -47,7 +47,7 @@ def test_ingestion_pipeline_process_and_chunk_single(mock_pipeline_setup):
             "chapter": "제1장",
             "article": "제1조",
             "content": "이것은 본문입니다. " * 30,
-            "metadata": {"src_name": "test.pdf", "source_id": "test_id", "doc_type": "pdf"}
+            "metadata": {"src_name": "test.pdf", "source_id": "test_id", "doc_type": "pdf"},
         }
     ]
     mock_strategy.parse.return_value = mock_sections
@@ -78,7 +78,7 @@ def test_ingestion_pipeline_save_and_upsert(mock_pipeline_setup):
             "metadata": {"source_id": "sid_1", "src_name": "test.pdf"},
             "children": [
                 {"chunk_id": "p1_c1", "text": "child text", "metadata": {"source_id": "sid_1", "src_name": "test.pdf"}}
-            ]
+            ],
         }
     ]
 
@@ -103,12 +103,12 @@ def test_ingestion_pipeline_cleanup(mock_pipeline_setup):
     mock_db = MagicMock()
     with patch("src.pipeline.ingestion.ChromaDBManager", return_value=mock_db):
         pipeline = IngestionPipeline(strategy=MagicMock(), raw_dir=raw_dir, processed_dir=processed_dir)
-        
+
         # mock db query
         mock_db.collection.get.return_value = {"metadatas": [{"source_id": "sid_1"}]}
 
         pipeline.cleanup_db(filenames_to_delete=["rules.pdf"], relative_paths_to_delete=["rules.pdf"])
-        
+
         # Verify db delete and physical delete
         mock_db.delete_documents.assert_called()
         assert not sid_file.exists()

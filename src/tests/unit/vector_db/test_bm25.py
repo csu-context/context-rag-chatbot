@@ -1,18 +1,12 @@
 import json
-from pathlib import Path
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from src.vector_db.bm25_index import BM25PlusIndex
 from src.vector_db.bm25_manager import BM25Manager
 
 
 def test_bm25_index_build_save_load(tmp_path):
-    corpus = [
-        ["hello", "world"],
-        ["hello", "test", "index"],
-        ["scipy", "matrix"]
-    ]
+    corpus = [["hello", "world"], ["hello", "test", "index"], ["scipy", "matrix"]]
     index = BM25PlusIndex()
     index.build(corpus)
 
@@ -62,13 +56,10 @@ def test_bm25_manager_indexing_and_retrieve(tmp_path):
     cache_dir = tmp_path / "cache"
     data_dir.mkdir()
 
-    doc1 = {
-        "text": "인공지능 챗봇 기술은 매우 유용합니다.",
-        "metadata": {"source_id": "doc1", "category": "IT"}
-    }
+    doc1 = {"text": "인공지능 챗봇 기술은 매우 유용합니다.", "metadata": {"source_id": "doc1", "category": "IT"}}
     doc2 = {
         "text": "조선대학교 학칙 제1조 목적 규정을 준수합니다.",
-        "metadata": {"source_id": "doc2", "category": "규정"}
+        "metadata": {"source_id": "doc2", "category": "규정"},
     }
 
     (data_dir / "doc1.json").write_text(json.dumps(doc1), encoding="utf-8")
@@ -96,7 +87,7 @@ def test_bm25_manager_indexing_and_retrieve(tmp_path):
     # Incremental update (modify one file)
     doc1_mod = {
         "text": "인공지능 챗봇 엔진 및 NLP 기술은 매우 유용합니다.",
-        "metadata": {"source_id": "doc1", "category": "IT"}
+        "metadata": {"source_id": "doc1", "category": "IT"},
     }
     (data_dir / "doc1.json").write_text(json.dumps(doc1_mod), encoding="utf-8")
 

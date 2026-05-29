@@ -1,12 +1,11 @@
-import pytest
-from unittest.mock import MagicMock, patch
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from src.pipeline.strategies import (
-    _safe_relative_to,
+    DoclingPDFParserStrategy,
     ManualParserStrategy,
     MarkdownParserStrategy,
-    DoclingPDFParserStrategy,
+    _safe_relative_to,
 )
 
 
@@ -26,7 +25,7 @@ def test_manual_parser_strategy():
 
     with (
         patch("src.pipeline.strategies.RAW_DATA_DIR", Path("/raw")),
-        patch("src.pipeline.strategies.ManualParser", return_value=mock_parser) as mock_class
+        patch("src.pipeline.strategies.ManualParser", return_value=mock_parser) as mock_class,
     ):
         res = strategy.parse(Path("/raw/test.pdf"))
         mock_class.assert_called_once_with("test.pdf", parser_type="manual")
@@ -40,7 +39,7 @@ def test_markdown_parser_strategy(tmp_path):
     strategy = MarkdownParserStrategy()
     with (
         patch("src.pipeline.strategies.RAW_DATA_DIR", tmp_path),
-        patch("src.pipeline.strategies.generate_file_hash", return_value="hash123")
+        patch("src.pipeline.strategies.generate_file_hash", return_value="hash123"),
     ):
         res = strategy.parse(md_file)
         assert len(res) == 1
@@ -57,13 +56,7 @@ def test_docling_pdf_parser_strategy(tmp_path):
     # Mock docling return
     mock_pdf_parser.parse.return_value = {
         "table_count": 1,
-        "tables": [
-            {
-                "page": 1,
-                "table_index": 0,
-                "markdown": "| A | B |\n|---|---|\n| 1 | 2 |"
-            }
-        ]
+        "tables": [{"page": 1, "table_index": 0, "markdown": "| A | B |\n|---|---|\n| 1 | 2 |"}],
     }
 
     mock_doc = MagicMock()
@@ -77,7 +70,7 @@ def test_docling_pdf_parser_strategy(tmp_path):
         patch("src.pipeline.strategies.RAW_DATA_DIR", tmp_path),
         patch("src.pipeline.strategies.generate_file_hash", return_value="hash_docling"),
         patch("src.pipeline.strategies.ManualParser") as mock_manual_parser_class,
-        patch("fitz.open", return_value=mock_doc)
+        patch("fitz.open", return_value=mock_doc),
     ):
         # mock manual parser return
         mock_manual_inst = MagicMock()
@@ -86,7 +79,7 @@ def test_docling_pdf_parser_strategy(tmp_path):
 
         strategy = DoclingPDFParserStrategy()
         res = strategy.parse(pdf_file)
-        
+
         # Docling parser should have been called
         mock_pdf_parser.parse.assert_called_once_with(pdf_file)
         # Verify both manual text and docling tables are in the result

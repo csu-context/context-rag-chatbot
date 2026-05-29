@@ -22,14 +22,13 @@ def test_chroma_connection_retry_failures():
             return "8000"
         return default
 
-    # HttpClient 및 PersistentClient가 항상 예외를 유발하도록 패치
     with (
         patch("chromadb.HttpClient", side_effect=ConnectionError("Chroma server down")),
         patch("chromadb.PersistentClient", side_effect=Exception("Local path issue")),
         patch("os.getenv", side_effect=mock_getenv),
+        pytest.raises(RuntimeError, match=r"ChromaDB initialization failed\."),
     ):
-        with pytest.raises(RuntimeError, match="ChromaDB initialization failed."):
-            manager._initialize_client_with_retry(max_retries=3, retry_delay=0.1)
+        manager._initialize_client_with_retry(max_retries=3, retry_delay=0.1)
 
 
 def test_manual_parser_file_not_found():
@@ -64,7 +63,7 @@ def test_manual_parser_clean_text():
 
 
 def test_chroma_db_manager_operations():
-    from src.vector_db.chroma_manager import ChromaDBManager, ChromaConnectionMixin
+    from src.vector_db.chroma_manager import ChromaConnectionMixin, ChromaDBManager
 
     ChromaDBManager._shared_client = None
     ChromaConnectionMixin._shared_client = None
@@ -115,8 +114,11 @@ def test_chroma_db_manager_operations():
         manager.upsert_documents(ids=["id1"], documents=["doc1"], metadatas=[{"src_name": "test.pdf"}])
         mock_collection.upsert.assert_called_once()
 
-        # get_source_count & get_source_chunks 테스트
-        mock_collection.get.return_value = {"ids": ["id1"], "documents": ["doc1"], "metadatas": [{"src_name": "test.pdf"}]}
+        mock_collection.get.return_value = {
+            "ids": ["id1"],
+            "documents": ["doc1"],
+            "metadatas": [{"src_name": "test.pdf"}],
+        }
         assert manager.get_source_count("test.pdf") == 1
         chunks = manager.get_source_chunks("test.pdf")
         assert len(chunks) == 1
@@ -130,5 +132,3 @@ def test_chroma_db_manager_operations():
         mock_collection.get.return_value = {"ids": ["id1"]}
         manager.reset_collection()
         assert mock_collection.delete.call_count == 2
-
-
