@@ -19,6 +19,7 @@ PROCESSED_DATA_DIR = (DATA_DIR / "processed").resolve()
 EVAL_DATA_DIR = (DATA_DIR / "eval").resolve()
 
 VECTOR_DB_DIR = (BASE_DIR / "vector_db").resolve()
+BACKUP_DIR = (DATA_DIR / "backups").resolve()
 MODELS_DIR = (BASE_DIR / "models").resolve()
 LOGS_DIR = (BASE_DIR / "logs").resolve()
 EVAL_LOGS_DIR = (LOGS_DIR / "eval").resolve()
@@ -37,6 +38,7 @@ REQUIRED_DIRECTORIES = [
     RAW_DATA_DIR,
     PROCESSED_DATA_DIR,
     VECTOR_DB_DIR,
+    BACKUP_DIR,
     MODELS_DIR,
     LOGS_DIR,
     CACHE_DIR,
