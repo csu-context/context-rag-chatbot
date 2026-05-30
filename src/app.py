@@ -15,6 +15,7 @@ import time
 from pathlib import Path
 
 import streamlit as st
+from st_copy_to_clipboard import st_copy_to_clipboard
 from dotenv import load_dotenv
 
 from src.common.config import settings
@@ -291,6 +292,15 @@ for msg_idx, msg in enumerate(st.session_state.messages):
         # 답변 소요 시간 캡션 표시
         if msg["role"] == "assistant" and msg.get("latency") is not None:
             st.caption(f"답변 소요 시간: {msg['latency']:.2f}초")
+
+        # AI 답변 클립보드 복사 버튼
+        if msg["role"] == "assistant":
+            st_copy_to_clipboard(
+                msg["content"],
+                before_copy_label="📋 답변 복사하기",
+                after_copy_label="✅ 클립보드에 복사되었습니다!",
+                key=f"copy_btn_{msg_idx}"
+            )
 
         if msg.get("citations"):
             for i, doc in enumerate(msg["citations"]):
