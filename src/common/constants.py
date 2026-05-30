@@ -58,4 +58,3 @@ class SupportedFormats:
     """지원하는 원본 파일의 확장자 목록"""
 
     EXTENSIONS: Final[list[str]] = [".pdf", ".md", ".markdown", ".hwp", ".hwpx"]
-

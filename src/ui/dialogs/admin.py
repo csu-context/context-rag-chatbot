@@ -273,18 +273,10 @@ def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
             if file_chunks:
                 old_parser = file_chunks[0].get("metadata", {}).get("parser_type", "manual")
             old_display = (
-                "기본"
-                if old_parser == "manual"
-                else "표 인식 강화"
-                if old_parser == "docling"
-                else old_parser
+                "기본" if old_parser == "manual" else "표 인식 강화" if old_parser == "docling" else old_parser
             )
             new_display = (
-                "기본"
-                if new_parser == "manual"
-                else "표 인식 강화"
-                if new_parser == "docling"
-                else new_parser
+                "기본" if new_parser == "manual" else "표 인식 강화" if new_parser == "docling" else new_parser
             )
             change_details.append(f"- {file_name}: {old_display} -> {new_display}")
 

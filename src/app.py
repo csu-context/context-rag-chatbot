@@ -219,10 +219,7 @@ st.info("사내 규정 및 매뉴얼에 대해 질문하면 인용 출처와 함
 def render_download_progress(llm):
     # 1단계: Ollama 서비스 자체 구동 여부 먼저 확인
     if not llm.check_health():
-        st.error(
-            f"Ollama 서비스({llm.base_url})에 연결할 수 없습니다. "
-            "Ollama가 실행 중인지 확인해 주세요."
-        )
+        st.error(f"Ollama 서비스({llm.base_url})에 연결할 수 없습니다. Ollama가 실행 중인지 확인해 주세요.")
         st.info("터미널에서 `ollama serve` 명령으로 Ollama를 실행한 후 새로고침하세요.")
         return
 

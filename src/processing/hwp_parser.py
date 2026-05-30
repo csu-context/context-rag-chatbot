@@ -22,10 +22,7 @@ class HwpParser:
             try:
                 from markitdown import MarkItDown
             except ImportError as err:
-                raise ImportError(
-                    "markitdown-hwp 라이브러리가 필요합니다.\n"
-                    "설치: pip install markitdown-hwp"
-                ) from err
+                raise ImportError("markitdown-hwp 라이브러리가 필요합니다.\n설치: pip install markitdown-hwp") from err
 
             logger.info("MarkItDown(HWP) 변환기 초기화 중...")
             self._converter = MarkItDown(enable_plugins=True)
