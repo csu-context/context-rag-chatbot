@@ -31,8 +31,7 @@ async def test_rag_normal_response():
     ]
     retriever = MockRetriever(docs)
 
-    with patch("src.models.factory.LLMFactory.create_llm") as mock_factory:
-        mock_llm_inst = MagicMock()
+    with patch("src.models.factory.LLMFactory.create_llm_with_fallback") as mock_factory:
         mock_model = MagicMock()
 
         # TracingLogger 직렬화를 위해 속성에 실제 값 할당
@@ -44,8 +43,7 @@ async def test_rag_normal_response():
 
         mock_model.stream = mock_stream
         mock_model.ainvoke = AsyncMock(return_value=MagicMock(content="2026년 신입 사원 연봉은 5,000만 원입니다."))
-        mock_llm_inst.get_model.return_value = mock_model
-        mock_factory.return_value = mock_llm_inst
+        mock_factory.return_value = mock_model
 
         chain = get_rag_chain(retriever)
 
@@ -77,8 +75,7 @@ async def test_rag_hallucination_prevention():
     ]
     retriever = MockRetriever(docs)
 
-    with patch("src.models.factory.LLMFactory.create_llm") as mock_factory:
-        mock_llm_inst = MagicMock()
+    with patch("src.models.factory.LLMFactory.create_llm_with_fallback") as mock_factory:
         mock_model = MagicMock()
 
         # TracingLogger 직렬화를 위해 속성에 실제 값 할당
@@ -90,8 +87,7 @@ async def test_rag_hallucination_prevention():
 
         mock_model.stream = mock_stream
         mock_model.ainvoke = AsyncMock(return_value=MagicMock(content="제공된 문서에서 관련 내용을 찾을 수 없습니다."))
-        mock_llm_inst.get_model.return_value = mock_model
-        mock_factory.return_value = mock_llm_inst
+        mock_factory.return_value = mock_model
 
         chain = get_rag_chain(retriever)
 

@@ -29,8 +29,11 @@ def test_ollama_model_initialization(mock_chat_ollama):
         model="llama3",
         base_url="http://test:11434",
         temperature=0.1,
-        num_predict=512,
-        repeat_penalty=1.2,
+        num_predict=8192,
+        repeat_penalty=1.0,
+        num_ctx=8192,
+        keep_alive=-1,
+        think=False,
     )
 
 
@@ -103,10 +106,13 @@ def test_ollama_pull_status_background(mock_chat_ollama):
 
     def mock_pull_progress():
         yield {"status": "downloading", "completed": 20, "total": 100}
-        time.sleep(0.05)
+        time.sleep(0.01)
         yield {"status": "success", "completed": 100, "total": 100}
 
-    with patch.object(model, "pull_model_progress", side_effect=mock_pull_progress):
+    with (
+        patch.object(model, "pull_model_progress", side_effect=mock_pull_progress),
+        patch.object(model, "is_model_available", return_value=False),
+    ):
         model.start_pull_background()
 
         time.sleep(0.01)
@@ -114,7 +120,7 @@ def test_ollama_pull_status_background(mock_chat_ollama):
         assert status is not None
         assert status["status"] in ["downloading", "success", "pulling"]
 
-        for _ in range(15):
+        for _ in range(50):
             status = model.get_pull_status()
             if status and status["status"] == "success":
                 break

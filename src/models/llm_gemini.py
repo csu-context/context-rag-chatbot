@@ -36,14 +36,7 @@ class GeminiModel(BaseLLM):
             response = self._model.invoke(prompt, **kwargs)
             latency = time.time() - start_time
 
-            # 토큰 사용량 정보 추출 (LangChain 특성상 모델별로 다를 수 있음)
-            usage = {}
-            if hasattr(response, "usage_metadata") and response.usage_metadata:
-                usage = {
-                    "input_tokens": response.usage_metadata.get("input_token_count", 0),
-                    "output_tokens": response.usage_metadata.get("output_token_count", 0),
-                    "total_tokens": response.usage_metadata.get("total_token_count", 0),
-                }
+            usage = self.extract_usage(response)
 
             return LLMResponse(
                 content=str(response.content) if hasattr(response, "content") else str(response),
@@ -55,7 +48,7 @@ class GeminiModel(BaseLLM):
 
         except Exception as e:
             logger.error(f"Gemini 호출 중 오류 발생: {e}")
-            raise e
+            raise
 
     def get_model(self) -> BaseChatModel:
         """LangChain의 ChatGoogleGenerativeAI 인스턴스를 반환합니다."""

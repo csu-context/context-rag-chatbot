@@ -38,17 +38,17 @@ class TestCrossEncoderReranker:
         """리랭킹 정렬 검증: 모델 점수가 높은 순서대로 정렬되어야 함"""
         with patch.object(CrossEncoderReranker, "_load_model") as mock_load:
             mock_model = MagicMock()
-            # raw logit: Python=4.0, JS=-4.0, Java=1.0
-            # sigmoid/5 후: Python≈0.690, Java≈0.550, JS≈0.310
-            mock_model.predict.return_value = [4.0, -4.0, 1.0]
+            # raw logit: Python=4.0, JS=-2.0, Java=1.0
+            # sigmoid 후 (temperature 스케일링 제거됨): Python≈0.98, Java≈0.73, JS≈0.119
+            mock_model.predict.return_value = [4.0, -2.0, 1.0]
             mock_load.return_value = mock_model
 
             reranker = CrossEncoderReranker.get_instance(threshold=0.1)
             result = reranker.rerank("Python 특징", sample_docs)
 
             assert len(result.documents) == 3
-            assert result.scores[0] == pytest.approx(0.690, abs=1e-2)
-            assert result.scores[1] == pytest.approx(0.550, abs=1e-2)
+            assert result.scores[0] == pytest.approx(0.98, abs=1e-2)
+            assert result.scores[1] == pytest.approx(0.73, abs=1e-2)
             assert "Python" in result.documents[0].page_content
             assert "Java" in result.documents[1].page_content
 
@@ -56,10 +56,10 @@ class TestCrossEncoderReranker:
         """임계치 필터링 검증: threshold 미만인 문서는 결과에서 제거되어야 함"""
         with patch.object(CrossEncoderReranker, "_load_model") as mock_load:
             mock_model = MagicMock()
-            # raw logit: -5.0, 2.0, 4.0
-            # sigmoid/5 후: ≈0.269, 0.599, 0.690
+            # raw logit: -1.0, 2.0, 4.0
+            # sigmoid 후: ≈0.269, 0.880, 0.982
             # threshold=0.3 → 0.269인 문서는 필터링
-            mock_model.predict.return_value = [-5.0, 2.0, 4.0]
+            mock_model.predict.return_value = [-1.0, 2.0, 4.0]
             mock_load.return_value = mock_model
 
             reranker = CrossEncoderReranker.get_instance(threshold=0.3)
@@ -86,16 +86,29 @@ class TestCrossEncoderReranker:
             assert len(result.documents) == 0
             assert result.filtered_count == 3
 
-    def test_skip_rerank_few_documents(self):
-        """문서가 2개 미만인 경우 리랭킹을 수행하지 않고 원본을 반환해야 함"""
+    def test_single_document_gets_real_score(self):
+        """문서가 1개인 경우에도 모델을 실행하여 실제 점수를 반환해야 함"""
         docs = [Document(page_content="단일 문서", metadata={"source": "doc"})]
 
-        reranker = CrossEncoderReranker.get_instance()
-        result = reranker.rerank("질문", docs)
+        with patch.object(CrossEncoderReranker, "_load_model") as mock_load:
+            mock_model = MagicMock()
+            mock_model.predict.return_value = [2.0]  # sigmoid(2.0) ≈ 0.88
+            mock_load.return_value = mock_model
 
-        assert len(result.documents) == 1
-        assert result.scores == [0.5]  # 코드상 기본값 0.5
-        assert result.elapsed_time_sec == 0.0
+            reranker = CrossEncoderReranker.get_instance(threshold=0.1)
+            result = reranker.rerank("질문", docs)
+
+            assert len(result.documents) == 1
+            assert result.scores[0] == pytest.approx(0.88, abs=1e-2)
+            mock_model.predict.assert_called_once()
+
+    def test_empty_documents_returns_empty(self):
+        """빈 문서 리스트는 빈 결과를 즉시 반환해야 함"""
+        reranker = CrossEncoderReranker.get_instance()
+        result = reranker.rerank("질문", [])
+
+        assert result.documents == []
+        assert result.scores == []
 
     def test_exception_handling(self, sample_docs):
         """모델 추론 중 예외 발생 시 원본 순서를 유지하여 반환해야 함"""
@@ -135,18 +148,14 @@ class TestCrossEncoderReranker:
                 assert result.elapsed_time_sec == pytest.approx(6.0)
 
     def test_model_defaults(self):
-        """모델명에 따라 임계치가 올바르게 자동 설정되는지 확인 (sigmoid [0,1] 기준)"""
-        # BGE 모델 (0.4)
+        """threshold가 settings.RERANKER_THRESHOLD 기본값으로 설정되는지 확인 (sigmoid 중립점 0.5)"""
+        from src.common.config import settings
+
         bge = CrossEncoderReranker(model_name="bge-reranker-v2-m3")
-        assert bge.threshold == 0.4
+        assert bge.threshold == settings.RERANKER_THRESHOLD
 
-        # 한국어 모델 (0.5)
-        kor = CrossEncoderReranker(model_name="skesarmom/cross-encoder-kor")
-        assert kor.threshold == 0.5
-
-        # 기본 모델 (0.45)
         default = CrossEncoderReranker(model_name="cross-encoder/ms-marco-MiniLM-L-6-v2")
-        assert default.threshold == 0.45
+        assert default.threshold == settings.RERANKER_THRESHOLD
 
     def test_elapsed_time_tracking(self, sample_docs):
         """추론 소요 시간이 결과 객체에 정확히 기록되는지 확인"""

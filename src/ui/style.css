@@ -1,0 +1,66 @@
+/* 전역 및 컴포넌트 커스텀 스타일 정의 */
+
+/* 인용 뱃지 스타일 */
+.citation-badge {
+    background-color: rgba(151, 166, 195, 0.15);
+    padding: 0.2rem 0.5rem;
+    border-radius: 0.5rem;
+    font-size: 0.8em;
+    margin: 0 0.1rem;
+    text-decoration: none;
+    border: 1px solid rgba(151, 166, 195, 0.3);
+    cursor: pointer;
+}
+
+.citation-badge:hover {
+    background-color: rgba(151, 166, 195, 0.25);
+    border-color: rgba(151, 166, 195, 0.4);
+}
+
+/* Streamlit 테이블 열의 텍스트 말줄임(ellipsis) 처리 */
+div[data-testid="column"] > div > div > div > div > p {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* 채팅 메시지 내부 스피너 아바타 높이 맞춤 */
+div[data-testid="stChatMessage"] div[data-testid="stSpinner"] > div {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+/* 채팅 메시지 내부 st.columns 컨테이너의 위쪽 여백을 조정해 왼쪽 아바타와 세로축 중앙 정렬 일치 */
+div[data-testid="stChatMessage"] div[data-testid="stHorizontalBlock"] {
+    margin-top: -0.25rem;
+}
+
+/* 청크 돋보기 팝업 - 자식 텍스트(원문 조각) 컨테이너 */
+.chunk-child-container {
+    background-color: rgba(151, 166, 195, 0.08);
+    padding: 12px;
+    border-radius: 6px;
+    border: 1px solid rgba(151, 166, 195, 0.2);
+    max-height: 180px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    font-size: 0.95rem;
+    line-height: 1.5;
+    color: #f0f2f6;
+    margin-bottom: 10px;
+}
+
+/* 청크 돋보기 팝업 - 부모 문맥(Parent Context) 컨테이너 */
+.chunk-parent-container {
+    background-color: rgba(151, 166, 195, 0.04);
+    padding: 12px;
+    border-radius: 6px;
+    border: 1px solid rgba(151, 166, 195, 0.15);
+    max-height: 250px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    font-size: 0.95rem;
+    line-height: 1.5;
+    color: #e0e2e6;
+}

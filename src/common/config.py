@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     # 3. 벡터 DB 및 검색 설정
     RETRIEVER_TYPE: Literal["vector", "hybrid"] = Field(default="hybrid")
     RERANKER_TYPE: Literal["local", "cohere", "jina"] = Field(default="local")
+    RERANKER_MODEL_NAME: str = Field(default="BAAI/bge-reranker-v2-m3")
+    RERANKER_USE_FP16: bool = Field(default=True)
+    EMBEDDER_USE_FP16: bool = Field(default=True)
     ALLOW_EXTERNAL_RERANKER: bool = Field(default=False)
     ALLOW_EXTERNAL_API: bool = Field(default=True)
     CHROMA_SERVER_HOST: str | None = None
@@ -37,10 +40,22 @@ class Settings(BaseSettings):
     RRF_K: int = 60
     HYBRID_WEIGHT_BM25: float = 0.5
     HYBRID_WEIGHT_VECTOR: float = 0.5
+    RETRIEVER_CANDIDATE_POOL_MIN: int = Field(default=15)
+    RERANKER_MAX_DOCS: int = Field(default=5)
+    RERANKER_BATCH_SIZE: int = Field(default=5)
+    RERANKER_THRESHOLD: float = Field(default=0.5)
 
     # 4. 파이프라인 및 파싱 설정
     PARSER_TYPE: Literal["manual", "docling"] = Field(default="docling")
     OLLAMA_BASE_URL: str = "http://localhost:11434"
+    # PDF 헤더/푸터 동적 제거 임계치: 전체 페이지 중 이 비율 이상 반복되는 라인을 노이즈로 분류
+    PDF_HEADER_FOOTER_THRESHOLD: float = Field(default=0.8)
+    # PDF 잔여 노이즈 패턴 (범용 정규식). 환경 변수로 오버라이드 가능: PDF_NOISE_PATTERNS='["pattern1"]'
+    PDF_NOISE_PATTERNS: list[str] = Field(
+        default=[
+            r"(?im)^\s*-\s*\d+\s*-\s*$",  # 페이지 번호 (예: "- 1 -", "- 12 -")
+        ]
+    )
 
     # 5. 평가(Evaluation) 관련 설정
     EVAL_MAX_SAMPLES: int = 50
@@ -55,7 +70,19 @@ class Settings(BaseSettings):
 
     # 7. 시맨틱 캐시 설정
     SEMANTIC_CACHE_COLLECTION_NAME: str = Field(default="semantic_cache")
-    SEMANTIC_CACHE_THRESHOLD: float = Field(default=0.90)
+    SEMANTIC_CACHE_THRESHOLD: float = Field(default=0.95)
+    MAX_CHAT_HISTORY_TURNS: int = Field(default=5)
+
+    # 8. Ollama 추론 제어
+    OLLAMA_KEEP_ALIVE: int | str = Field(default=-1)
+    OLLAMA_NUM_PREDICT: int = Field(default=8192)
+    OLLAMA_REPEAT_PENALTY: float = Field(default=1.0)
+    OLLAMA_NUM_CTX: int = Field(default=8192)
+    OLLAMA_THINK: bool = Field(default=False)
+
+    # 9. LLM 프롬프트 및 Fallback
+    PROMPT_FILE: str | None = Field(default=None)
+    LLM_FALLBACK_ENABLED: bool = Field(default=True)
 
     # Pydantic 설정 (env 파일 로드 및 대소문자 무시)
     model_config = SettingsConfigDict(
