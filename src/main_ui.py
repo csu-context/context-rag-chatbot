@@ -79,13 +79,13 @@ if prompt := st.chat_input("궁금한 점을 입력해 주세요."):
     # 5-3. 챗봇의 답변을 생성하는 로직 (추후 백엔드 엔진 연동)
     with st.chat_message("assistant"), st.spinner("생각 중..."):
         # 예시 답변 (추후 RAG 엔진 답변으로 대체)
-            import time
+        import time
 
-            time.sleep(1)  # RAG 연동 전 가짜 대기 시간
+        time.sleep(1)  # RAG 연동 전 가짜 대기 시간
 
-            # 답변 예시
-            response = f"'{prompt}'에 대한 답변입니다. (추후 RAG 백엔드와 연동되어 실제 매뉴얼 내용을 기반으로 답변합니다.)\n\n**인용 출처:** [운영매뉴얼.pdf, 12p]"  # noqa: E501
-            st.markdown(response)
+        # 답변 예시
+        response = f"'{prompt}'에 대한 답변입니다. (추후 RAG 백엔드와 연동되어 실제 매뉴얼 내용을 기반으로 답변합니다.)\n\n**인용 출처:** [운영매뉴얼.pdf, 12p]"  # noqa: E501
+        st.markdown(response)
 
     # 5-4. 챗봇의 답변을 세션 상태(히스토리)에 저장
     st.session_state.messages.append({"role": "assistant", "content": response})
