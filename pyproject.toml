@@ -55,7 +55,9 @@ omit = [
     "src/utils/health_check.py",
     "src/eval/**",
     "src/main.py",
-    "src/utils/monitoring.py"
+    "src/utils/monitoring.py",
+    "src/main_ui.py",
+    "src/ui/*"
 ]
 
 

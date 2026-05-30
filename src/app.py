@@ -15,8 +15,8 @@ import time
 from pathlib import Path
 
 import streamlit as st
-from st_copy_to_clipboard import st_copy_to_clipboard
 from dotenv import load_dotenv
+from st_copy_to_clipboard import st_copy_to_clipboard
 
 from src.common.config import settings
 from src.common.constants import MetadataFields
@@ -299,7 +299,7 @@ for msg_idx, msg in enumerate(st.session_state.messages):
                 msg["content"],
                 before_copy_label="📋 답변 복사하기",
                 after_copy_label="✅ 클립보드에 복사되었습니다!",
-                key=f"copy_btn_{msg_idx}"
+                key=f"copy_btn_{msg_idx}",
             )
 
         if msg.get("citations"):
