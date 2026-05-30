@@ -1,12 +1,9 @@
-import os
 import tarfile
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from scripts.backup_db import backup_chromadb, rotate_backups
-from src.utils.paths import BACKUP_DIR, VECTOR_DB_DIR
 
 
 @pytest.fixture
@@ -27,9 +24,10 @@ def mock_vector_db_dir(tmp_path):
 
 
 def test_backup_chromadb_success(mock_vector_db_dir, mock_backup_dir):
-    with patch("scripts.backup_db.BACKUP_DIR", mock_backup_dir), \
-         patch("scripts.backup_db.VECTOR_DB_DIR", mock_vector_db_dir):
-        
+    with (
+        patch("scripts.backup_db.BACKUP_DIR", mock_backup_dir),
+        patch("scripts.backup_db.VECTOR_DB_DIR", mock_vector_db_dir),
+    ):
         # mock_backup_dir에 대한 glob 모킹이 필요할 수 있음 (rotate_backups용)
         # 하지만 실제 디렉토리이므로 glob()이 정상 작동함.
 
@@ -40,7 +38,7 @@ def test_backup_chromadb_success(mock_vector_db_dir, mock_backup_dir):
     # 백업 파일 생성 확인
     backups = list(mock_backup_dir.glob("chromadb_backup_*.tar.gz"))
     assert len(backups) == 1
-    
+
     # 압축 내용 확인
     with tarfile.open(backups[0], "r:gz") as tar:
         # arcname=VECTOR_DB_DIR.name 으로 했으므로 vector_db/ 가 최상위여야 함
@@ -64,13 +62,12 @@ def test_rotate_backups(mock_backup_dir):
 
 
 def test_backup_fails_when_db_locked(mock_vector_db_dir, mock_backup_dir):
-    db_file = mock_vector_db_dir / "chroma.sqlite3"
-    
-    with patch("scripts.backup_db.VECTOR_DB_DIR", mock_vector_db_dir), \
-         patch("scripts.backup_db.BACKUP_DIR", mock_backup_dir):
-        
+    with (
+        patch("scripts.backup_db.VECTOR_DB_DIR", mock_vector_db_dir),
+        patch("scripts.backup_db.BACKUP_DIR", mock_backup_dir),
+        patch("builtins.open", side_effect=OSError("File locked")),
+    ):
         # 파일을 다른 "프로세스"가 열고 있는 것처럼 시뮬레이션
         # backup_db.py의 open(db_file, "r+b") 시 side_effect 발생
-        with patch("builtins.open", side_effect=IOError("File locked")):
-            success = backup_chromadb()
-            assert success is False
+        success = backup_chromadb()
+        assert success is False

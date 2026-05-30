@@ -43,9 +43,9 @@ def backup_chromadb(rotation_limit=5):
     if db_file.exists():
         try:
             # 파일이 다른 프로세스에 의해 쓰기 잠금 상태인지 확인
-            with open(db_file, "r+b") as f:
+            with open(db_file, "r+b"):
                 pass
-        except IOError:
+        except OSError:
             logger.error(
                 "백업 실패: ChromaDB 파일이 현재 다른 프로세스에서 사용 중(잠금)입니다. "
                 "애플리케이션을 종료하거나 DB 연결을 해제한 후 다시 시도하십시오."
