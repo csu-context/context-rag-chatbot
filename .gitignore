@@ -214,6 +214,7 @@ __marimo__/
 /logs/
 /data/raw/
 /data/processed/
+/data/backups/
 /data/eval/*
 !/data/eval/*.example
 

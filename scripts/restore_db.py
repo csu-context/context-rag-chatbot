@@ -33,7 +33,9 @@ def restore_chromadb(backup_file=None):
         backup_path = BACKUP_DIR / backup_file
     else:
         # 최신 백업 파일 찾기
-        backups = sorted(list(BACKUP_DIR.glob("chromadb_backup_*.tar.gz")), key=lambda x: x.name, reverse=True)
+        backups = sorted(
+            list(BACKUP_DIR.glob("chromadb_backup_*.tar.gz")), key=lambda x: x.stat().st_mtime, reverse=True
+        )
         if not backups:
             logger.error("복원 실패: 백업 파일이 data/backups/ 경로에 존재하지 않습니다.")
             return False
@@ -55,8 +57,8 @@ def restore_chromadb(backup_file=None):
         logger.info("백업 압축 해제 중...")
         with tarfile.open(backup_path, "r:gz") as tar:
             # arcname=VECTOR_DB_DIR.name 으로 압축했으므로,
-            # 해제 시 프로젝트 루트(BASE_DIR)에서 해제하면 vector_db/ 가 생성됨
-            tar.extractall(path=BASE_DIR)
+            # 해제 시 VECTOR_DB_DIR.parent 에서 해제하면 vector_db/ 가 생성됨
+            tar.extractall(path=VECTOR_DB_DIR.parent)
 
         logger.info("복원 완료. DB 상태 자가 진단을 시작합니다.")
 

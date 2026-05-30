@@ -38,9 +38,6 @@ def backup_chromadb(rotation_limit=5):
         return False
 
     try:
-        # data/backups 디렉토리 확인
-        BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-
         # 압축 실행
         with tarfile.open(backup_path, "w:gz") as tar:
             tar.add(VECTOR_DB_DIR, arcname=VECTOR_DB_DIR.name)
@@ -60,7 +57,7 @@ def rotate_backups(limit):
     오래된 백업 파일을 삭제하여 개수를 유지합니다.
     """
     try:
-        backups = sorted(list(BACKUP_DIR.glob("chromadb_backup_*.tar.gz")), key=lambda x: x.name)
+        backups = sorted(list(BACKUP_DIR.glob("chromadb_backup_*.tar.gz")), key=lambda x: x.stat().st_mtime)
 
         if len(backups) > limit:
             to_delete = backups[:-limit]
