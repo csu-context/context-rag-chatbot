@@ -78,12 +78,20 @@ def restore_chromadb(backup_file=None):
 def diagnose_db():
     """
     복원된 DB의 상태를 점검합니다.
+    단순 데이터 개수 조회뿐만 아니라, 실제 쿼리 수행을 통해 인덱스 무결성을 검증합니다.
     """
     try:
         # ChromaDBManager 초기화 시도
         manager = ChromaDBManager()
         count = manager.get_count()
-        logger.info(f"자가 진단 성공: ChromaDB 연결 확인됨. 현재 데이터 개수: {count}")
+        logger.info(f"자가 진단 - 데이터 개수 확인: {count}")
+
+        # 실제 검색 쿼리 수행 (인덱스 파일 손상 여부 확인)
+        test_query = "검색 테스트"
+        results = manager.search(query_text=test_query, k=1)
+        logger.info(f"자가 진단 - 검색 쿼리 테스트 성공 (결과 수: {len(results)})")
+
+        logger.info("자가 진단 최종 성공: ChromaDB 무결성 확인됨.")
         return True
     except Exception as e:
         logger.error(f"자가 진단 실패: DB 연결 또는 데이터 조회 중 오류 발생: {e}")

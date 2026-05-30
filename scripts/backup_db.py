@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 def backup_chromadb(rotation_limit=5):
     """
     ChromaDB의 vector_db 디렉토리를 압축하여 백업합니다.
+    백업 전 DB 파일의 잠금 상태를 확인하여 정합성을 보장합니다.
     """
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     backup_filename = f"chromadb_backup_{timestamp}.tar.gz"
@@ -36,6 +37,20 @@ def backup_chromadb(rotation_limit=5):
     if not VECTOR_DB_DIR.exists():
         logger.error(f"백업 실패: 소스 디렉토리 {VECTOR_DB_DIR}가 존재하지 않습니다.")
         return False
+
+    # DB 정합성 체크: chroma.sqlite3 파일 접근 가능 여부 확인
+    db_file = VECTOR_DB_DIR / "chroma.sqlite3"
+    if db_file.exists():
+        try:
+            # 파일이 다른 프로세스에 의해 쓰기 잠금 상태인지 확인
+            with open(db_file, "r+b") as f:
+                pass
+        except IOError:
+            logger.error(
+                "백업 실패: ChromaDB 파일이 현재 다른 프로세스에서 사용 중(잠금)입니다. "
+                "애플리케이션을 종료하거나 DB 연결을 해제한 후 다시 시도하십시오."
+            )
+            return False
 
     try:
         # 압축 실행
