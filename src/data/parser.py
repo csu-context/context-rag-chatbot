@@ -6,7 +6,7 @@ from typing import Any
 
 import fitz
 
-from src.common.constants import MetadataFields
+from src.common.constants import MetadataFields, SupportedFormats
 from src.utils.file_utils import generate_file_hash
 from src.utils.paths import RAW_DATA_DIR
 
@@ -301,7 +301,7 @@ if __name__ == "__main__":
 
     # data/raw 디렉토리에서 테스트할 첫 번째 파일 자동 검색
     supported_files = []
-    for ext in [".pdf", ".md", ".markdown"]:
+    for ext in SupportedFormats.EXTENSIONS:
         supported_files.extend(list(RAW_DATA_DIR.glob(f"*{ext}")))
 
     if supported_files:

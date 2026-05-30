@@ -6,7 +6,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
-from src.common.constants import MetadataFields
+from src.common.constants import MetadataFields, SupportedFormats
 from src.core.chains import invalidate_source_json_cache
 from src.core.storage import StorageManager
 from src.pipeline.strategies import (
@@ -197,7 +197,7 @@ class IngestionPipeline:
 
     def scan_files(self, supported_exts: list[str] | None = None) -> list[Path]:
         if supported_exts is None:
-            supported_exts = [".pdf", ".md", ".markdown", ".hwp", ".hwpx"]
+            supported_exts = SupportedFormats.EXTENSIONS
         files = []
         for ext in supported_exts:
             # 모든 하위 디렉토리를 포함하여 검색
@@ -231,7 +231,17 @@ class IngestionPipeline:
                 try:
                     data.extend(future.result())
                 except Exception as e:
-                    logger.error(f"병렬 파일 처리 실패: {file_path.name} - {e}")
+                    logger.error(f"병렬 파일 처리 실패: {file_path.name} - {e}. 순차 처리로 재시도합니다.")
+                    try:
+                        res = _process_single_file_helper(
+                            file_path,
+                            file_parser_types,
+                            self.storage_manager.processed_dir,
+                            self.storage_manager.cache_dir,
+                        )
+                        data.extend(res)
+                    except Exception as seq_e:
+                        logger.error(f"순차 재시도 처리 실패: {file_path.name} - {seq_e}")
                 _safe_invoke_progress(progress_callback, completed, total, file_path.name)
         return data, completed
 
