@@ -27,8 +27,8 @@ def generate_file_hash(file_path: Path, parser_type: str = "manual") -> str:
         stats = file_path.stat()
         content_hash = f"fallback_{stats.st_size}_{stats.st_mtime}"
 
-    import unicodedata
+    from src.utils.unicode import normalize_to_nfc
 
-    normalized_path_str = unicodedata.normalize("NFC", str(relative_path))
+    normalized_path_str = normalize_to_nfc(str(relative_path))
     unique_str = f"{normalized_path_str}_{content_hash}_{parser_type}"
     return hashlib.md5(unique_str.encode()).hexdigest()[:12]

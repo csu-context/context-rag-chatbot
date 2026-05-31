@@ -8,14 +8,17 @@ from src.processing.hwp_parser import HwpParser
 class TestHwpParserGetConverter:
     def test_initializes_converter_on_first_call(self):
         """_get_converter 최초 호출 시 MarkItDown 인스턴스가 생성되는지 검증."""
-        parser = HwpParser()
-        assert parser._converter is None
-
+        mock_md_cls = MagicMock()
         mock_md_instance = MagicMock()
-        with patch("src.processing.hwp_parser.HwpParser._get_converter") as mock_get:
-            mock_get.return_value = mock_md_instance
+        mock_md_cls.return_value = mock_md_instance
+
+        with patch.dict("sys.modules", {"markitdown": MagicMock(MarkItDown=mock_md_cls)}):
+            parser = HwpParser()
+            assert parser._converter is None
             result = parser._get_converter()
             assert result == mock_md_instance
+            assert parser._converter == mock_md_instance
+            mock_md_cls.assert_called_once()
 
     def test_converter_cached_after_first_call(self):
         """두 번째 호출 시 동일 인스턴스를 재사용하는지 검증 (Lazy init 캐싱)."""

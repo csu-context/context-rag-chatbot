@@ -1,22 +1,6 @@
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from src.pipeline.strategies import HwpParserStrategy
-
-
-@pytest.fixture()
-def hwp_strategy():
-    return HwpParserStrategy()
-
-
-@pytest.fixture()
-def mock_hwp_parser():
-    """HwpParser.parse 결과를 모킹하는 픽스처."""
-    with patch("src.pipeline.strategies.HwpParser") as mock_cls:
-        mock_instance = MagicMock()
-        mock_cls.return_value = mock_instance
-        yield mock_instance
 
 
 class TestHwpParserStrategyInit:

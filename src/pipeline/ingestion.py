@@ -166,14 +166,10 @@ def _process_single_file_helper(
     processed_dir: Path,
     cache_dir: Path,
 ) -> list[dict[str, Any]]:
-    try:
-        storage_manager = StorageManager(processed_dir, cache_dir)
-        active_strategy = _get_parser_strategy_for_file(file_path, file_parser_types)
-        sections = active_strategy.parse(file_path, storage_manager=storage_manager)
-        return _chunk_sections(sections)
-    except Exception as e:
-        logger.error(f"파일 처리 실패: {file_path.name} - {e!s}")
-        return []
+    storage_manager = StorageManager(processed_dir, cache_dir)
+    active_strategy = _get_parser_strategy_for_file(file_path, file_parser_types)
+    sections = active_strategy.parse(file_path, storage_manager=storage_manager)
+    return _chunk_sections(sections)
 
 
 class IngestionPipeline:
@@ -230,8 +226,9 @@ class IngestionPipeline:
                 completed += 1
                 try:
                     data.extend(future.result())
-                except Exception as e:
-                    logger.error(f"병렬 파일 처리 실패: {file_path.name} - {e}. 순차 처리로 재시도합니다.")
+                except (TypeError, AttributeError) as e:
+                    # 직렬화 관련 예외(PicklingError 포함) 시에만 안전하게 메인 프로세스에서 순차 재시도
+                    logger.warning(f"병렬 직렬화 오류 감지: {file_path.name} ({e}). 순차 재시도를 수행합니다.")
                     try:
                         res = _process_single_file_helper(
                             file_path,
@@ -241,7 +238,10 @@ class IngestionPipeline:
                         )
                         data.extend(res)
                     except Exception as seq_e:
-                        logger.error(f"순차 재시도 처리 실패: {file_path.name} - {seq_e}")
+                        logger.error(f"순차 재시도 처리 실패: {file_path.name} - {seq_e!s}")
+                except Exception as e:
+                    # 워커 OOM(BrokenProcessPool) 또는 개별 파싱 오류 등은 재시도 없이 에러 처리
+                    logger.error(f"병렬 파일 처리 실패 (재시도 안 함): {file_path.name} - {e!s}")
                 _safe_invoke_progress(progress_callback, completed, total, file_path.name)
         return data, completed
 

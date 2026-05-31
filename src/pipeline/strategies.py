@@ -208,8 +208,6 @@ class HwpParserStrategy(ParserStrategy):
             logger.warning(f"HWP 파싱 결과가 너무 짧아 건너뜁니다: {file_path.name}")
             return []
 
-        from src.utils.file_utils import generate_file_hash
-
         parser_type = "hwp"
         base_metadata = {
             MetadataFields.SOURCE_ID: generate_file_hash(file_path, parser_type),
