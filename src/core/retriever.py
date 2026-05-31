@@ -81,7 +81,7 @@ class EnsembleRetriever(BaseRetriever):
         if MetadataFields.CHUNK_ID in doc:
             return str(doc[MetadataFields.CHUNK_ID])
 
-        metadata = doc.get("metadata", {})
+        metadata = doc.get("metadata") or {}
 
         if MetadataFields.CHUNK_ID in metadata:
             return str(metadata[MetadataFields.CHUNK_ID])

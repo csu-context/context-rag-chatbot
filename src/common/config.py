@@ -47,6 +47,7 @@ class Settings(BaseSettings):
 
     # 4. 파이프라인 및 파싱 설정
     PARSER_TYPE: Literal["manual", "docling"] = Field(default="docling")
+    DOC_TYPE: Literal["legal", "general"] = Field(default="legal")
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     # PDF 헤더/푸터 동적 제거 임계치: 전체 페이지 중 이 비율 이상 반복되는 라인을 노이즈로 분류
     PDF_HEADER_FOOTER_THRESHOLD: float = Field(default=0.8)
@@ -54,6 +55,44 @@ class Settings(BaseSettings):
     PDF_NOISE_PATTERNS: list[str] = Field(
         default=[
             r"(?im)^\s*-\s*\d+\s*-\s*$",  # 페이지 번호 (예: "- 1 -", "- 12 -")
+        ]
+    )
+    # 표 컨텍스트 추출 시 페이지 상단에서 제거할 줄 수 (헤더 스킵)
+    PDF_CONTEXT_HEADER_LINES: int = Field(default=1)
+    # 표 컨텍스트로 사용할 최대 줄 수
+    PDF_CONTEXT_WINDOW_LINES: int = Field(default=5)
+    # 숫자+단위 재결합 대상 한국어 단위 (도메인 어휘). 코드 하드코딩 대신 설정으로 외부화.
+    # DOC_TYPE="legal"에서만 적용된다. 환경변수 KOREAN_NUMERIC_UNITS='["..."]' 로 오버라이드 가능.
+    # 주의: 정규식 교차(alternation)는 좌→우 우선이므로 긴 단위를 앞에 둔다 (예: 학년도 < 학년).
+    KOREAN_NUMERIC_UNITS: list[str] = Field(
+        default=[
+            "학년도",
+            "학기",
+            "학년",
+            "학점",
+            "개월",
+            "교시",
+            "차시",
+            "단계",
+            "등급",
+            "호봉",
+            "시간",
+            "개",
+            "월",
+            "일",
+            "년",
+            "번",
+            "회",
+            "차",
+            "주",
+            "명",
+            "원",
+            "점",
+            "편",
+            "권",
+            "절",
+            "관",
+            "목",
         ]
     )
 
