@@ -1,4 +1,5 @@
 import tarfile
+import time
 
 import pytest
 
@@ -55,23 +56,23 @@ def test_rotate_backups_removes_archives_and_hashes(mock_backup_dir):
     assert len(remaining_hashes) == 5
 
 
-def test_backup_fails_when_db_changes_during_archive(mock_vector_db_dir, mock_backup_dir, monkeypatch):
+def test_backup_proceeds_even_on_timeout(mock_vector_db_dir, mock_backup_dir, monkeypatch):
+    # The new logic waits for stability, but proceeds anyway with a warning if it times out.
     from src.utils import backup_manager
 
-    original = backup_manager._ensure_snapshot_unchanged
+    # Make _get_db_mtime always return a new time to simulate constant changes
+    def mock_get_db_mtime(*args, **kwargs):
+        return time.time()
 
-    def mutate_then_check(before, directory):
-        (directory / "chroma.sqlite3").write_text("changed", encoding="utf-8")
-        original(before, directory)
+    monkeypatch.setattr(backup_manager, "_get_db_mtime", mock_get_db_mtime)
 
-    monkeypatch.setattr(backup_manager, "_ensure_snapshot_unchanged", mutate_then_check)
-
+    # It should timeout after 1 second, but still return True because it backs up anyway
     success = backup_chromadb(
         vector_db_dir=mock_vector_db_dir,
         backup_dir=mock_backup_dir,
-        quiet_period_seconds=0,
+        quiet_period_seconds=2,
         stability_timeout_seconds=1,
     )
 
-    assert success is False
-    assert list(mock_backup_dir.glob("chromadb_backup_*.tar.gz")) == []
+    assert success is True
+    assert len(list(mock_backup_dir.glob("chromadb_backup_*.tar.gz"))) == 1

@@ -1,9 +1,9 @@
 import tarfile
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
-from src.utils.backup_manager import diagnose_db, restore_chromadb, write_hash_sidecar
+from src.utils.backup_manager import _generate_hash_sidecar, diagnose_db, restore_chromadb
 
 
 @pytest.fixture
@@ -26,7 +26,7 @@ def _create_backup(backup_dir, source_parent):
     backup_file = backup_dir / "chromadb_backup_test.tar.gz"
     with tarfile.open(backup_file, "w:gz") as tar:
         tar.add(source_db, arcname="vector_db")
-    write_hash_sidecar(backup_file)
+    _generate_hash_sidecar(backup_file)
     return backup_file
 
 
@@ -60,32 +60,39 @@ def test_restore_rejects_hash_mismatch(mock_dirs):
     assert (vector_db_dir / "chroma.sqlite3").read_text(encoding="utf-8") == "old data"
 
 
-def test_diagnose_db_success():
-    mock_manager = MagicMock()
-    mock_manager.get_count.return_value = 10
-    mock_manager.search.return_value = [{"content": "test"}]
+def test_diagnose_db_success(mock_dirs):
+    _, vector_db_dir = mock_dirs
 
-    success = diagnose_db(manager_factory=lambda: mock_manager)
+    # Mock sqlite3.connect to return a mock connection and cursor
+    with patch("sqlite3.connect") as mock_connect:
+        mock_conn = mock_connect.return_value
+        mock_cursor = mock_conn.cursor.return_value
+        mock_cursor.fetchone.return_value = ("ok",)
 
-    assert success is True
-    mock_manager.get_count.assert_called_once()
-    mock_manager.search.assert_called_once_with(query_text="diagnostic query", k=1)
+        success = diagnose_db(vector_db_dir=vector_db_dir)
 
-
-def test_diagnose_db_failure_when_query_returns_no_results():
-    mock_manager = MagicMock()
-    mock_manager.get_count.return_value = 10
-    mock_manager.search.return_value = []
-
-    success = diagnose_db(manager_factory=lambda: mock_manager)
-
-    assert success is False
+        assert success is True
+        mock_connect.assert_called_once()
+        mock_cursor.execute.assert_called_once_with("PRAGMA integrity_check;")
 
 
-def test_diagnose_db_failure_on_exception():
-    mock_manager = MagicMock()
-    mock_manager.get_count.side_effect = Exception("DB Error")
+def test_diagnose_db_failure_integrity_check(mock_dirs):
+    _, vector_db_dir = mock_dirs
 
-    success = diagnose_db(manager_factory=lambda: mock_manager)
+    with patch("sqlite3.connect") as mock_connect:
+        mock_conn = mock_connect.return_value
+        mock_cursor = mock_conn.cursor.return_value
+        mock_cursor.fetchone.return_value = ("corrupt",)
+
+        success = diagnose_db(vector_db_dir=vector_db_dir)
+
+        assert success is False
+
+
+def test_diagnose_db_failure_missing_file(tmp_path):
+    vector_db_dir = tmp_path / "empty_vector_db"
+    vector_db_dir.mkdir()
+
+    success = diagnose_db(vector_db_dir=vector_db_dir)
 
     assert success is False
