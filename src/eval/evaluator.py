@@ -37,8 +37,21 @@ from src.utils.paths import EVAL_DATA_DIR, EVAL_LOGS_DIR, PROCESSED_DATA_DIR
 DEFAULT_GOLDEN_SET_PATH = EVAL_DATA_DIR / "synthetic_dataset_50.json"
 SECTION_LINE = "─" * 49
 
-# 라이브러리 내부의 DeprecationWarning 및 런타임 경고 완전 차단
-warnings.filterwarnings("ignore")
+# 외부 라이브러리(ragas, langchain, huggingface, anthropic 등)의 Deprecation/Future 경고만 모듈 단위로 차단.
+# 전역 차단(filterwarnings("ignore"))은 자체 코드의 경고까지 가리므로 사용하지 않는다.
+_NOISY_MODULES = (
+    "ragas",
+    "langchain",
+    "langchain_huggingface",
+    "huggingface_hub",
+    "transformers",
+    "sentence_transformers",
+    "anthropic",
+    "instructor",
+)
+for _noisy_module in _NOISY_MODULES:
+    warnings.filterwarnings("ignore", category=DeprecationWarning, module=_noisy_module)
+    warnings.filterwarnings("ignore", category=FutureWarning, module=_noisy_module)
 
 # 로깅 설정
 setup_global_logging()
