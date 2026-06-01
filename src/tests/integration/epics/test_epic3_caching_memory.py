@@ -9,7 +9,7 @@ from src.core.reranker import CrossEncoderReranker
 
 
 # ---------------------------------------------------------------------------
-# Issue 29: 채팅 이력 최대 길이 제한 (메모리 누수 방지)
+# 채팅 이력 최대 길이 제한 (메모리 누수 방지)
 # ---------------------------------------------------------------------------
 def test_chat_history_trim_enforces_max_turns():
     """메시지 수가 MAX_CHAT_HISTORY_TURNS * 2 초과 시 오래된 메시지가 잘리는지 검증."""
@@ -47,7 +47,7 @@ def test_chat_history_trim_no_op_when_under_limit():
 
 
 # ---------------------------------------------------------------------------
-# Issue 51: Reranker batch_size 제한으로 VRAM spike 방지
+# Reranker batch_size 제한으로 VRAM spike 방지
 # ---------------------------------------------------------------------------
 def test_reranker_batch_size_passed_to_predict():
     """model.predict 호출 시 settings.RERANKER_BATCH_SIZE가 batch_size로 전달되는지 검증."""
@@ -69,7 +69,7 @@ def test_reranker_batch_size_passed_to_predict():
 
 
 # ---------------------------------------------------------------------------
-# Issue 52: BGE 임베더 fp16 로드 검증
+# BGE 임베더 fp16 로드 검증
 # ---------------------------------------------------------------------------
 def test_embedder_fp16_used_on_cuda():
     """CUDA 환경에서 BGEEmbedder가 torch.float16으로 모델을 로드하는지 검증."""
@@ -106,7 +106,7 @@ def test_embedder_no_fp16_on_cpu():
 
 
 # ---------------------------------------------------------------------------
-# Issue 52: CrossEncoder Reranker fp16 automodel_args 검증
+# CrossEncoder Reranker fp16 automodel_args 검증
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize(
     "device, expect_fp16",

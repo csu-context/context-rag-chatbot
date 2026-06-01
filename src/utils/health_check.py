@@ -11,8 +11,9 @@ except ImportError:
     # 직접 실행 시 src를 찾지 못할 경우를 대비한 로컬 임포트 (paths.py가 같은 폴더에 있으므로 가능)
     from paths import BASE_DIR, RAW_DATA_DIR, REQUIRED_DIRECTORIES, ensure_directories
 from src.common.config import settings
-from src.common.constants import MetadataFields
+from src.common.constants import MetadataFields, SupportedFormats
 from src.utils.file_utils import generate_file_hash
+from src.utils.unicode import normalize_to_nfc
 
 # 로깅 설정
 logger = logging.getLogger(__name__)
@@ -65,7 +66,7 @@ def check_data_integrity():
             logger.error(f"  [MISSING] {path.name} 경로 누락: {path}")
 
     raw_files = []
-    for ext in [".pdf", ".md", ".markdown"]:
+    for ext in SupportedFormats.EXTENSIONS:
         raw_files.extend(list(RAW_DATA_DIR.glob(f"**/*{ext}")))
 
     if raw_files:
@@ -130,14 +131,14 @@ def check_database_status():
 def _get_local_files_info() -> dict[str, dict]:
     """로컬 raw 데이터 파일들의 정보(상대 경로, 해시)를 추출"""
     raw_files = []
-    for ext in [".pdf", ".md", ".markdown"]:
+    for ext in SupportedFormats.EXTENSIONS:
         raw_files.extend(list(RAW_DATA_DIR.glob(f"**/*{ext}")))
 
     local_files_info = {}
     for f in raw_files:
-        rel_path = str(f.relative_to(RAW_DATA_DIR))
+        rel_path = normalize_to_nfc(str(f.relative_to(RAW_DATA_DIR)))
         local_files_info[rel_path] = {
-            "name": f.name,
+            "name": normalize_to_nfc(f.name),
             "hash": generate_file_hash(f, parser_type=settings.PARSER_TYPE),
             "path": f,
         }
@@ -158,6 +159,7 @@ def _get_db_rel_path_map(db_manager, batch_size: int = 1000) -> dict[str, list]:
             # 하위 호환성: relative_path가 없으면 src_name 활용
             if not rel_path:
                 rel_path = meta.get(MetadataFields.SRC_NAME, "UNKNOWN")
+            rel_path = normalize_to_nfc(rel_path)
             if rel_path not in db_rel_path_map:
                 db_rel_path_map[rel_path] = []
             db_rel_path_map[rel_path].append(meta)

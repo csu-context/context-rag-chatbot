@@ -7,7 +7,7 @@ from langchain_core.documents import Document
 from src.common.constants import MetadataFields
 
 # ─────────────────────────────────────────
-# Issue 35 — 프롬프트 인젝션 방어
+# 프롬프트 인젝션 방어
 # ─────────────────────────────────────────
 
 
@@ -75,7 +75,7 @@ class TestPromptInjectionDefense:
 
 
 # ─────────────────────────────────────────
-# Issue 41 & 46 — 프롬프트 언어 및 보안 원칙
+# 프롬프트 언어 및 보안 원칙
 # ─────────────────────────────────────────
 
 
@@ -116,7 +116,7 @@ class TestSystemPromptContent:
 
 
 # ─────────────────────────────────────────
-# Issue 28 — 컨텍스트 토큰 한도 트리밍
+# 컨텍스트 토큰 한도 트리밍
 # ─────────────────────────────────────────
 
 
@@ -169,7 +169,7 @@ class TestContextTrimming:
 
 
 # ─────────────────────────────────────────
-# Issue 50 — Ollama keep_alive 설정
+# Ollama keep_alive 설정
 # ─────────────────────────────────────────
 
 
@@ -209,7 +209,7 @@ class TestOllamaSettings:
 
 
 # ─────────────────────────────────────────
-# Issue 30 — LLM Fallback 체인
+# LLM Fallback 체인
 # ─────────────────────────────────────────
 
 

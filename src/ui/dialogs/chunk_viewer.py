@@ -26,7 +26,7 @@ def show_chunks_viewer_dialog(file_name, db_manager):  # noqa: C901
 
     # 1. 파일명에 해당하는 해시(source_id) 구하기
     orchestrator = PipelineOrchestrator()
-    manifest = orchestrator._load_manifest()
+    manifest = orchestrator.manifest_manager.load_manifest()
     manifest_files = manifest.get("files", {})
 
     target_hash = None

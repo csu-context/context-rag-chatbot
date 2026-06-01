@@ -4,16 +4,16 @@ import pytest
 
 from src.common.constants import MetadataFields
 from src.pipeline.ingestion import (
-    _chunk_sections,
-    _get_parser_strategy_for_file,
     _safe_invoke_progress,
-    _split_table_into_row_chunks,
 )
 from src.pipeline.strategies import (
     DoclingPDFParserStrategy,
+    HwpParserStrategy,
     ManualParserStrategy,
     MarkdownParserStrategy,
+    ParserFactory,
 )
+from src.processing.chunking import _split_table_into_row_chunks, chunk_sections
 
 
 def test_safe_invoke_progress():
@@ -34,25 +34,38 @@ def test_get_parser_strategy_for_file():
     from src.utils.paths import RAW_DATA_DIR
 
     # 1. Non-PDF 파일은 MarkdownParserStrategy 반환
-    strategy = _get_parser_strategy_for_file(RAW_DATA_DIR / "test.md", None)
+    strategy = ParserFactory.create(RAW_DATA_DIR / "test.md", None)
     assert isinstance(strategy, MarkdownParserStrategy)
 
-    strategy = _get_parser_strategy_for_file(RAW_DATA_DIR / "test.txt", None)
+    strategy = ParserFactory.create(RAW_DATA_DIR / "test.txt", None)
     assert isinstance(strategy, MarkdownParserStrategy)
 
-    # 2. PDF 파일 기본값은 ManualParserStrategy 반환
-    strategy = _get_parser_strategy_for_file(RAW_DATA_DIR / "test.pdf", None)
+    # 2. PDF 파일이면서 file_parser_types가 None인 경우 기본 manual
+    strategy = ParserFactory.create(RAW_DATA_DIR / "test.pdf", None)
     assert isinstance(strategy, ManualParserStrategy)
 
-    # 3. manifest 설정에 따른 파서 설정 검증
-    file_parser_types = {"test.pdf": "docling"}
-    with patch("importlib.util.find_spec", return_value=MagicMock()):
-        strategy = _get_parser_strategy_for_file(RAW_DATA_DIR / "test.pdf", file_parser_types)
+    # 3. PDF 파일이면서 file_parser_types에 manual로 지정된 경우
+    strategy = ParserFactory.create(RAW_DATA_DIR / "test.pdf", {"test.pdf": "manual"})
+    assert isinstance(strategy, ManualParserStrategy)
+
+    # 4. PDF 파일이면서 file_parser_types에 docling으로 지정된 경우
+    with patch("importlib.util.find_spec") as mock_find_spec:
+        mock_find_spec.return_value = True  # docling 설치된 것으로 모방
+        strategy = ParserFactory.create(RAW_DATA_DIR / "test_docling.pdf", {"test_docling.pdf": "docling"})
         assert isinstance(strategy, DoclingPDFParserStrategy)
 
-    with patch("importlib.util.find_spec", return_value=None):
-        strategy = _get_parser_strategy_for_file(RAW_DATA_DIR / "test.pdf", file_parser_types)
+    # 5. docling 지정되었으나 docling이 설치되지 않은 경우 fallback to manual
+    with patch("importlib.util.find_spec") as mock_find_spec:
+        mock_find_spec.return_value = None  # docling 미설치 모방
+        strategy = ParserFactory.create(RAW_DATA_DIR / "test_docling.pdf", {"test_docling.pdf": "docling"})
         assert isinstance(strategy, ManualParserStrategy)
+
+    # 6. HWP/HWPX 파일은 HwpParserStrategy 반환 (ParserFactory 라우팅)
+    strategy = ParserFactory.create(RAW_DATA_DIR / "test.hwp", None)
+    assert isinstance(strategy, HwpParserStrategy)
+
+    strategy = ParserFactory.create(RAW_DATA_DIR / "test.hwpx", None)
+    assert isinstance(strategy, HwpParserStrategy)
 
 
 def test_split_table_into_row_chunks():
@@ -78,18 +91,18 @@ def test_split_table_into_row_chunks():
 
 
 def test_chunk_sections_empty():
-    assert _chunk_sections([]) == []
+    assert chunk_sections([]) == []
 
 
 def test_chunk_sections_raw_markdown():
     sections = [
         {
             "is_raw_markdown": True,
-            "content": "# 대제목\n## 소제목\n내용입니다.",
+            "content": "# 테스트\n## 섹션\n본문입니다.",
             "metadata": {"src_name": "test.md"},
         }
     ]
-    chunks = _chunk_sections(sections)
+    chunks = chunk_sections(sections)
     assert len(chunks) > 0
 
 
@@ -97,9 +110,9 @@ def test_chunk_sections_combined():
     sections = [
         {
             "is_combined": True,
-            "content": "대형 텍스트 청크 결합 테스트 내용입니다. " * 50,
+            "content": "이것은 텍스트 청크 분할 테스트 문장입니다. " * 50,
             "metadata": {"src_name": "combined.md"},
         }
     ]
-    chunks = _chunk_sections(sections)
+    chunks = chunk_sections(sections)
     assert len(chunks) > 0

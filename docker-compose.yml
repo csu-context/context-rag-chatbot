@@ -1,19 +1,16 @@
 services:
-  # RAG Chatbot 애플리케이션 서비스
   app:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: rag-chatbot-app
-    # 소스 코드 및 데이터 동기화를 위한 볼륨 설정
     volumes:
       - ./src:/app/src
       - ./data:/app/data
-      - ./models:/app/models
+      - model-cache:/app/models        # named volume — root 소유 충돌 방지
       - ./logs:/app/logs
       - ./.cache:/app/.cache
       - ./.env:/app/.env
-    # .env 파일 로드
     env_file:
       - .env
     environment:
@@ -21,20 +18,45 @@ services:
       - CHROMA_SERVER_PORT=8000
       - OLLAMA_BASE_URL=http://ollama:11434
       - HF_HOME=/app/models
+      # Redis 세션 스토어 (수평 확장 시 활성화)
+      - REDIS_URL=redis://redis:6379/0
     ports:
       - "8501:8501"
-    # ChromaDB 및 Ollama 서버가 준비될 때까지 대기
+    # healthcheck 조건 기반 depends_on
     depends_on:
-      - chromadb
-      - ollama
-    # 호스트 Native Ollama 연동을 위한 호스트 게이트웨이 매핑
+      chromadb:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+      redis:
+        condition: service_healthy
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
       - rag-network
+    # 리소스 한도 / 무중단 배포 rolling update
+    deploy:
+      resources:
+        limits:
+          memory: 4g
+          cpus: "2.0"
+        reservations:
+          memory: 512m
+      update_config:
+        order: start-first       # 새 컨테이너 기동 후 구 컨테이너 종료
+        failure_action: rollback  # 실패 시 자동 롤백
+        monitor: 30s
+      rollback_config:
+        order: stop-first
+    restart: unless-stopped
+    # app 자체 healthcheck
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
-
-  # Ollama 서비스 (로컬 sLLM 엔진)
   ollama:
     image: ollama/ollama:latest
     container_name: rag-chatbot-ollama
@@ -46,17 +68,23 @@ services:
     env_file:
       - .env
     entrypoint: ["/bin/bash", "/root/ollama_init.sh"]
-
     networks:
       - rag-network
+    # Ollama GPU/CPU 리소스 한도
+    deploy:
+      resources:
+        limits:
+          memory: 8g
+        reservations:
+          memory: 2g
+    restart: unless-stopped
 
-
-  # ChromaDB 서버 전용 컨테이너 (벡터 DB 관리)
   chromadb:
     image: chromadb/chroma:latest
     container_name: rag-chatbot-chromadb
     volumes:
-      - ./vector_db:/data
+      # named volume — 컨테이너 재시작 시 데이터 유실 방지
+      - chroma-data:/data
     ports:
       - "8000:8000"
     environment:
@@ -64,7 +92,53 @@ services:
       - PERSIST_DIRECTORY=/data
     networks:
       - rag-network
+    # ChromaDB 리소스 한도
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+          cpus: "1.0"
+    restart: unless-stopped
+    # ChromaDB healthcheck — app 기동 순서 보장
+    # chromadb/chroma 이미지에는 python/curl/wget이 없고(최소 이미지) v1 API도 제거됨 →
+    # bash /dev/tcp로 8000 포트 TCP 연결만 확인한다(서버 바인딩=수신 준비, API 버전 무관).
+    healthcheck:
+      test: ["CMD", "bash", "-c", "cat < /dev/null > /dev/tcp/localhost/8000"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # Redis 세션 스토어 — 수평 확장 시 대화 연속성 유지
+  redis:
+    image: redis:7-alpine
+    container_name: rag-chatbot-redis
+    volumes:
+      - redis-data:/data
+    networks:
+      - rag-network
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
 
 networks:
   rag-network:
     driver: bridge
+
+volumes:
+  # 영속 볼륨 — 인프라 업데이트 시 데이터 유실 방지
+  chroma-data:
+    driver: local
+  # 모델 캐시 named volume — Docker non-root 권한 충돌 방지
+  model-cache:
+    driver: local
+  # Redis 세션 영속화
+  redis-data:
+    driver: local

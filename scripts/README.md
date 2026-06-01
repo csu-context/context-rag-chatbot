@@ -13,10 +13,25 @@
 *   **`benchmark_ttft.py`**: 시맨틱 캐시의 동작 여부 및 응답 대기 시간(TTFT)을 측정합니다.
     *   **용도**: Cache Miss, 반복 질문(Cache Hit), 유사 질문(Cache Hit) 시나리오에 대한 성능(TTFT) 비교 및 검증.
     *   **실행**: `python scripts/benchmark_ttft.py`
+*   **`ablation_overfit.py`**: 동의어 사전을 토글하며 BM25 검색 지표(P@1·MRR·출처 혼동)를 측정합니다.
+    *   **용도**: Phase 1 과적합 제거 결정(학칙→학사규정 매핑 삭제·조대 약어 유지)의 정량 검증. 모델/API 불필요.
+    *   **실행**: `python scripts/ablation_overfit.py`
+*   **`benchmark_parallel_retrieval.py`**: 하이브리드 검색의 BM25 leg와 Vector leg를 직렬·병렬로 각각 실행해 소요 시간과 직렬 대비 단축률(%)을 측정합니다.
+    *   **용도**: 검색 병렬화 이득의 정량 검증. 실데이터 우선, 없으면 합성 데이터로 폴백.
+    *   **실행**: `python scripts/benchmark_parallel_retrieval.py [--mode synthetic] [--repeats 10 --n 5]`
+*   **`demo_reranker_gpu_recovery.py`**: 리랭커의 GPU 장애 → CPU 폴백 → GPU 복구 라이프사이클을 fault injection으로 재현하고 실제 로그로 캡처합니다.
+    *   **용도**: 서킷브레이커 기반 GPU 복구 동작 실증 (실 GPU 없이도 검증 가능).
+    *   **실행**: `python scripts/demo_reranker_gpu_recovery.py [--interval 5]` (미지정 시 운영 기본값 300초)
 
 ### 2. 개발 및 테스트 유틸리티
 *   **`run_pytest.py`**: 프로젝트의 전체 테스트 케이스를 실행하고 결과를 요약합니다.
     *   **용도**: CI/CD 환경 또는 로컬 개발 단계에서의 통합 테스트 실행.
+
+### 3. 배포 및 운영
+*   **`deploy.sh`**: Docker Compose 빌드·기동 후 헬스체크까지 타임아웃을 적용하여 배포 중 무한 대기를 방지하는 배포 스크립트입니다.
+    *   **용도**: 프라이빗 레포 환경에서의 자동 배포 및 컨테이너 정상 기동 확인.
+    *   **실행**: `bash scripts/deploy.sh`
+    *   **환경변수**: `DEPLOY_TIMEOUT`(기본 120초), `HEALTH_RETRIES`(20회), `HEALTH_INTERVAL`(6초), `COMPOSE_FILE`(docker-compose.yml)
 
 ## 🧹 관리 원칙
 1.  **일회성 스크립트**: 특정 이슈 해결을 위한 임시 디버깅 스크립트는 작업 완료 후 삭제를 원칙으로 합니다.
