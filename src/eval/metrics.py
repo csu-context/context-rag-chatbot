@@ -1,5 +1,5 @@
 from langchain_core.prompts import PromptTemplate
-from ragas.metrics.collections import (
+from ragas.metrics import (
     answer_relevancy,
     context_precision,
     context_recall,
@@ -35,41 +35,3 @@ PARSER_BENCHMARK_PROMPT = PromptTemplate(
 3. 가독성 및 노이즈 (불필요한 줄바꿈이나 깨진 문자가 없는가?)
 """,
 )
-
-
-# ── 표 데이터 보존율 지표 ──────────────────────────────────────────────────
-
-
-def calculate_table_preservation_rate(ground_truth_chunks: list[str], retrieved_chunks: list[str]) -> float:
-    """표(IS_TABLE) 청크가 검색 결과에 얼마나 보존되었는지 측정합니다.
-
-    ground_truth_chunks: 정답 표 청크 텍스트 목록
-    retrieved_chunks: 검색/리랭킹 후 반환된 청크 텍스트 목록
-    반환값: 0.0~1.0 (1.0 = 모든 표 청크 포함)
-    """
-    if not ground_truth_chunks:
-        return 1.0
-
-    retrieved_set = set(c.strip() for c in retrieved_chunks)
-    preserved = sum(1 for chunk in ground_truth_chunks if chunk.strip() in retrieved_set)
-    return preserved / len(ground_truth_chunks)
-
-
-def evaluate_table_preservation(
-    ground_truth_table_chunks: list[list[str]],
-    retrieved_chunk_lists: list[list[str]],
-) -> dict[str, float]:
-    """여러 쿼리에 대한 표 보존율 평균을 계산합니다."""
-    if not ground_truth_table_chunks:
-        return {"table_preservation_rate": 1.0, "count": 0}
-
-    rates = [
-        calculate_table_preservation_rate(gt, ret)
-        for gt, ret in zip(ground_truth_table_chunks, retrieved_chunk_lists, strict=False)
-    ]
-    return {
-        "table_preservation_rate": sum(rates) / len(rates),
-        "count": len(rates),
-        "min": min(rates),
-        "max": max(rates),
-    }

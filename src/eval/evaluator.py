@@ -16,7 +16,7 @@ from ragas.evaluation import EvaluationResult, evaluate  # type: ignore
 from ragas.llms import LangchainLLMWrapper
 
 # Metrics 임포트 (Pylance 경고 차단)
-from ragas.metrics.collections import (  # type: ignore
+from ragas.metrics import (  # type: ignore
     AnswerRelevancy,
     ContextPrecision,
     ContextRecall,
@@ -35,19 +35,8 @@ DEFAULT_MAX_WORKERS = 2
 DEFAULT_EVAL_TIMEOUT = 180
 DEFAULT_GOLDEN_SET_PATH = EVAL_DATA_DIR / "synthetic_dataset_50.json"
 
-# 외부 라이브러리(ragas, langchain, huggingface 등)의 Deprecation/Future 경고만 모듈 단위로 차단.
-# 전역 차단(filterwarnings("ignore"))은 자체 코드의 경고까지 가리므로 사용하지 않는다.
-_NOISY_MODULES = (
-    "ragas",
-    "langchain",
-    "langchain_huggingface",
-    "huggingface_hub",
-    "transformers",
-    "sentence_transformers",
-)
-for _noisy_module in _NOISY_MODULES:
-    warnings.filterwarnings("ignore", category=DeprecationWarning, module=_noisy_module)
-    warnings.filterwarnings("ignore", category=FutureWarning, module=_noisy_module)
+# 라이브러리 내부의 DeprecationWarning 및 런타임 경고 완전 차단
+warnings.filterwarnings("ignore")
 
 # 로깅 설정
 setup_global_logging()

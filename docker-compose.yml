@@ -34,7 +34,7 @@ services:
       - "host.docker.internal:host-gateway"
     networks:
       - rag-network
-    # Issue 30/43: 로그 로테이션 + 레이블 기반 중앙 수집 (Loki/Fluentd 연동 가능)
+    # 로그 로테이션 + 레이블 기반 중앙 수집 (Loki/Fluentd 연동 가능)
     logging:
       driver: "json-file"
       options:
