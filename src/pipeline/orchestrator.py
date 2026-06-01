@@ -104,6 +104,8 @@ class PipelineOrchestrator:
                         len(files_to_process),
                         "임베딩 변환 및 벡터 적재 중 (시간이 소요될 수 있습니다)",
                     )
+                except InterruptedError:
+                    raise
                 except Exception as cb_e:
                     logger.error(f"진행 상황 콜백 호출 실패: {cb_e}")
 

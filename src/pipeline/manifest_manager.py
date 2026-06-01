@@ -1,5 +1,6 @@
 import json
 import logging
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,8 @@ logger = logging.getLogger(__name__)
 
 class ManifestManager:
     """manifest.json을 통한 파일 상태 관리 및 변경점(Delta) 계산을 담당합니다."""
+
+    _manifest_lock = threading.Lock()  # manifest 파일 race condition 방지
 
     def __init__(self, parser_type: str):
         self.parser_type = parser_type
@@ -30,7 +33,7 @@ class ManifestManager:
             logger.warning("Manifest 파일이 없어 전체 재색인을 수행합니다.")
             return default_manifest
         try:
-            with open(self.manifest_path, encoding="utf-8") as f:
+            with ManifestManager._manifest_lock, open(self.manifest_path, encoding="utf-8") as f:
                 data = json.load(f)
 
             # 하위 호환성 처리 (1.0 규격)
@@ -45,18 +48,27 @@ class ManifestManager:
             return data
         except (json.JSONDecodeError, FileNotFoundError):
             logger.warning("Manifest 파일이 손상되었거나 찾을 수 없어 전체 재색인을 수행합니다.")
-            if self.manifest_path.exists():
-                self.manifest_path.unlink()
+            with ManifestManager._manifest_lock:
+                if self.manifest_path.exists():
+                    self.manifest_path.unlink()
             return default_manifest
 
     def save_manifest(self, manifest: dict[str, Any]) -> None:
-        """처리 완료 후 새로운 manifest 상태를 저장합니다."""
+        """처리 완료 후 새로운 manifest 상태를 저장합니다.
+
+        atomic write(임시 파일 → rename)로 race condition 방지.
+        """
+        tmp_path = self.manifest_path.with_suffix(".tmp")
         try:
-            with open(self.manifest_path, "w", encoding="utf-8") as f:
-                json.dump(manifest, f, ensure_ascii=False, indent=2)
+            with ManifestManager._manifest_lock:
+                with open(tmp_path, "w", encoding="utf-8") as f:
+                    json.dump(manifest, f, ensure_ascii=False, indent=2)
+                tmp_path.replace(self.manifest_path)  # atomic on POSIX/Windows
             logger.info(f"Manifest 업데이트 완료: {self.manifest_path}")
         except Exception as e:
             logger.error(f"Manifest 저장 실패: {e}")
+            if tmp_path.exists():
+                tmp_path.unlink(missing_ok=True)
 
     def calculate_delta(
         self,
