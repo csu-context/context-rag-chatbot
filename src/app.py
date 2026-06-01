@@ -358,12 +358,12 @@ for msg_idx, msg in enumerate(st.session_state.messages):
                 if is_low_confidence:
                     st.caption("⚠️ 신뢰도가 낮아 환각 발생 가능성이 있습니다. 원문을 직접 확인하세요.")
 
-        # AI 답변 클립보드 복사 버튼 (출처 밑으로 위치 이동 & 아이콘 적용)
+        # AI 답변 클립보드 복사 버튼
         if msg["role"] == "assistant":
             st_copy_to_clipboard(
                 msg["content"],
-                before_copy_label=":material/content_copy:",
-                after_copy_label=":material/check:",
+                before_copy_label="❐",
+                after_copy_label="✓",
                 key=f"copy_btn_{msg_idx}",
             )
 
