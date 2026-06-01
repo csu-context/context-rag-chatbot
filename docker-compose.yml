@@ -100,8 +100,10 @@ services:
           cpus: "1.0"
     restart: unless-stopped
     # Issue 16: ChromaDB healthcheck — app 기동 순서 보장
+    # chromadb/chroma 이미지에는 python/curl/wget이 없고(최소 이미지) v1 API도 제거됨 →
+    # bash /dev/tcp로 8000 포트 TCP 연결만 확인한다(서버 바인딩=수신 준비, API 버전 무관).
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/heartbeat')"]
+      test: ["CMD", "bash", "-c", "cat < /dev/null > /dev/tcp/localhost/8000"]
       interval: 10s
       timeout: 5s
       retries: 5
