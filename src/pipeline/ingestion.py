@@ -242,14 +242,14 @@ class IngestionPipeline:
                 except Exception as e:
                     # 워커 OOM(BrokenProcessPool) 감지 시 즉시 중단하여 메인 프로세스 보호
                     from concurrent.futures.process import BrokenProcessPool
+
                     if isinstance(e, BrokenProcessPool):
                         logger.critical(
                             f"프로세스 풀이 파괴되었습니다(OOM 의심): {file_path.name} - {e!s}. "
                             "메인 프로세스 보호를 위해 즉시 중단합니다."
                         )
                         raise RuntimeError(
-                            f"병렬 파싱 중 워커 OOM 발생으로 프로세스 풀이 손상되었습니다. "
-                            f"파일: {file_path.name}"
+                            f"병렬 파싱 중 워커 OOM 발생으로 프로세스 풀이 손상되었습니다. 파일: {file_path.name}"
                         ) from e
                     # 개별 파싱 오류 등은 재시도 없이 에러 처리 후 계속 진행
                     logger.error(f"병렬 파일 처리 실패 (재시도 안 함): {file_path.name} - {e!s}")
