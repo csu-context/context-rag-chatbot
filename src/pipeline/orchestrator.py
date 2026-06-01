@@ -1,5 +1,4 @@
 import importlib.util
-import json
 import logging
 import threading
 from pathlib import Path
@@ -9,11 +8,12 @@ from src.common.config import settings
 from src.core.cache import SemanticCache
 from src.core.storage import StorageManager
 from src.pipeline.ingestion import IngestionPipeline
+from src.pipeline.manifest_manager import ManifestManager
 from src.pipeline.strategies import DoclingPDFParserStrategy, ManualParserStrategy, ParserStrategy
 from src.utils.file_utils import generate_file_hash
 from src.utils.logger import TracingLogger
 from src.utils.paths import CACHE_DIR, PROCESSED_DATA_DIR, RAW_DATA_DIR
-from src.utils.unicode import normalize_path_to_nfc, normalize_to_nfc
+from src.utils.unicode import normalize_path_to_nfc
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,6 @@ class PipelineOrchestrator:
         with cls._lock:
             if cls._instance is None:
                 cls._instance = super().__new__(cls)
-                # 초기화는 한 번만 수행
                 cls._instance._initialized = False
             return cls._instance
 
@@ -41,53 +40,13 @@ class PipelineOrchestrator:
             logger.info("PipelineOrchestrator 초기화...")
             self.parser_type = settings.PARSER_TYPE.lower()
             self.strategy = self._get_parser_strategy()
-            # StorageManager 인스턴스 생성 및 IngestionPipeline에 전달
             self.storage_manager = StorageManager(PROCESSED_DATA_DIR, CACHE_DIR)
             self.ingestion_pipeline = IngestionPipeline(self.strategy, storage_manager=self.storage_manager)
+            self.manifest_manager = ManifestManager(self.parser_type)
             self.tracing_logger = TracingLogger()
-            self.manifest_path = PROCESSED_DATA_DIR / "manifest.json"
             self.cache = SemanticCache()
             self._initialized = True
             logger.info("PipelineOrchestrator 초기화 완료.")
-
-    def _make_manifest(self, files: dict[str, Any]) -> dict[str, Any]:
-        return {"version": "2.0", "global_parser_type": self.parser_type, "files": files}
-
-    def _load_manifest(self) -> dict[str, Any]:
-        """manifest.json 파일을 로드합니다. 파일이 없거나 손상된 경우, 빈 2.0 매니페스트를 반환합니다."""
-        default_manifest = self._make_manifest({})
-        if not self.manifest_path.exists():
-            logger.info(
-                "Manifest 파일이 존재하지 않습니다. 첫 실행이거나 초기화 후 상태입니다."
-            )  # return default_manifest
-        try:
-            with open(self.manifest_path, encoding="utf-8") as f:
-                data = json.load(f)
-
-            # 하위 호환성 처리 (1.0 규격인 경우 자동 변환)
-            if not isinstance(data, dict) or "version" not in data:
-                logger.info("이전 규격(1.0)의 Manifest가 감지되어 2.0 규격으로 자동 전환합니다.")
-                files_converted = {}
-                if isinstance(data, dict):
-                    for k, v in data.items():
-                        if isinstance(v, str):
-                            files_converted[k] = {"hash": v, "parser_type": self.parser_type}
-                data = self._make_manifest(files_converted)
-            return data
-        except (json.JSONDecodeError, FileNotFoundError):
-            logger.warning("Manifest 파일이 손상되었거나 찾을 수 없어 전체 재색인을 수행합니다.")
-            if self.manifest_path.exists():
-                self.manifest_path.unlink()
-            return default_manifest
-
-    def _save_manifest(self, manifest: dict[str, Any]) -> None:
-        """처리 완료 후 새로운 manifest 상태를 저장합니다."""
-        try:
-            with open(self.manifest_path, "w", encoding="utf-8") as f:
-                json.dump(manifest, f, ensure_ascii=False, indent=2)
-            logger.info(f"Manifest 업데이트 완료: {self.manifest_path}")
-        except Exception as e:
-            logger.error(f"Manifest 저장 실패: {e}")
 
     def _get_parser_strategy(self) -> ParserStrategy:
         """설정된 파서 타입에 따라 전략을 반환하며 가용성을 검증합니다."""
@@ -95,51 +54,12 @@ class PipelineOrchestrator:
             if importlib.util.find_spec("docling") is not None:
                 return DoclingPDFParserStrategy()
             logger.error(
-                "'docling' 파서용 'docling' 라이브러리가 없습니다. "
-                "'manual'로 강제 전환합니다.\n"
+                "'docling' 파서용 'docling' 라이브러리가 없습니다. 'manual'로 강제 전환합니다.\n"
                 "설치: pip install docling"
             )
             return ManualParserStrategy()
 
         return ManualParserStrategy()
-
-    def _calculate_delta(
-        self, all_files: list[Path], old_manifest: dict[str, Any]
-    ) -> tuple[list[Path], list[str], dict[str, Any]]:
-        """현재 파일 상태와 이전 상태를 비교하여 변경 사항(Delta)을 계산합니다."""
-        old_files = old_manifest.get("files", {})
-        old_files_nfc = {normalize_to_nfc(k): v for k, v in old_files.items()}
-
-        new_files = {}
-        for f in all_files:
-            rel_path = normalize_path_to_nfc(f.relative_to(RAW_DATA_DIR))
-            old_info = old_files.get(rel_path) or old_files_nfc.get(rel_path, {})
-            file_parser_type = old_info.get("parser_type", self.parser_type)
-            h = generate_file_hash(f, file_parser_type)
-            new_files[rel_path] = {"hash": h, "parser_type": file_parser_type}
-
-        new_manifest = self._make_manifest(new_files)
-
-        files_to_process = []
-        for rel_path, info in new_files.items():
-            old_info = old_files.get(rel_path)
-            # [DataOps] 기존 기록이 없거나, 해시가 다르거나,
-            # 혹은 해시에 매핑된 물리 가공 JSON 파일이 유실되었거나,
-            # 또는 DB(ChromaDB) 내 청크가 전혀 검색되지 않는 경우(유실) 재처리 대상에 포함합니다 (자가 치유).
-            json_path = self.storage_manager.get_processed_path(info["hash"])
-            db_count = self.ingestion_pipeline.db_manager.get_source_count(Path(rel_path).name)
-            if not old_info or old_info.get("hash") != info["hash"] or not json_path.exists() or db_count == 0:
-                files_to_process.append(RAW_DATA_DIR / rel_path)
-
-        source_ids_to_delete = []
-        for rel_path, old_info in old_files.items():
-            new_info = new_files.get(rel_path)
-            if not new_info or old_info.get("hash") != new_info["hash"]:
-                old_hash = old_info.get("hash")
-                if old_hash:
-                    source_ids_to_delete.append(old_hash)
-
-        return files_to_process, source_ids_to_delete, new_manifest
 
     def _cleanup_db(
         self, session: Any, source_ids_to_delete: list[str], relative_paths_to_delete: list[str] | None
@@ -147,7 +67,7 @@ class PipelineOrchestrator:
         with session.trace_step("db_cleanup"):
             filenames_to_delete = []
             try:
-                old_files = self._load_manifest().get("files", {})
+                old_files = self.manifest_manager.load_manifest().get("files", {})
                 filenames_to_delete = [
                     Path(rel).name for rel, info in old_files.items() if info.get("hash") in source_ids_to_delete
                 ]
@@ -184,6 +104,8 @@ class PipelineOrchestrator:
                         len(files_to_process),
                         "임베딩 변환 및 벡터 적재 중 (시간이 소요될 수 있습니다)",
                     )
+                except InterruptedError:
+                    raise
                 except Exception as cb_e:
                     logger.error(f"진행 상황 콜백 호출 실패: {cb_e}")
 
@@ -209,7 +131,6 @@ class PipelineOrchestrator:
         progress_callback=None,
         new_manifest: dict[str, Any] | None = None,
     ):
-        """도출된 변경 사항(DB 삭제, 파싱, 업서트, 인덱스 갱신)을 순차적으로 수행합니다."""
         has_changes = bool(files_to_process or source_ids_to_delete or relative_paths_to_delete)
 
         if has_changes:
@@ -227,7 +148,6 @@ class PipelineOrchestrator:
             self._rebuild_bm25(session)
 
     def _reset_all_data(self) -> None:
-        """강제 초기화 시 기존 데이터를 물리적으로 모두 정리 (vector DB 및 파싱 캐시 등)"""
         logger.info("ChromaDB 컬렉션 및 가공 파일 물리적 초기화 시작...")
         self.ingestion_pipeline.db_manager.reset_collection()
 
@@ -243,23 +163,7 @@ class PipelineOrchestrator:
             except Exception as e:
                 logger.error(f"캐시 파일 삭제 실패 {f}: {e}")
 
-    def _find_relative_path(self, file_name: str, old_files: dict[str, Any]) -> str | None:
-        """주어진 파일 이름에 해당하는 상대 경로를 찾습니다."""
-        normalized_file_name = normalize_to_nfc(file_name)
-
-        for rel_path in old_files:
-            normalized_rel_path = normalize_to_nfc(rel_path)
-            if Path(normalized_rel_path).name == normalized_file_name or normalized_rel_path == normalized_file_name:
-                return rel_path
-
-        for f in self.ingestion_pipeline.scan_files():
-            if normalize_to_nfc(f.name) == normalized_file_name:
-                return normalize_path_to_nfc(f.relative_to(RAW_DATA_DIR))
-
-        return None
-
     def process_single_file(self, file_path: Path, force: bool = False) -> bool:
-        """특정 단일 파일에 대해 즉시 색인 업데이트를 수행합니다. (Atomic Update)"""
         if not file_path.exists():
             logger.error(f"파일을 찾을 수 없습니다: {file_path}")
             return False
@@ -273,11 +177,8 @@ class PipelineOrchestrator:
         logger.info(f"단일 파일 개별 동기화 시작: {relative_path}")
 
         with self.tracing_logger.start_session(type="single_file_sync", file=relative_path) as session:
-            # 1. 기존 데이터 삭제 대상 식별 (동일 상대 경로의 모든 데이터)
-            # Delete-before-Insert 원칙에 따라 이전 파서 타입 데이터까지 포함하여 삭제
             relative_paths_to_delete = [relative_path]
 
-            # 2. 변경 사항 처리 실행
             self._process_changes(
                 files_to_process=[file_path],
                 source_ids_to_delete=[],
@@ -285,13 +186,12 @@ class PipelineOrchestrator:
                 relative_paths_to_delete=relative_paths_to_delete,
             )
 
-            # 3. 매니페스트 업데이트
-            manifest = self._load_manifest()
+            manifest = self.manifest_manager.load_manifest()
             manifest["files"][relative_path] = {
                 "hash": generate_file_hash(file_path, self.parser_type),
                 "parser_type": self.parser_type,
             }
-            self._save_manifest(manifest)
+            self.manifest_manager.save_manifest(manifest)
 
         logger.info(f"단일 파일 개별 동기화 완료: {relative_path}")
         return True
@@ -302,13 +202,13 @@ class PipelineOrchestrator:
             if self.parser_type != parser_type_lower:
                 logger.info(f"파서 타입 변경 감지: {self.parser_type} -> {parser_type_lower}")
                 self.parser_type = parser_type_lower
+                self.manifest_manager.update_parser_type(self.parser_type)
                 self.strategy = self._get_parser_strategy()
                 self.ingestion_pipeline.strategy = self.strategy
 
     def _prepare_sync_plan(
         self, force: bool, all_files: list[Path], old_manifest: dict[str, Any]
     ) -> tuple[list[Path], list[str], list[str] | None, dict[str, Any]]:
-        """force/delta 모드에 따라 처리 목록과 삭제 목록을 계산합니다."""
         if force:
             logger.info("강제 동기화가 요청되었습니다. 모든 기존 데이터를 완전히 삭제하고 전체 재색인을 수행합니다.")
             self._reset_all_data()
@@ -319,9 +219,11 @@ class PipelineOrchestrator:
                 }
                 for f in all_files
             }
-            return all_files, [], None, self._make_manifest(new_files)
+            return all_files, [], None, self.manifest_manager.make_manifest(new_files)
 
-        files_to_process, source_ids_to_delete, new_manifest = self._calculate_delta(all_files, old_manifest)
+        files_to_process, source_ids_to_delete, new_manifest = self.manifest_manager.calculate_delta(
+            all_files, old_manifest, self.storage_manager, self.ingestion_pipeline.db_manager
+        )
         files_to_process_relative = [str(f.relative_to(RAW_DATA_DIR)) for f in files_to_process]
         old_files_keys = old_manifest.get("files", {}).keys()
         new_files_keys = new_manifest.get("files", {}).keys()
@@ -337,7 +239,6 @@ class PipelineOrchestrator:
         new_manifest: dict[str, Any],
         old_manifest: dict[str, Any],
     ) -> tuple[list[Path], list[str]]:
-        """target_files 부분 동기화 필터를 적용합니다."""
         target_paths = {p.resolve() for p in target_files}
         target_names = {p.name for p in target_files}
         old_files = old_manifest.get("files", {})
@@ -366,14 +267,13 @@ class PipelineOrchestrator:
         progress_callback=None,
         target_files: list[Path] | None = None,
     ):
-        """전체 데이터 구축 파이프라인 실행"""
         self._update_parser_if_changed(parser_type)
         logger.info(f"데이터 구축 파이프라인을 시작합니다. (전략: {self.parser_type}, 강제 재색인: {force})")
 
         with self.tracing_logger.start_session(type="ingestion", parser_type=self.parser_type) as session:
             with session.trace_step("scan_and_check_updates") as step:
                 all_files = self.ingestion_pipeline.scan_files()
-                old_manifest = self._load_manifest()
+                old_manifest = self.manifest_manager.load_manifest()
 
                 if not all_files and not old_manifest:
                     logger.warning("처리할 파일이 없고 이전 기록도 없습니다.")
@@ -401,7 +301,7 @@ class PipelineOrchestrator:
                     logger.info("변경 사항이 없으므로 데이터 구축 작업을 건너뜁니다.")
                     session.data["status"] = "no_changes"
                     if force:
-                        self._save_manifest(new_manifest)
+                        self.manifest_manager.save_manifest(new_manifest)
                     return
 
             self._process_changes(
@@ -414,17 +314,18 @@ class PipelineOrchestrator:
             )
 
             with session.trace_step("update_manifest"):
-                self._save_manifest(new_manifest)
+                self.manifest_manager.save_manifest(new_manifest)
 
         logger.info("데이터 구축 파이프라인 작업이 완료되었습니다.")
 
     def update_file_parser(self, file_name: str, new_parser_type: str, progress_callback=None) -> None:
-        """특정 파일의 동기화 파서 타입을 변경하고, 해당 파일에 한해 즉각 재색인을 실행합니다."""
         new_parser_lower = new_parser_type.lower()
-        old_manifest = self._load_manifest()
+        old_manifest = self.manifest_manager.load_manifest()
         old_files = old_manifest.get("files", {})
 
-        target_rel_path = self._find_relative_path(file_name, old_files)
+        target_rel_path = self.manifest_manager.find_relative_path(
+            file_name, old_files, self.ingestion_pipeline.scan_files()
+        )
 
         if not target_rel_path:
             logger.warning(f"파서 변경 대상 파일을 찾을 수 없습니다: {file_name}")
@@ -442,22 +343,22 @@ class PipelineOrchestrator:
         old_files[target_rel_path]["parser_type"] = new_parser_lower
 
         old_manifest["files"] = old_files
-        self._save_manifest(old_manifest)
+        self.manifest_manager.save_manifest(old_manifest)
 
-        # target_files를 전달하여 해당 파일만 동기화하도록 강제
         target_path = RAW_DATA_DIR / target_rel_path
         self.run_ingestion(force=False, progress_callback=progress_callback, target_files=[target_path])
 
     def update_multiple_file_parsers(self, file_parser_map: dict[str, str], progress_callback=None) -> None:
-        """복수 파일의 동기화 파서 타입을 한꺼번에 변경하고, 대상 파일들을 즉각 재색인합니다."""
-        old_manifest = self._load_manifest()
+        old_manifest = self.manifest_manager.load_manifest()
         old_files = old_manifest.get("files", {})
 
         updated_count = 0
         hashes_to_delete = []
         for file_name, new_parser in file_parser_map.items():
             new_parser_lower = new_parser.lower()
-            target_rel_path = self._find_relative_path(file_name, old_files)
+            target_rel_path = self.manifest_manager.find_relative_path(
+                file_name, old_files, self.ingestion_pipeline.scan_files()
+            )
 
             if target_rel_path:
                 logger.info(f"파일 {target_rel_path}의 파서를 {new_parser_lower}로 변경 등록합니다.")
@@ -479,12 +380,13 @@ class PipelineOrchestrator:
 
         if updated_count > 0:
             old_manifest["files"] = old_files
-            self._save_manifest(old_manifest)
+            self.manifest_manager.save_manifest(old_manifest)
 
-            # 변경된 파일들에 대해서만 일괄 부분 동기화 가동
             target_paths = []
             for file_name in file_parser_map:
-                target_rel_path = self._find_relative_path(file_name, old_files)
+                target_rel_path = self.manifest_manager.find_relative_path(
+                    file_name, old_files, self.ingestion_pipeline.scan_files()
+                )
                 if target_rel_path:
                     target_paths.append(RAW_DATA_DIR / target_rel_path)
 
