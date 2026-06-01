@@ -83,7 +83,6 @@ class TestAdminDialog:
             patch("src.ui.dialogs.admin.run_full_diagnostics") as mock_diag,
             patch("src.ui.dialogs.admin.repair_integrity"),
             patch("src.ui.dialogs.admin.SyncController"),
-            patch("src.utils.backup.create_backup") as mock_backup,
         ):
             mock_orch.return_value._load_manifest.return_value = {
                 "files": {"test.pdf": {"hash": "1", "parser_type": "docling"}}
@@ -106,7 +105,6 @@ class TestAdminDialog:
             mock_st.file_uploader.return_value = None
 
             mock_diag.return_value = (True, {"db": {"anomalies": {"ghost_chunks": ["file"]}}})
-            mock_backup.return_value = Path("backup.zip")
 
             # Set state for diagnostic report
             mock_st.session_state.health_report = {"db": {"anomalies": {"ghost_chunks": ["file"]}}}
@@ -145,11 +143,6 @@ class TestAdminDialog:
 
             # Setup parser type
             mock_st.radio.return_value = "docling"
-
-            # Setup backup selectbox
-            mock_backup_path = MagicMock()
-            mock_backup_path.name = "backup.json"
-            mock_st.selectbox.return_value = mock_backup_path
 
             # Setup auto_sync True
             mock_st.checkbox.return_value = True

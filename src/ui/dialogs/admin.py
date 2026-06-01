@@ -418,40 +418,6 @@ def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
 
     st.divider()
 
-    # Issue 28: ChromaDB 자동 백업 및 복원
-    st.subheader("ChromaDB 백업 및 시스템 관리")
-    from src.utils.backup import create_backup, list_backups, restore_backup
-
-    col_bk1, col_bk2 = st.columns(2)
-
-    with col_bk1:
-        st.markdown("**백업 생성**")
-        if st.button("현재 DB 상태 백업하기", use_container_width=True):
-            with st.spinner("백업 중..."):
-                path = create_backup()
-            if path:
-                st.success(f"백업 완료: {path.name}")
-            else:
-                st.error("백업 실패. 로그를 확인하세요.")
-
-    with col_bk2:
-        st.markdown("**백업 복구**")
-        backups = list_backups()
-        if backups:
-            selected_backup = st.selectbox(
-                "복구할 백업 파일", options=backups, format_func=lambda x: x.name, label_visibility="collapsed"
-            )
-            if st.button("선택 파일로 복구", use_container_width=True, type="primary"):
-                st.warning("주의: 원본 파일(PDF) 목록과 DB 상태가 불일치할 수 있습니다.")
-                with st.spinner(f"{selected_backup.name} 복구 중..."):
-                    ok = restore_backup(selected_backup)
-                if ok:
-                    st.success("복구 성공! (앱 재시작 권장)")
-                else:
-                    st.error("복구 실패. 서버 로그 확인 요망.")
-        else:
-            st.info("저장된 백업 파일이 없습니다.")
-
     st.divider()
     if st.button("관리 시스템 종료 (닫기)", use_container_width=True):
         st.session_state.admin_active = False
