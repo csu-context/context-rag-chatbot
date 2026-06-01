@@ -217,6 +217,11 @@ __marimo__/
 /data/eval/*
 !/data/eval/*.example
 
+# 도메인 종속 설정 — 배포 환경별로 주입하므로 추적 제외(템플릿 *.example.json은 유지).
+# 부재 시 코드 기본값으로 폴백: synonyms→빈 사전, numeric_units→범용 단위.
+/data/config/synonyms.json
+/data/config/numeric_units.json
+
 # 벡터 데이터베이스 (ChromaDB 등 로컬 DB 파일)
 database/
 chroma/

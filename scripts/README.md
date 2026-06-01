@@ -13,6 +13,9 @@
 *   **`benchmark_ttft.py`**: 시맨틱 캐시의 동작 여부 및 응답 대기 시간(TTFT)을 측정합니다.
     *   **용도**: Cache Miss, 반복 질문(Cache Hit), 유사 질문(Cache Hit) 시나리오에 대한 성능(TTFT) 비교 및 검증.
     *   **실행**: `python scripts/benchmark_ttft.py`
+*   **`ablation_overfit.py`**: 동의어 사전을 토글하며 BM25 검색 지표(P@1·MRR·출처 혼동)를 측정합니다.
+    *   **용도**: Phase 1 과적합 제거 결정(학칙→학사규정 매핑 삭제·조대 약어 유지)의 정량 검증. 모델/API 불필요.
+    *   **실행**: `python scripts/ablation_overfit.py`
 
 ### 2. 개발 및 테스트 유틸리티
 *   **`run_pytest.py`**: 프로젝트의 전체 테스트 케이스를 실행하고 결과를 요약합니다.

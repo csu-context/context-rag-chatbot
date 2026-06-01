@@ -5,6 +5,7 @@ import time
 import streamlit as st
 
 from src.common.config import settings
+from src.common.constants import SupportedFormats
 from src.controllers.sync_controller import SyncController
 from src.pipeline import PipelineOrchestrator
 from src.utils.health_check import repair_integrity, run_full_diagnostics
@@ -86,6 +87,7 @@ def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
             "적용 파서 선택",
             options=["manual", "docling"],
             index=default_parser_idx,
+            format_func=lambda x: "기본" if x == "manual" else "표 인식 강화",
             horizontal=True,
             help="동기화 파이프라인에서 사용할 PDF 파서 전략을 지정합니다.",
         )
@@ -98,9 +100,9 @@ def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
     with col1:
         st.subheader("신규 문서 업로드")
         uploaded_files = st.file_uploader(
-            "파일 선택 (PDF, MD)",
+            "파일 선택 (PDF, MD, HWP, HWPX)",
             accept_multiple_files=True,
-            type=["pdf", "md", "markdown"],
+            type=[ext.lstrip(".") for ext in SupportedFormats.EXTENSIONS],
             key="dialog_uploader",
             label_visibility="collapsed",
         )
@@ -179,14 +181,14 @@ def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
 
     current_files = []
     # 하위 디렉토리까지 포함하여 재귀적으로 스캔
-    for ext in ["*.pdf", "*.md", "*.markdown"]:
-        current_files.extend(list(RAW_DATA_DIR.glob(f"**/{ext}")))
+    for ext in SupportedFormats.EXTENSIONS:
+        current_files.extend(list(RAW_DATA_DIR.glob(f"**/*{ext}")))
 
     if not current_files:
         st.info("현재 등록된 문서가 없습니다.")
     else:
         orchestrator = PipelineOrchestrator()
-        manifest = orchestrator._load_manifest()
+        manifest = orchestrator.manifest_manager.load_manifest()
         manifest_files = manifest.get("files", {})
 
         h_col1, h_col2, h_col3, h_col4, h_col5, h_col6, h_col7, h_col8 = st.columns(
@@ -226,9 +228,10 @@ def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
                 if chunks:
                     parser_name = chunks[0].get("metadata", {}).get("parser_type", parser_type)
 
-            parser_options = ["manual", "docling"]
+            is_pdf = f.suffix.lower() == ".pdf"
+            ext = f.suffix.lower().lstrip(".")
 
-            # 청크 개수가 0개이면 미동기화, 0보다 크면 동기화 완료 배지 표시
+            # 동기화 상태 배지 및 display_parser 계산 (파일 형식 무관)
             pending = st.session_state.get("parser_change_pending") or {}
             if chunk_count == 0:
                 r_col4.markdown(
@@ -245,31 +248,61 @@ def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
                 )
                 display_parser = pending.get(f.name, parser_name)
 
-            try:
-                selected_idx = parser_options.index(display_parser.lower())
-            except ValueError:
-                selected_idx = 0
+            # PDF만 파서 선택 가능, 나머지는 고정 파서 텍스트 표시
+            if is_pdf:
+                parser_options = ["manual", "docling"]
 
-            selected_parser = r_col5.selectbox(
-                "파서 선택",
-                options=parser_options,
-                index=selected_idx,
-                key=f"parser_select_{i}_{display_parser}",
-                label_visibility="collapsed",
-                disabled=False,
-            )
+                try:
+                    selected_idx = parser_options.index((display_parser or "manual").lower())
+                except ValueError:
+                    selected_idx = 0
 
-            if selected_parser != parser_name:
-                if f.name not in pending or pending[f.name] != selected_parser:
-                    if st.session_state.parser_change_pending is None:
-                        st.session_state.parser_change_pending = {}
-                    st.session_state.parser_change_pending[f.name] = selected_parser
+                selected_parser = r_col5.selectbox(
+                    "파서 선택",
+                    options=parser_options,
+                    index=selected_idx,
+                    format_func=lambda x: "기본" if x == "manual" else "표 인식 강화",
+                    key=f"parser_select_{i}_{display_parser}",
+                    label_visibility="collapsed",
+                    disabled=False,
+                )
+
+                if selected_parser != parser_name:
+                    if f.name not in pending or pending[f.name] != selected_parser:
+                        if st.session_state.parser_change_pending is None:
+                            st.session_state.parser_change_pending = {}
+                        st.session_state.parser_change_pending[f.name] = selected_parser
+                        st.rerun()
+                elif f.name in pending:
+                    st.session_state.parser_change_pending.pop(f.name, None)
+                    if not st.session_state.parser_change_pending:
+                        st.session_state.parser_change_pending = None
                     st.rerun()
-            elif f.name in pending:
-                st.session_state.parser_change_pending.pop(f.name, None)
-                if not st.session_state.parser_change_pending:
-                    st.session_state.parser_change_pending = None
-                st.rerun()
+            else:
+                # MD, HWP, HWPX 등 고정 파서 사용 파일
+                fixed_parser_label = {
+                    "md": "markdown",
+                    "markdown": "markdown",
+                    "hwp": "hwp",
+                    "hwpx": "hwp",
+                }.get(ext, ext)
+                selected_parser = fixed_parser_label
+                display_label = (
+                    "마크다운"
+                    if fixed_parser_label == "markdown"
+                    else "한글 (HWP)"
+                    if fixed_parser_label == "hwp"
+                    else fixed_parser_label
+                )
+                r_col5.selectbox(
+                    "파서 선택",
+                    options=[fixed_parser_label],
+                    index=0,
+                    format_func=lambda x, dl=display_label: dl,
+                    key=f"parser_select_disabled_{i}",
+                    label_visibility="collapsed",
+                    disabled=True,
+                )
 
             if r_col6.button(f"{chunk_count} 🔍", key=f"view_chunks_{i}", help="청크 상세 내용 보기"):
                 st.session_state.dialog_chunks_file_to_show = f.name
@@ -316,7 +349,13 @@ def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
             old_parser = "manual"
             if file_chunks:
                 old_parser = file_chunks[0].get("metadata", {}).get("parser_type", "manual")
-            change_details.append(f"- {file_name}: {old_parser} -> {new_parser}")
+            old_display = (
+                "기본" if old_parser == "manual" else "표 인식 강화" if old_parser == "docling" else old_parser
+            )
+            new_display = (
+                "기본" if new_parser == "manual" else "표 인식 강화" if new_parser == "docling" else new_parser
+            )
+            change_details.append(f"- {file_name}: {old_display} -> {new_display}")
 
         st.markdown("\n".join(change_details))
 

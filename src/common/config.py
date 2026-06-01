@@ -1,14 +1,27 @@
+import json
 import logging
+import os
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
 
 # 프로젝트 루트 경로 계산
 ROOT_DIR = Path(__file__).resolve().parent.parent.parent
+
+
+def _order_units(units: list[str]) -> list[str]:
+    """중복 제거 후 길이 내림차순 정렬.
+
+    정규식 교차(alternation)는 좌→우 우선 매칭이라 짧은 접두 단위가 앞서면 긴 단위를
+    가린다(예: '학년'이 '학년도'보다 앞이면 '2 학년도'가 '학년'에 먼저 걸려 '도'가 남는다).
+    길이 내림차순으로 고정해 긴 단위가 항상 먼저 매칭되도록 보장한다.
+    """
+    deduped = dict.fromkeys(u for u in units if u)
+    return sorted(deduped, key=len, reverse=True)
 
 
 class Settings(BaseSettings):
@@ -55,6 +68,7 @@ class Settings(BaseSettings):
 
     # 4. 파이프라인 및 파싱 설정
     PARSER_TYPE: Literal["manual", "docling"] = Field(default="docling")
+    DOC_TYPE: Literal["legal", "general"] = Field(default="legal")
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     # PDF 헤더/푸터 동적 제거 임계치: 전체 페이지 중 이 비율 이상 반복되는 라인을 노이즈로 분류
     PDF_HEADER_FOOTER_THRESHOLD: float = Field(default=0.8)
@@ -62,6 +76,39 @@ class Settings(BaseSettings):
     PDF_NOISE_PATTERNS: list[str] = Field(
         default=[
             r"(?im)^\s*-\s*\d+\s*-\s*$",  # 페이지 번호 (예: "- 1 -", "- 12 -")
+        ]
+    )
+    # 표 컨텍스트 추출 시 페이지 상단에서 제거할 줄 수 (헤더 스킵)
+    PDF_CONTEXT_HEADER_LINES: int = Field(default=1)
+    # 표 컨텍스트로 사용할 최대 줄 수
+    PDF_CONTEXT_WINDOW_LINES: int = Field(default=5)
+    # 숫자+단위 재결합 대상 한국어 단위. 코드 기본값은 범용 카운터(개·명·시간 등)만 둔다.
+    # DOC_TYPE="legal"에서만 적용된다. 학사·법령 등 도메인 종속 단위는 코드에 하드코딩하지 않고
+    # data/config/numeric_units.json(JSON 배열)로 분리해 주입한다(_merge_external_numeric_units).
+    # 우선순위: 환경변수 KOREAN_NUMERIC_UNITS='["..."]' 를 명시하면 그 값이 전부이고 파일은 무시한다.
+    # 매칭 순서(긴 단위 우선)는 _order_units가 길이 내림차순으로 자동 보정한다.
+    KOREAN_NUMERIC_UNITS: list[str] = Field(
+        default=[
+            "개월",
+            "단계",
+            "등급",
+            "시간",
+            "개",
+            "월",
+            "일",
+            "년",
+            "번",
+            "회",
+            "차",
+            "주",
+            "명",
+            "원",
+            "점",
+            "편",
+            "권",
+            "절",
+            "관",
+            "목",
         ]
     )
 
@@ -98,6 +145,34 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
     )
+
+    @model_validator(mode="after")
+    def _merge_external_numeric_units(self) -> "Settings":
+        """도메인 종속 숫자 단위를 외부 파일(data/config/numeric_units.json)에서 병합한다.
+
+        - 환경변수 KOREAN_NUMERIC_UNITS를 명시하면 그 값이 전부이고 파일은 무시한다(명시 우선).
+        - 파일이 없거나 비면 코드 기본(범용 단위)만 사용한다(범용 매뉴얼 RAG 기본 동작).
+        - NUMERIC_UNITS_PATH 환경변수로 외부 볼륨 경로를 오버라이드할 수 있다.
+        - 결과는 길이 내림차순으로 정렬해 정규식 매칭 정확성을 보장한다(_order_units).
+        """
+        if "KOREAN_NUMERIC_UNITS" in self.model_fields_set:
+            self.KOREAN_NUMERIC_UNITS = _order_units(self.KOREAN_NUMERIC_UNITS)
+            return self
+
+        units_file = Path(os.getenv("NUMERIC_UNITS_PATH") or (ROOT_DIR / "data" / "config" / "numeric_units.json"))
+        merged = list(self.KOREAN_NUMERIC_UNITS)
+        if units_file.exists():
+            try:
+                extra = json.loads(units_file.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                logger.warning("numeric_units.json 로드 실패, 기본 단위만 사용: %s", exc)
+            else:
+                if isinstance(extra, list):
+                    merged.extend(str(u) for u in extra)
+                else:
+                    logger.warning("numeric_units.json 형식 오류(list가 아님), 무시")
+        self.KOREAN_NUMERIC_UNITS = _order_units(merged)
+        return self
 
 
 # 전역 설정 객체 생성

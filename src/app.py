@@ -253,7 +253,13 @@ st.info("사내 규정 및 매뉴얼에 대해 질문하면 인용 출처와 함
 # --- 6.1. Ollama 모델 다운로드 실시간 상태 시각화 ---
 @st.fragment(run_every="1s")
 def render_download_progress(llm):
-    # 백그라운드 다운로드 시작
+    # 1단계: Ollama 서비스 자체 구동 여부 먼저 확인
+    if not llm.check_health():
+        st.error(f"Ollama 서비스({llm.base_url})에 연결할 수 없습니다. Ollama가 실행 중인지 확인해 주세요.")
+        st.info("터미널에서 `ollama serve` 명령으로 Ollama를 실행한 후 새로고침하세요.")
+        return
+
+    # 2단계: 서비스는 살아있으나 모델이 없는 경우 다운로드 시작
     llm.start_pull_background()
 
     # 이중 안전 체크: 백그라운드 진행 상태와 무관하게 실제 모델 다운로드가 완료되었는지 검증

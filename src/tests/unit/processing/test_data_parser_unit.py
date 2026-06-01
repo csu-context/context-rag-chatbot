@@ -96,10 +96,12 @@ def test_manual_parser_parse_pdf(mock_file_setup):
 
 
 def test_manual_parser_chars_collect_and_join():
-    # staticmethod 직접 호출하여 특이 분기 검증
+    # 레이아웃 유틸 함수를 직접 호출하여 특이 분기 검증
+    from src.processing.layout_utils import collect_chars_from_span, join_sorted_chars
+
     # chars가 없는 경우 (span["text"] 사용 분기)
     span_no_chars = {"size": 10.0, "origin": (10.0, 20.0), "text": "hello"}
-    chars = ManualParser._collect_chars_from_span(span_no_chars)
+    chars = collect_chars_from_span(span_no_chars)
     assert len(chars) == 5
     assert chars[0][2] == "h"
 
@@ -109,6 +111,49 @@ def test_manual_parser_chars_collect_and_join():
         (20.0, 25.0, "B", 10.0, 30.0),  # x 간격 넓음
         (40.0, 10.0, "C", 10.0, 15.0),  # y 변경
     ]
-    joined = ManualParser._join_sorted_chars(all_chars)
+    joined = join_sorted_chars(all_chars)
     assert "A B" in joined
     assert "C" in joined
+
+    # 표 셀 soft break 검증: 셀 폭이 좁아 단어 중간에서 줄바꿈 발생
+    # "편입한" → 셀 내부에서 "편" + 줄바꿈 + "입한"
+    cell_bbox = (50.0, 10.0, 100.0, 60.0)  # 셀 좌측 50, 우측 100
+    cell_chars = [
+        (20.0, 80.0, "편", 10.0, 95.0),  # 첫 줄 끝 (x1=95 ≈ 셀 우측 100)
+        (32.0, 52.0, "입", 10.0, 67.0),  # 둘째 줄 시작 (x0=52 ≈ 셀 좌측 50)
+        (32.0, 67.0, "한", 10.0, 82.0),
+    ]
+    joined_cell = join_sorted_chars(cell_chars, cell_bbox=cell_bbox)
+    assert joined_cell == "편입한", f"soft break에서 공백이 삽입됨: '{joined_cell}'"
+
+    # cell_bbox 없으면 기존 동작: 줄바꿈 → 공백 삽입
+    joined_no_bbox = join_sorted_chars(cell_chars)
+    assert "편 입" in joined_no_bbox
+
+
+def test_normalize_table_markdown():
+    from src.processing.text_utils import normalize_table_markdown
+
+    md = """
+| 이 수 학 번 | 비 고 | 이 수 내 용 | 20 01학년도 |
+|---|---|---|---|
+| 의학과, 치의학과, 약학과로 편 입한 학생 | 이수자 중 관련과정에서 12학 점 이상을 추가 이수하면 복 수전공 인정 | 전 공 필 수 | 20 02 |
+    """  # noqa: E501
+
+    expected = """
+| 이수학번 | 비고 | 이수내용 | 2001학년도 |
+|---|---|---|---|
+| 의학과, 치의학과, 약학과로 편입한 학생 | 이수자 중 관련과정에서 12학점 이상을 추가 이수하면 복수전공 인정 | 전공필수 | 2002 |
+    """  # noqa: E501
+
+    assert normalize_table_markdown(md.strip()) == expected.strip()
+
+
+def test_normalize_table_markdown_keeps_single_char_particles():
+    # _SINGLE_CHAR_KEEP(의및중후등수)는 조사/의존명사라 인접 어절과 병합하지 않아야 한다.
+    # 하드코딩 예외 목록의 동작을 명시적으로 고정하는 회귀 테스트(과적합 가시화).
+    from src.processing.text_utils import normalize_table_markdown
+
+    out = normalize_table_markdown("| 이수자 중 관련 | 학생 및 교원 |\n|---|---|")
+    assert "이수자 중 관련" in out  # '중' 단독 보존
+    assert "학생 및 교원" in out  # '및' 단독 보존

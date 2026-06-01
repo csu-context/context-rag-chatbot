@@ -46,9 +46,9 @@ class TestPipelineOrchestratorExt:
 
     def test_update_file_parser(self, orchestrator):
         with (
-            patch.object(orchestrator, "_load_manifest") as mock_load,
-            patch.object(orchestrator, "_save_manifest") as mock_save,
-            patch.object(orchestrator, "_find_relative_path") as mock_find,
+            patch.object(orchestrator.manifest_manager, "load_manifest") as mock_load,
+            patch.object(orchestrator.manifest_manager, "save_manifest") as mock_save,
+            patch.object(orchestrator.manifest_manager, "find_relative_path") as mock_find,
             patch.object(orchestrator, "run_ingestion") as mock_run,
         ):
             mock_load.return_value = {"files": {"test.pdf": {"hash": "h1"}}}
@@ -69,9 +69,9 @@ class TestPipelineOrchestratorExt:
 
     def test_update_multiple_file_parsers(self, orchestrator):
         with (
-            patch.object(orchestrator, "_load_manifest") as mock_load,
-            patch.object(orchestrator, "_save_manifest") as mock_save,
-            patch.object(orchestrator, "_find_relative_path") as mock_find,
+            patch.object(orchestrator.manifest_manager, "load_manifest") as mock_load,
+            patch.object(orchestrator.manifest_manager, "save_manifest") as mock_save,
+            patch.object(orchestrator.manifest_manager, "find_relative_path") as mock_find,
             patch.object(orchestrator, "run_ingestion") as mock_run,
         ):
             mock_load.return_value = {"files": {"test1.pdf": {"hash": "h1"}, "test2.pdf": {"hash": "h2"}}}
@@ -94,8 +94,8 @@ class TestPipelineOrchestratorExt:
         with (
             patch("src.pipeline.orchestrator.Path.exists", return_value=True),
             patch.object(orchestrator, "_process_changes") as mock_process,
-            patch.object(orchestrator, "_load_manifest") as mock_load,
-            patch.object(orchestrator, "_save_manifest") as mock_save,
+            patch.object(orchestrator.manifest_manager, "load_manifest") as mock_load,
+            patch.object(orchestrator.manifest_manager, "save_manifest") as mock_save,
             patch("src.pipeline.orchestrator.generate_file_hash") as mock_hash,
         ):
             mock_load.return_value = {"files": {}}
@@ -122,7 +122,7 @@ class TestPipelineOrchestratorExt:
 
     def test_cleanup_db(self, orchestrator):
         session = MagicMock()
-        with patch.object(orchestrator, "_load_manifest") as mock_load:
+        with patch.object(orchestrator.manifest_manager, "load_manifest") as mock_load:
             mock_load.return_value = {"files": {"test.pdf": {"hash": "h1"}}}
 
             orchestrator._cleanup_db(session, ["h1"], ["test.pdf"])
