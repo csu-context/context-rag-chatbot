@@ -23,6 +23,7 @@ class PipelineOrchestrator:
 
     _instance = None
     _lock = threading.Lock()
+    _manifest_lock = threading.Lock()  # Issue 7: manifest 파일 race condition 방지
 
     def __new__(cls, *args, **kwargs):
         with cls._lock:
@@ -60,7 +61,7 @@ class PipelineOrchestrator:
             logger.warning("Manifest 파일이 없어 전체 재색인을 수행합니다.")
             return default_manifest
         try:
-            with open(self.manifest_path, encoding="utf-8") as f:
+            with PipelineOrchestrator._manifest_lock, open(self.manifest_path, encoding="utf-8") as f:
                 data = json.load(f)
 
             # 하위 호환성 처리 (1.0 규격인 경우 자동 변환)
@@ -75,18 +76,24 @@ class PipelineOrchestrator:
             return data
         except (json.JSONDecodeError, FileNotFoundError):
             logger.warning("Manifest 파일이 손상되었거나 찾을 수 없어 전체 재색인을 수행합니다.")
-            if self.manifest_path.exists():
-                self.manifest_path.unlink()
+            with PipelineOrchestrator._manifest_lock:
+                if self.manifest_path.exists():
+                    self.manifest_path.unlink()
             return default_manifest
 
     def _save_manifest(self, manifest: dict[str, Any]) -> None:
-        """처리 완료 후 새로운 manifest 상태를 저장합니다."""
+        """Issue 7: atomic write(임시 파일 → rename)로 race condition 방지."""
+        tmp_path = self.manifest_path.with_suffix(".tmp")
         try:
-            with open(self.manifest_path, "w", encoding="utf-8") as f:
-                json.dump(manifest, f, ensure_ascii=False, indent=2)
+            with PipelineOrchestrator._manifest_lock:
+                with open(tmp_path, "w", encoding="utf-8") as f:
+                    json.dump(manifest, f, ensure_ascii=False, indent=2)
+                tmp_path.replace(self.manifest_path)  # atomic on POSIX/Windows
             logger.info(f"Manifest 업데이트 완료: {self.manifest_path}")
         except Exception as e:
             logger.error(f"Manifest 저장 실패: {e}")
+            if tmp_path.exists():
+                tmp_path.unlink(missing_ok=True)
 
     def _get_parser_strategy(self) -> ParserStrategy:
         """설정된 파서 타입에 따라 전략을 반환하며 가용성을 검증합니다."""
@@ -183,6 +190,8 @@ class PipelineOrchestrator:
                         len(files_to_process),
                         "임베딩 변환 및 벡터 적재 중 (시간이 소요될 수 있습니다)",
                     )
+                except InterruptedError:
+                    raise
                 except Exception as cb_e:
                     logger.error(f"진행 상황 콜백 호출 실패: {cb_e}")
 

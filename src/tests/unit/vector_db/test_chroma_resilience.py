@@ -86,6 +86,7 @@ def test_chroma_db_manager_operations():
 
     with (
         patch("chromadb.PersistentClient", return_value=mock_client),
+        patch("chromadb.HttpClient", return_value=mock_client),
         patch("src.models.embedder.BGEEmbedder.get_instance", return_value=mock_embedder),
         patch("src.processing.chunking._PARENT_CHUNK_SIZE", 500),
         patch("src.processing.chunking._CHILD_CHUNK_SIZE", 200),

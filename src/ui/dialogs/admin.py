@@ -18,8 +18,58 @@ def reset_admin_active():
     st.session_state.admin_active = False
 
 
+def _render_sync_progress(initialize_rag_system_callback):
+    """R1: 백그라운드 동기화 진행률 폴링 프래그먼트."""
+
+    @st.fragment(run_every="1s")
+    def _progress_fragment():
+        job = st.session_state.get("_current_sync_job")
+        if not job:
+            return
+
+        snap = job.snapshot()
+
+        if snap["running"]:
+            if snap["total"] > 0:
+                st.progress(
+                    snap["percent"] / 100,
+                    text=f"[{snap['current']}/{snap['total']}] {snap['file_name']} ({snap['percent']}%)",
+                )
+            else:
+                st.progress(0, text="동기화 준비 중...")
+
+            if st.button("작업 취소", key="cancel_sync_btn"):
+                job.request_cancel()
+            return
+
+        # 완료 / 취소 / 오류
+        st.session_state._current_sync_job = None
+        if snap["completed"]:
+            if initialize_rag_system_callback:
+                initialize_rag_system_callback()
+            st.success("동기화가 완료되었습니다.")
+        elif snap["cancelled"]:
+            st.warning("동기화가 취소되었습니다.")
+        elif snap["error"]:
+            st.error(f"동기화 오류: {snap['error']}")
+
+        time.sleep(0.5)
+        st.session_state.admin_active = False
+        st.rerun()
+
+    _progress_fragment()
+
+
 @st.dialog("데이터 관리 시스템", width="large", on_dismiss=reset_admin_active)
 def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
+    # R1: 백그라운드 동기화 실행 중이면 진행률 표시
+    current_job = st.session_state.get("_current_sync_job")
+    if current_job and current_job.running:
+        st.subheader("동기화 진행 중...")
+        st.info("파일을 처리하는 동안 다른 작업이 가능합니다.")
+        _render_sync_progress(initialize_rag_system_callback)
+        return
+
     st.markdown("지식 베이스(RAW_DATA) 관리 및 데이터베이스 동기화를 수행합니다.")
 
     # 상단 옵션 영역
@@ -56,21 +106,48 @@ def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
         )
         if st.button("업로드 실행", key="admin_upload_btn", use_container_width=True):
             if uploaded_files:
-                with st.spinner("저장 중..."):
-                    for uploaded_file in uploaded_files:
-                        file_path = RAW_DATA_DIR / uploaded_file.name
-                        with open(file_path, "wb") as f:
-                            f.write(uploaded_file.getbuffer())
-                    st.success(f"{len(uploaded_files)}개 파일 업로드 완료")
+                # Issue 13: AxiosError 400 방지 — 빈 파일·중복·경로 문제 사전 검증
+                valid_files = [f for f in uploaded_files if f.name and f.size and f.size > 0]
+                invalid = [f.name for f in uploaded_files if not (f.name and f.size and f.size > 0)]
+                if invalid:
+                    st.warning(f"유효하지 않은 파일 제외됨: {invalid}")
+                if not valid_files:
+                    st.error("업로드 가능한 파일이 없습니다.")
+                else:
+                    with st.spinner("저장 중..."):
+                        saved = []
+                        for uploaded_file in valid_files:
+                            try:
+                                from pathlib import PurePosixPath
 
-                    if auto_sync:
-                        SyncController.trigger_sync(
-                            parser_type=parser_type,
-                            force=False,
-                            clear_cache_callback=initialize_rag_system_callback,
-                        )
-                    else:
-                        st.session_state.should_rerun_app = True  # Set flag for rerun
+                                raw_name = uploaded_file.name or ""
+                                # 경로 구성요소 제거 (path traversal 방지)
+                                basename = PurePosixPath(raw_name).name
+                                if not basename or basename in (".", ".."):
+                                    st.error(f"잘못된 파일명: {raw_name}")
+                                    continue
+                                safe_name = normalize_to_nfc(basename)
+                                file_path = RAW_DATA_DIR / safe_name
+                                # 방어적 경로 검증
+                                if not file_path.resolve().is_relative_to(RAW_DATA_DIR.resolve()):
+                                    st.error(f"잘못된 파일 경로: {raw_name}")
+                                    continue
+                                with open(file_path, "wb") as f:
+                                    f.write(uploaded_file.getbuffer())
+                                saved.append(safe_name)
+                            except Exception as e:
+                                st.error(f"저장 실패: {uploaded_file.name} — {e}")
+                    if saved:
+                        st.success(f"{len(saved)}개 파일 업로드 완료")
+                        if auto_sync:
+                            SyncController.trigger_sync_background(
+                                parser_type=parser_type,
+                                force=False,
+                                clear_cache_callback=initialize_rag_system_callback,
+                            )
+                            st.rerun()
+                        else:
+                            st.session_state.should_rerun_app = True
             else:
                 st.warning("선택된 파일이 없습니다.")
 
@@ -78,11 +155,12 @@ def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
         st.subheader("수동 동기화")
         st.info("자동 동기화를 껐거나, 강제 업데이트가 필요한 경우 사용하세요.")
         if st.button("데이터 파이프라인 가동 (Sync)", key="dialog_sync_btn", use_container_width=True):
-            SyncController.trigger_sync(
+            SyncController.trigger_sync_background(
                 parser_type=parser_type,
                 force=False,
                 clear_cache_callback=initialize_rag_system_callback,
             )
+            st.rerun()
 
     st.divider()
 
@@ -217,14 +295,13 @@ def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
                 f.unlink()
                 st.toast(f"파일 삭제됨: {f.name}")
                 if auto_sync:
-                    SyncController.trigger_sync(
+                    SyncController.trigger_sync_background(
                         parser_type=parser_type,
                         force=False,
                         clear_cache_callback=initialize_rag_system_callback,
                     )
-                else:
-                    time.sleep(0.5)
-                    st.rerun()
+                time.sleep(0.5)
+                st.rerun()
 
     pending = st.session_state.get("parser_change_pending")
     if pending:
@@ -300,6 +377,31 @@ def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
                         st.success("복구가 완료되었습니다. 상태를 재확인하세요.")
                         time.sleep(0.5)
                         st.rerun()
+
+    st.divider()
+
+    # Issue 28: ChromaDB 자동 백업
+    st.subheader("ChromaDB 백업")
+    col_bk1, col_bk2 = st.columns(2)
+    with col_bk1:
+        if st.button("백업 생성", use_container_width=True):
+            from src.utils.backup import create_backup, list_backups
+
+            with st.spinner("백업 중..."):
+                path = create_backup()
+            if path:
+                st.success(f"백업 완료: {path.name}")
+            else:
+                st.error("백업 실패. 로그를 확인하세요.")
+    with col_bk2:
+        if st.button("백업 목록", use_container_width=True):
+            from src.utils.backup import list_backups
+
+            backups = list_backups()
+            if backups:
+                st.info("\n".join(f"- {b.name}" for b in backups))
+            else:
+                st.info("백업 파일이 없습니다.")
 
     st.divider()
     if st.button("관리 시스템 종료 (닫기)", use_container_width=True):

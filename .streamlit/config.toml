@@ -1,0 +1,17 @@
+# Issue 20: WebSocket 타임아웃 방어 — Proxy/폐쇄망 환경 연결 끊김 방지
+[server]
+# 업로드 최대 크기 (MB)
+maxUploadSize = 200
+# WebSocket ping 주기 (초) — 유휴 연결 종료 방지
+# Proxy의 기본 타임아웃(60~120s)보다 짧게 설정
+enableCORS = false
+enableXsrfProtection = true
+headless = true
+
+[browser]
+# 브라우저 재연결 시도 설정
+serverPort = 8501
+
+[runner]
+# 스크립트 실행 타임아웃 (초)
+fastReruns = true

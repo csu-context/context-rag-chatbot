@@ -1,4 +1,5 @@
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from src.common.config import settings
@@ -24,10 +25,14 @@ class EnsembleRetriever(BaseRetriever):
         return self.get_relevant_documents(query, n, metadata_filter=metadata_filter)
 
     def get_relevant_documents(self, query: str, n: int = 5, metadata_filter: dict | None = None) -> list:
-        """BM25 + Vector 하이브리드 검색 결과를 RRF로 병합하여 반환."""
+        """R5: BM25 + Vector 병렬 실행 후 RRF 병합."""
         n_candidates = max(settings.RETRIEVER_CANDIDATE_POOL_MIN, n)
-        bm25_results = self._get_bm25_results(query, n_candidates, metadata_filter=metadata_filter)
-        vector_results = self._get_vector_results(query, n_candidates, metadata_filter=metadata_filter)
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            bm25_future = executor.submit(self._get_bm25_results, query, n_candidates, metadata_filter)
+            vector_future = executor.submit(self._get_vector_results, query, n_candidates, metadata_filter)
+            bm25_results = bm25_future.result()
+            vector_results = vector_future.result()
 
         if not bm25_results and not vector_results:
             logger.warning(f"두 엔진 모두 결과 없음: '{query}'")
@@ -39,7 +44,21 @@ class EnsembleRetriever(BaseRetriever):
             logger.info("Vector 결과 없음 -> BM25 결과만 반환")
             return bm25_results[:n]
 
-        return self._rrf_fusion(bm25_results, vector_results, n)
+        main_results = self._rrf_fusion(bm25_results, vector_results, n)
+
+        # Issue 22: 표 전용 보조 검색 — 일반 청크에 묻히는 표 데이터 보장
+        if settings.TABLE_RETRIEVAL_ENABLED and metadata_filter is None:
+            table_filter = {MetadataFields.IS_TABLE: True}
+            table_n = max(2, n // 3)
+            table_vec = self._get_vector_results(query, table_n, table_filter)
+            if table_vec:
+                seen_ids = {self._get_doc_id(d) for d in main_results}
+                for doc in table_vec:
+                    if self._get_doc_id(doc) not in seen_ids:
+                        main_results.append(doc)
+                        seen_ids.add(self._get_doc_id(doc))
+
+        return main_results
 
     def _safe_retrieve(self, manager, name: str, query: str, n: int, metadata_filter: dict | None = None) -> list:
         if not manager:

@@ -1,12 +1,130 @@
+import logging
+import threading
 import time
+from collections.abc import Callable
+from dataclasses import dataclass, field
 
 import streamlit as st
 
 from src.pipeline import PipelineOrchestrator
 
+logger = logging.getLogger(__name__)
+
+
+class SyncCancelledError(BaseException):
+    """백그라운드 동기화 사용자 취소 신호.
+
+    BaseException 을 상속하여 파이프라인 전반의 `except Exception` 블록에 흡수되지 않고
+    sync_controller 의 취소 핸들러까지 전파되도록 한다. (bug_028)
+    """
+
+
+@dataclass
+class SyncJobState:
+    """스레드 안전 동기화 작업 상태. 백그라운드 스레드와 Streamlit 메인 스레드 간 공유."""
+
+    running: bool = True
+    current: int = 0
+    total: int = 0
+    file_name: str = ""
+    percent: int = 0
+    completed: bool = False
+    cancelled: bool = False
+    error: str | None = None
+    _lock: threading.Lock = field(default_factory=threading.Lock, compare=False, repr=False)
+    _cancel: threading.Event = field(default_factory=threading.Event, compare=False, repr=False)
+
+    def request_cancel(self) -> None:
+        self._cancel.set()
+
+    @property
+    def should_cancel(self) -> bool:
+        return self._cancel.is_set()
+
+    def update_progress(self, current: int, total: int, file_name: str) -> None:
+        with self._lock:
+            self.current = current
+            self.total = total
+            self.file_name = file_name
+            self.percent = int(current / total * 100) if total > 0 else 0
+
+    def complete(self) -> None:
+        with self._lock:
+            self.running = False
+            self.completed = True
+            self.percent = 100
+
+    def fail(self, error: str) -> None:
+        with self._lock:
+            self.running = False
+            self.error = error
+
+    def mark_cancelled(self) -> None:
+        with self._lock:
+            self.running = False
+            self.cancelled = True
+
+    def snapshot(self) -> dict:
+        with self._lock:
+            return {
+                "running": self.running,
+                "current": self.current,
+                "total": self.total,
+                "file_name": self.file_name,
+                "percent": self.percent,
+                "completed": self.completed,
+                "cancelled": self.cancelled,
+                "error": self.error,
+            }
+
 
 class SyncController:
     """데이터 동기화 및 파이프라인 연동 비즈니스 논리를 총괄 제어하는 컨트롤러 클래스"""
+
+    @staticmethod
+    def trigger_sync_background(
+        parser_type: str,
+        force: bool = False,
+        clear_cache_callback: Callable | None = None,
+    ) -> SyncJobState:
+        """R1/Issue 4: 비동기 백그라운드 동기화. 이미 실행 중이면 기존 job 반환."""
+        existing = st.session_state.get("_current_sync_job")
+        if existing and existing.running:
+            return existing
+
+        job = SyncJobState()
+        st.session_state._current_sync_job = job
+
+        def run(j: SyncJobState) -> None:
+            try:
+                from src.utils.health_check import repair_integrity, run_full_diagnostics
+
+                _, report = run_full_diagnostics(silent=True, check_model=False)
+                anomalies = report.get("db", {}).get("anomalies", {})
+                if anomalies and any(anomalies.values()):
+                    repair_integrity(anomalies, target_parser=parser_type)
+
+                def progress_callback(current: int, total: int, file_name: str) -> None:
+                    if j.should_cancel:
+                        raise SyncCancelledError("사용자 취소")
+                    j.update_progress(current, total, file_name)
+
+                orchestrator = PipelineOrchestrator()
+                orchestrator.run_ingestion(force=force, parser_type=parser_type, progress_callback=progress_callback)
+                j.complete()
+                if clear_cache_callback:
+                    try:
+                        clear_cache_callback()
+                    except Exception as cache_err:
+                        logger.error(f"캐시 초기화 콜백 실패: {cache_err}")
+            except SyncCancelledError:
+                j.mark_cancelled()
+            except Exception as e:
+                j.fail(str(e))
+
+        thread = threading.Thread(target=run, args=(job,), daemon=True, name="sync-background")
+        thread.start()
+        return job
 
     @staticmethod
     def trigger_sync(parser_type: str, force: bool = False, clear_cache_callback=None):

@@ -1,6 +1,7 @@
 import functools
 import json
 import logging
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -196,11 +197,17 @@ class RAGPipeline:
             )
 
             full_answer = ""
+            _last_yield = time.time()
+            _keepalive_interval = 20  # Issue 20: 20초마다 keepalive로 Proxy 유휴 타임아웃 방지
             try:
                 for chunk in self.llm.stream(prompt_val):
                     content = self._extract_answer(chunk)
                     full_answer += content
                     yield content
+                    _last_yield = time.time()
+                    if time.time() - _last_yield > _keepalive_interval:
+                        yield ""  # 빈 청크 keepalive
+                        _last_yield = time.time()
             except Exception as exc:
                 logger.error(
                     "스트리밍 중 LLM 오류 — 모델: %s, 출력된 토큰: %d자, 예외: %s",
