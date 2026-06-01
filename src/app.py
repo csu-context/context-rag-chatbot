@@ -335,12 +335,35 @@ for msg_idx, msg in enumerate(st.session_state.messages):
         if msg["role"] == "assistant" and msg.get("latency") is not None:
             st.caption(f"답변 소요 시간: {msg['latency']:.2f}초")
 
-        # AI 답변 클립보드 복사 버튼
+        # 인용 출처(citations)를 먼저 화면에 띄웁니다
+        if msg.get("citations"):
+            for i, doc in enumerate(msg["citations"]):
+                if not isinstance(doc, dict):
+                    continue
+                metadata = doc.get("metadata", {})
+                source = metadata.get(MetadataFields.SRC_NAME, "알 수 없음")
+                page = metadata.get(MetadataFields.PG_NUM, "-")
+                score = metadata.get("rerank_score", doc.get("score", 0.0))
+                display_score = max(0.0, (score - 0.5) * 2)
+                is_low_confidence = score < 0.5
+
+                button_label = f"📄 {source} (p.{page}) - 신뢰도: {display_score:.2f}"
+                if is_low_confidence:
+                    button_label += " ⚠️"
+
+                if st.button(button_label, key=f"cite_{msg_idx}_{i}", disabled=st.session_state.is_generating):
+                    st.session_state.dialog_doc_to_show = doc
+                    st.session_state.should_rerun_app = True
+
+                if is_low_confidence:
+                    st.caption("⚠️ 신뢰도가 낮아 환각 발생 가능성이 있습니다. 원문을 직접 확인하세요.")
+
+        # AI 답변 클립보드 복사 버튼 (출처 밑으로 위치 이동 & 아이콘 적용)
         if msg["role"] == "assistant":
             st_copy_to_clipboard(
                 msg["content"],
-                before_copy_label="📋 답변 복사하기",
-                after_copy_label="✅ 클립보드에 복사되었습니다!",
+                before_copy_label=":material/content_copy:",
+                after_copy_label=":material/check:",
                 key=f"copy_btn_{msg_idx}",
             )
 
