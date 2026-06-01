@@ -48,12 +48,16 @@ def _backup_via_http() -> Path | None:
         collections_data = {}
         for col in client.list_collections():
             data = col.get(include=["documents", "metadatas", "embeddings"])
+            embeddings = data.get("embeddings")
+            if embeddings is not None:
+                embeddings = [e.tolist() if hasattr(e, "tolist") else e for e in embeddings]
+
             collections_data[col.name] = {
                 "ids": data["ids"],
                 "documents": data.get("documents"),
                 "metadatas": data.get("metadatas"),
                 # 임베딩은 용량이 크므로 포함 여부 선택
-                "embeddings": data.get("embeddings"),
+                "embeddings": embeddings,
             }
 
         with gzip.open(backup_path, "wt", encoding="utf-8") as f:

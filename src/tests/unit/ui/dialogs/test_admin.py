@@ -144,10 +144,15 @@ class TestAdminDialog:
             mock_st.file_uploader.return_value = [f1, f2]
 
             # Setup parser type
-            mock_st.selectbox.return_value = "docling"
+            mock_st.radio.return_value = "docling"
+
+            # Setup backup selectbox
+            mock_backup_path = MagicMock()
+            mock_backup_path.name = "backup.json"
+            mock_st.selectbox.return_value = mock_backup_path
 
             # Setup auto_sync True
-            mock_st.toggle.return_value = True
+            mock_st.checkbox.return_value = True
 
             func = getattr(show_admin_dialog, "__wrapped__", show_admin_dialog)
             func(db_manager, init_cb)

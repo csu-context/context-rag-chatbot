@@ -73,27 +73,6 @@ def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
 
     st.markdown("지식 베이스(RAW_DATA) 관리 및 데이터베이스 동기화를 수행합니다.")
 
-    # 상단 옵션 영역
-    col_opt1, col_opt2 = st.columns([1, 1])
-    with col_opt1:
-        auto_sync = st.checkbox(
-            "파일 업로드/삭제 후 자동 동기화 실행",
-            value=True,
-            help="체크 시 별도의 Sync 버튼 클릭 없이 즉시 DB에 반영합니다.",
-        )
-    with col_opt2:
-        default_parser_idx = 0 if settings.PARSER_TYPE.lower() == "manual" else 1
-        parser_type = st.radio(
-            "적용 파서 선택",
-            options=["manual", "docling"],
-            index=default_parser_idx,
-            format_func=lambda x: "기본" if x == "manual" else "표 인식 강화",
-            horizontal=True,
-            help="동기화 파이프라인에서 사용할 PDF 파서 전략을 지정합니다.",
-        )
-
-    st.divider()
-
     # 상단 영역: 업로드 및 동기화
     col1, col2 = st.columns([1, 1])
 
@@ -106,6 +85,28 @@ def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
             key="dialog_uploader",
             label_visibility="collapsed",
         )
+        st.write("")  # 위젯 간격 조절
+        auto_sync = st.checkbox(
+            "업로드 완료 후 자동 동기화(Sync) 실행",
+            value=True,
+            help="체크 시 업로드 직후 즉시 파이프라인을 가동하여 DB에 반영합니다.",
+        )
+
+    with col2:
+        st.subheader("수동 동기화")
+        st.info("자동 동기화를 껐거나, 강제 업데이트가 필요한 경우 사용하세요.")
+        default_parser_idx = 0 if settings.PARSER_TYPE.lower() == "manual" else 1
+        parser_type = st.radio(
+            "파이프라인 적용 파서 선택",
+            options=["manual", "docling"],
+            index=default_parser_idx,
+            format_func=lambda x: "기본(빠름)" if x == "manual" else "표 인식 강화(느림)",
+            horizontal=True,
+            help="동기화 시 사용할 PDF 파서 전략을 지정합니다.",
+        )
+
+    col_btn1, col_btn2 = st.columns([1, 1])
+    with col_btn1:
         if st.button("업로드 실행", key="admin_upload_btn", use_container_width=True):
             if uploaded_files:
                 # Issue 13: AxiosError 400 방지 — 빈 파일·중복·경로 문제 사전 검증
@@ -153,9 +154,7 @@ def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
             else:
                 st.warning("선택된 파일이 없습니다.")
 
-    with col2:
-        st.subheader("수동 동기화")
-        st.info("자동 동기화를 껐거나, 강제 업데이트가 필요한 경우 사용하세요.")
+    with col_btn2:
         if st.button("데이터 파이프라인 가동 (Sync)", key="dialog_sync_btn", use_container_width=True):
             SyncController.trigger_sync_background(
                 parser_type=parser_type,
@@ -419,28 +418,39 @@ def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
 
     st.divider()
 
-    # Issue 28: ChromaDB 자동 백업
-    st.subheader("ChromaDB 백업")
-    col_bk1, col_bk2 = st.columns(2)
-    with col_bk1:
-        if st.button("백업 생성", use_container_width=True):
-            from src.utils.backup import create_backup, list_backups
+    # Issue 28: ChromaDB 자동 백업 및 복원
+    st.subheader("ChromaDB 백업 및 시스템 관리")
+    from src.utils.backup import create_backup, list_backups, restore_backup
 
+    col_bk1, col_bk2 = st.columns(2)
+
+    with col_bk1:
+        st.markdown("**백업 생성**")
+        if st.button("현재 DB 상태 백업하기", use_container_width=True):
             with st.spinner("백업 중..."):
                 path = create_backup()
             if path:
                 st.success(f"백업 완료: {path.name}")
             else:
                 st.error("백업 실패. 로그를 확인하세요.")
-    with col_bk2:
-        if st.button("백업 목록", use_container_width=True):
-            from src.utils.backup import list_backups
 
-            backups = list_backups()
-            if backups:
-                st.info("\n".join(f"- {b.name}" for b in backups))
-            else:
-                st.info("백업 파일이 없습니다.")
+    with col_bk2:
+        st.markdown("**백업 복구**")
+        backups = list_backups()
+        if backups:
+            selected_backup = st.selectbox(
+                "복구할 백업 파일", options=backups, format_func=lambda x: x.name, label_visibility="collapsed"
+            )
+            if st.button("선택 파일로 복구", use_container_width=True, type="primary"):
+                st.warning("주의: 원본 파일(PDF) 목록과 DB 상태가 불일치할 수 있습니다.")
+                with st.spinner(f"{selected_backup.name} 복구 중..."):
+                    ok = restore_backup(selected_backup)
+                if ok:
+                    st.success("복구 성공! (앱 재시작 권장)")
+                else:
+                    st.error("복구 실패. 서버 로그 확인 요망.")
+        else:
+            st.info("저장된 백업 파일이 없습니다.")
 
     st.divider()
     if st.button("관리 시스템 종료 (닫기)", use_container_width=True):
