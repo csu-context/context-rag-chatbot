@@ -1,24 +1,15 @@
-import importlib.util
 import logging
 import os
-import uuid
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
 from src.common.constants import MetadataFields, SupportedFormats
-from src.core.chains import invalidate_source_json_cache
 from src.core.storage import StorageManager
-from src.pipeline.strategies import (
-    DoclingPDFParserStrategy,
-    HwpParserStrategy,
-    ManualParserStrategy,
-    MarkdownParserStrategy,
-    ParserStrategy,
-)
-from src.processing.chunking import HierarchicalChunker, create_parent_child_chunks
+from src.pipeline.strategies import ParserFactory, ParserStrategy
+from src.processing.chunking import chunk_sections
 from src.utils.paths import CACHE_DIR, PROCESSED_DATA_DIR, RAW_DATA_DIR, ensure_directories
-from src.utils.unicode import normalize_path_to_nfc, normalize_to_nfc, normalize_to_nfd
+from src.utils.unicode import normalize_to_nfc, normalize_to_nfd
 from src.vector_db.chroma_manager import ChromaDBManager
 
 logger = logging.getLogger(__name__)
@@ -32,134 +23,6 @@ def _safe_invoke_progress(callback, current: int, total: int, name: str) -> None
             logger.error(f"진행 상황 콜백 호출 실패: {cb_e}")
 
 
-def _get_parser_strategy_for_file(file_path: Path, file_parser_types: dict[str, str] | None) -> ParserStrategy:
-    """파일 경로와 매니페스트 설정을 기반으로 적절한 파서 전략을 반환합니다."""
-    ext = file_path.suffix.lower()
-
-    if ext in (".hwp", ".hwpx"):
-        return HwpParserStrategy()
-
-    if ext != ".pdf":
-        return MarkdownParserStrategy()
-
-    from src.utils.paths import RAW_DATA_DIR
-    from src.utils.unicode import normalize_to_nfc
-
-    rel_path = normalize_path_to_nfc(file_path.relative_to(RAW_DATA_DIR))
-    normalized_parser_types = {normalize_to_nfc(k): v for k, v in (file_parser_types or {}).items()}
-    file_parser = normalized_parser_types.get(rel_path, "manual").lower()
-
-    if file_parser == "docling":
-        if importlib.util.find_spec("docling") is not None:
-            return DoclingPDFParserStrategy()
-        logger.error("docling 라이브러리가 없어 manual 전략으로 대체합니다.")
-        return ManualParserStrategy()
-
-    return ManualParserStrategy()
-
-
-def _chunk_raw_markdown(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return create_parent_child_chunks(sections[0]["content"], sections[0]["metadata"])
-
-
-def _chunk_combined(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    chunker = HierarchicalChunker()
-    result = []
-    for sec in sections:
-        result.extend(chunker.chunk(sec["content"], sec["metadata"]))
-    return result
-
-
-def _split_table_into_row_chunks(content: str, parent_id: str, base_meta: dict) -> list[dict[str, Any]]:
-    """표를 행(row) 단위 청크로 분할. 각 청크에 표 제목 컨텍스트 + 헤더 행 보존.
-
-    24행*10열 대형 표도 각 데이터 행이 독립 청크(200~400자)가 되어
-    LLM 컨텍스트 한도 내에서 검색·답변 가능하게 한다.
-    """
-    # 표 제목(비-마크다운 텍스트)과 표 본체 분리
-    parts = content.split("\n\n", 1)
-    if len(parts) == 2 and "|" in parts[1]:
-        title_ctx, table_md = parts[0].strip(), parts[1].strip()
-    else:
-        title_ctx, table_md = "", content.strip()
-
-    lines = [ln for ln in table_md.split("\n") if ln.strip()]
-    if len(lines) < 3:
-        return []
-
-    header, separator = lines[0], lines[1]
-    data_rows = lines[2:]
-
-    children = []
-    for i, row in enumerate(data_rows):
-        if not row.strip() or set(row.strip()) <= {"|", "-", " ", ":"}:
-            continue
-        row_content_parts = [header, separator, row]
-        if title_ctx:
-            row_content_parts = [title_ctx, "", *row_content_parts]
-        row_text = "\n".join(row_content_parts).strip()
-        child_id = f"{parent_id}_r{i}"
-        child_meta = {
-            **base_meta,
-            MetadataFields.CHUNK_ID: child_id,
-            MetadataFields.PARENT_ID: parent_id,
-            MetadataFields.IS_TABLE: True,
-        }
-        children.append({"chunk_id": child_id, "metadata": child_meta, "text": row_text})
-
-    return children
-
-
-def _chunk_manual_pdf(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    chunker = HierarchicalChunker()
-    result = []
-    for sec in sections:
-        parent_id = str(uuid.uuid4())
-        meta_for_children = sec["metadata"].copy()
-        sec_title = f"{sec.get('chapter', '기본 섹션')} > {sec.get('article', '기본 섹션')}"
-        meta_for_children[MetadataFields.SEC_TITLE] = sec_title
-        meta_for_children[MetadataFields.HEADER_PATH] = sec_title
-
-        if sec["metadata"].get(MetadataFields.IS_TABLE, False):
-            children = _split_table_into_row_chunks(sec["content"], parent_id, meta_for_children)
-        else:
-            children = chunker.split_into_children(sec["content"], parent_id, meta_for_children)
-
-        if children:
-            parent_metadata = {
-                MetadataFields.SOURCE_ID: sec["metadata"].get(MetadataFields.SOURCE_ID, "UNKNOWN"),
-                MetadataFields.SRC_NAME: sec["metadata"].get(MetadataFields.SRC_NAME, "UNKNOWN"),
-                MetadataFields.DOC_TYPE: sec["metadata"].get(MetadataFields.DOC_TYPE, "pdf"),
-                MetadataFields.PG_NUM: sec["metadata"].get(MetadataFields.PG_NUM, 1),
-                MetadataFields.SEC_TITLE: sec_title,
-                MetadataFields.CHUNK_ID: parent_id,
-                MetadataFields.PARENT_ID: None,
-                MetadataFields.HEADER_PATH: sec_title,
-                MetadataFields.IS_TABLE: sec["metadata"].get(MetadataFields.IS_TABLE, False),
-                MetadataFields.RELATIVE_PATH: sec["metadata"].get(MetadataFields.RELATIVE_PATH, "UNKNOWN"),
-            }
-            result.append(
-                {
-                    "parent_id": parent_id,
-                    "parent_text": sec["content"],
-                    "metadata": parent_metadata,
-                    "children": children,
-                }
-            )
-    return result
-
-
-def _chunk_sections(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    if not sections:
-        return []
-    first = sections[0]
-    if first.get("is_raw_markdown"):
-        return _chunk_raw_markdown(sections)
-    if first.get("is_combined"):
-        return _chunk_combined(sections)
-    return _chunk_manual_pdf(sections)
-
-
 def _process_single_file_helper(
     file_path: Path,
     file_parser_types: dict[str, str] | None,
@@ -167,9 +30,9 @@ def _process_single_file_helper(
     cache_dir: Path,
 ) -> list[dict[str, Any]]:
     storage_manager = StorageManager(processed_dir, cache_dir)
-    active_strategy = _get_parser_strategy_for_file(file_path, file_parser_types)
+    active_strategy = ParserFactory.create(file_path, file_parser_types)
     sections = active_strategy.parse(file_path, storage_manager=storage_manager)
-    return _chunk_sections(sections)
+    return chunk_sections(sections)
 
 
 class IngestionPipeline:
@@ -333,7 +196,7 @@ class IngestionPipeline:
             logger.info(f"   - 전처리 결과 저장: {save_path.name}")
 
         # JSON 파일이 갱신되었으므로 RAG 파이프라인의 LRU 캐시 무효화
-        invalidate_source_json_cache()
+        StorageManager.invalidate_json_cache()
         return saved_paths
 
     def _prepare_cleanup_targets(

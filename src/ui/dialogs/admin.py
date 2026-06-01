@@ -110,7 +110,7 @@ def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
         st.info("현재 등록된 문서가 없습니다.")
     else:
         orchestrator = PipelineOrchestrator()
-        manifest = orchestrator._load_manifest()
+        manifest = orchestrator.manifest_manager.load_manifest()
         manifest_files = manifest.get("files", {})
 
         h_col1, h_col2, h_col3, h_col4, h_col5, h_col6, h_col7, h_col8 = st.columns(

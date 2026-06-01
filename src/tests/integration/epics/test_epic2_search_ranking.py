@@ -60,10 +60,10 @@ def test_bm25_stopwords(temp_bm25_manager):
     """BM25 형태소 분석에서 한국어 불용어가 올바르게 필터링되는지 검증."""
     # STOPWORDS = {"대한", "대해", "위해", "통해", "경우", "또한", "모든", "의한", "따라", "기타", "사항"}
     text = "휴학에 대한 복학과 장학금 지급의 경우 모든 사항에 대해"
-    tokens = temp_bm25_manager._tokenizer(text)
+    tokens = temp_bm25_manager.tokenizer.tokenize(text)
 
     # 불용어 단어들이 토큰 목록에 포함되지 않았는지 검증
-    for stopword in temp_bm25_manager.STOPWORDS:
+    for stopword in temp_bm25_manager.tokenizer.stopwords:
         assert stopword not in tokens
 
     # 유효한 형태소는 포함되었는지 검증 (명사, 용언, 1글자 초과)
