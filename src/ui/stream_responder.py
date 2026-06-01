@@ -130,7 +130,7 @@ class StreamResponder:
             ]
         self.perf_logger.log(**log_kwargs)
 
-        # Issue 32: 세션 토큰/과금 누적
+        # 세션 토큰/과금 누적
         if not error:
             usage = log_kwargs.get("token_usage", {})
             if usage:

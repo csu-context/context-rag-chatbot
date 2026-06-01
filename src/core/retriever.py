@@ -48,8 +48,9 @@ class EnsembleRetriever(BaseRetriever):
         try:
             results = manager.retrieve(query, n, metadata_filter=metadata_filter)
             if not results:
-                logger.warning(f"{name} 검색 결과 없음 (query='{query[:50]}', filter={metadata_filter})")  # Issue 37
-            return results
+                logger.warning(
+                    f"{name} 검색 결과 없음 (query='{query[:50]}', filter={metadata_filter})"
+                )  # return results
         except Exception as e:
             logger.error(f"{name} 검색 오류 (빈 리스트 폴백): {e}")
             return []

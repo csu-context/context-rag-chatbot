@@ -34,7 +34,7 @@ class LLMFactory:
                 "현재 외부 API 호출이 허용되어 있습니다 (ALLOW_EXTERNAL_API=True)."
             )
 
-        logger.debug(f"LLM 인스턴스 생성 시도 (타입: {type_}, 이름: {name_})")  # Issue 41: 로그 중복 억제
+        logger.debug(f"LLM 인스턴스 생성 시도 (타입: {type_}, 이름: {name_})")  # 로그 중복 억제
 
         match type_:
             case "gemini":

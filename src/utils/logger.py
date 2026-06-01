@@ -218,13 +218,18 @@ class TracingLogger:
 
 def setup_global_logging():
     """시스템 기본 로깅 설정 (app.log 용)"""
+    from logging.handlers import RotatingFileHandler
+
     # 디렉토리가 없으면 생성
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
     log_file = LOGS_DIR / "app.log"
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(levelname)s - %(message)s",
-        handlers=[logging.StreamHandler(), logging.FileHandler(log_file, encoding="utf-8")],
+        handlers=[
+            logging.StreamHandler(),
+            RotatingFileHandler(log_file, maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8"),
+        ],
         force=True,
     )
     # 노이즈 제거

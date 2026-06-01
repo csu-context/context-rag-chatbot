@@ -16,7 +16,7 @@ from ragas.evaluation import EvaluationResult, evaluate  # type: ignore
 from ragas.llms import LangchainLLMWrapper
 
 # Metrics 임포트 (Pylance 경고 차단)
-from ragas.metrics import (  # type: ignore
+from ragas.metrics.collections import (  # type: ignore
     AnswerRelevancy,
     ContextPrecision,
     ContextRecall,

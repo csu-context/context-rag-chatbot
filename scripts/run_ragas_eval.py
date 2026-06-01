@@ -24,7 +24,7 @@ def run_eval(model_name: str, samples: int, output_path: Path) -> dict:
     """RAG 파이프라인 Ragas 평가 실행."""
     from datasets import Dataset
     from ragas import evaluate
-    from ragas.metrics import answer_relevancy, context_precision, context_recall, faithfulness
+    from ragas.metrics.collections import answer_relevancy, context_precision, context_recall, faithfulness
 
     from src.core.chains import get_rag_chain
     from src.core.retriever import RetrieverFactory

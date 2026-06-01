@@ -115,7 +115,7 @@ except Exception as e:
     st.error(f"시스템 초기화 오류: {e}")
     st.stop()
 
-# Issue 33: Metrics 엔드포인트 백그라운드 시작 (최초 1회)
+# Metrics 엔드포인트 백그라운드 시작 (최초 1회)
 if "metrics_server_started" not in st.session_state:
     st.session_state.metrics_server_started = True
     from src.utils.metrics_server import MetricsServer
@@ -179,7 +179,7 @@ with st.sidebar:
     # 4. 기타 설정
     st.toggle("상세 추론 과정 보기", key="show_expert_mode", disabled=st.session_state.is_generating)
 
-    # Issue 32: API 토큰 사용량 및 실시간 과금 추적
+    # API 토큰 사용량 및 실시간 과금 추적
     session_tokens = st.session_state.get("session_tokens", {"input": 0, "output": 0, "cost_usd": 0.0})
     if session_tokens["input"] > 0 or session_tokens["output"] > 0:
         st.divider()
@@ -191,7 +191,7 @@ with st.sidebar:
     st.subheader("실시간 자원 모니터링")
     stats = get_system_stats()
 
-    # Issue 31: @st.fragment(run_every) 로 실제 실시간 반영
+    # @st.fragment(run_every) 로 실제 실시간 반영
     @st.fragment(run_every="5s")
     def _resource_monitor():
         stats = get_system_stats()
@@ -317,7 +317,7 @@ for msg_idx, msg in enumerate(st.session_state.messages):
                 metadata = doc.get("metadata", {})
                 source = metadata.get(MetadataFields.SRC_NAME, "알 수 없음")
                 page = metadata.get(MetadataFields.PG_NUM, "-")
-                # Issue 35: rerank_score 없을 때 RRF/기본값 0.0으로 무조건 경고 발생하는 오탐 방지
+                # rerank_score 없을 때 RRF/기본값 0.0으로 무조건 경고 발생하는 오탐 방지
                 score = metadata.get("rerank_score")
                 has_rerank_score = score is not None
                 score = score if has_rerank_score else doc.get("score", 0.0)

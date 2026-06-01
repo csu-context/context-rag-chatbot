@@ -57,8 +57,9 @@ class PipelineOrchestrator:
         """manifest.json 파일을 로드합니다. 파일이 없거나 손상된 경우, 빈 2.0 매니페스트를 반환합니다."""
         default_manifest = self._make_manifest({})
         if not self.manifest_path.exists():
-            logger.info("Manifest 파일이 존재하지 않습니다. 첫 실행이거나 초기화 후 상태입니다.")  # Issue 42
-            return default_manifest
+            logger.info(
+                "Manifest 파일이 존재하지 않습니다. 첫 실행이거나 초기화 후 상태입니다."
+            )  # return default_manifest
         try:
             with open(self.manifest_path, encoding="utf-8") as f:
                 data = json.load(f)

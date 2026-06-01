@@ -1,5 +1,5 @@
 from langchain_core.prompts import PromptTemplate
-from ragas.metrics import (
+from ragas.metrics.collections import (
     answer_relevancy,
     context_precision,
     context_recall,

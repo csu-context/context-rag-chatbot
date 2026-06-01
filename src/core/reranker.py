@@ -134,7 +134,7 @@ class CrossEncoderReranker(BaseReranker):
                     if settings.RERANKER_USE_FP16 and self.device in ("cuda", "mps")
                     else {}
                 )
-                # Issue 40: sentence-transformers/transformers 버전업 시 Deprecation Warning 억제
+                # sentence-transformers/transformers 버전업 시 Deprecation Warning 억제
                 with warnings.catch_warnings():
                     warnings.filterwarnings("ignore", category=FutureWarning, module="sentence_transformers")
                     warnings.filterwarnings("ignore", category=DeprecationWarning, module="transformers")

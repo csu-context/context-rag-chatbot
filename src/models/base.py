@@ -20,7 +20,7 @@ class LLMResponse(BaseModel):
             self.cost = self._calculate_cost()
 
     def _calculate_cost(self) -> float:
-        """Issue 39: config/pricing.yaml 동적 로드로 하드코딩 없이 신규 모델 과금 지원."""
+        """config/pricing.yaml 동적 로드로 하드코딩 없이 신규 모델 과금 지원."""
         pricing_table = _load_pricing()
         matched_model = ""
         for known_model in pricing_table:

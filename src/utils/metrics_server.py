@@ -1,4 +1,4 @@
-"""Issue 33: 외부 수집용 Metrics HTTP 엔드포인트 (백그라운드 스레드 실행).
+"""외부 수집용 Metrics HTTP 엔드포인트 (백그라운드 스레드 실행).
 
 Prometheus / Grafana Agent 등이 http://localhost:9090/metrics 를 scrape합니다.
 사용법: MetricsServer.start() 를 app.py 시작 시 1회 호출.
