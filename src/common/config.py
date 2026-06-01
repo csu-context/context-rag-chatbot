@@ -54,6 +54,8 @@ class Settings(BaseSettings):
     HYBRID_WEIGHT_BM25: float = 0.5
     HYBRID_WEIGHT_VECTOR: float = 0.5
     RETRIEVER_CANDIDATE_POOL_MIN: int = Field(default=15)
+    # Issue 19: 하이브리드 검색 두 leg 병렬 실행용 공유 스레드풀 크기 (동시 쿼리 x 2 leg 수용)
+    RETRIEVER_EXECUTOR_MAX_WORKERS: int = Field(default=8)
     RERANKER_MAX_DOCS: int = Field(default=5)
     RERANKER_BATCH_SIZE: int = Field(default=5)
     RERANKER_THRESHOLD: float = Field(default=0.5)

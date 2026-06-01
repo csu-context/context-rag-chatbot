@@ -1,3 +1,4 @@
+import atexit
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
@@ -7,6 +8,16 @@ from src.common.constants import MetadataFields
 from src.core.base_retriever import BaseRetriever
 
 logger = logging.getLogger(__name__)
+
+# Issue 19: 하이브리드 검색의 BM25/Vector leg를 병렬 실행하기 위한 공유 스레드풀.
+# 매 쿼리마다 ThreadPoolExecutor를 생성·해제하면 그 오버헤드(~수 ms)가 짧은 leg의
+# 병렬 이득을 잡아먹어 직렬보다 느려질 수 있다. 모듈 수명 동안 풀을 재사용해 이를 제거한다.
+# (워커는 submit 시점에 지연 생성되므로 import 비용은 사실상 없다.)
+_RETRIEVAL_EXECUTOR = ThreadPoolExecutor(
+    max_workers=settings.RETRIEVER_EXECUTOR_MAX_WORKERS,
+    thread_name_prefix="hybrid-retrieval",
+)
+atexit.register(_RETRIEVAL_EXECUTOR.shutdown, wait=False)
 
 
 class EnsembleRetriever(BaseRetriever):
@@ -28,11 +39,10 @@ class EnsembleRetriever(BaseRetriever):
         """R5: BM25 + Vector 병렬 실행 후 RRF 병합."""
         n_candidates = max(settings.RETRIEVER_CANDIDATE_POOL_MIN, n)
 
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            bm25_future = executor.submit(self._get_bm25_results, query, n_candidates, metadata_filter)
-            vector_future = executor.submit(self._get_vector_results, query, n_candidates, metadata_filter)
-            bm25_results = bm25_future.result()
-            vector_results = vector_future.result()
+        bm25_future = _RETRIEVAL_EXECUTOR.submit(self._get_bm25_results, query, n_candidates, metadata_filter)
+        vector_future = _RETRIEVAL_EXECUTOR.submit(self._get_vector_results, query, n_candidates, metadata_filter)
+        bm25_results = bm25_future.result()
+        vector_results = vector_future.result()
 
         if not bm25_results and not vector_results:
             logger.warning(f"두 엔진 모두 결과 없음: '{query}'")
