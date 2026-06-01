@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Issue 34: sLLM 모델 교체 Ragas 품질 검증 벤치마크.
+"""sLLM 모델 교체 Ragas 품질 검증 벤치마크.
 
 Faithfulness·Answer Relevancy 전후 비교 실행 스크립트.
 사용법:

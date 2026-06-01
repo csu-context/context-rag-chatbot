@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Issue 34: run_ragas_eval.py 실행에 필요한 평가 데이터셋 자동 생성.
+"""run_ragas_eval.py 실행에 필요한 평가 데이터셋 자동 생성.
 
 data/processed/ 의 모든 source JSON 파일에서 청크를 수집하고
 GoldenDatasetGenerator(LLM-as-judge)를 통해 Q&A 쌍을 생성합니다.

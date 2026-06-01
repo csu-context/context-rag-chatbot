@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     RERANKER_MAX_DOCS: int = Field(default=5)
     RERANKER_BATCH_SIZE: int = Field(default=5)
     RERANKER_THRESHOLD: float = Field(default=0.5)
-    # 모니터링/트레이싱 설정 (Issue 44)
+    # 모니터링/트레이싱 설정
     LANGCHAIN_TRACING_V2: bool = Field(default=False)
 
     # 4. 파이프라인 및 파싱 설정

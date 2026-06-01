@@ -37,7 +37,7 @@ PARSER_BENCHMARK_PROMPT = PromptTemplate(
 )
 
 
-# ── Issue 38: 표 데이터 보존율 지표 ──────────────────────────────────────────
+# ── 표 데이터 보존율 지표 ──────────────────────────────────────────────────
 
 
 def calculate_table_preservation_rate(ground_truth_chunks: list[str], retrieved_chunks: list[str]) -> float:
