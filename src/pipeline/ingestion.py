@@ -4,7 +4,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
-from src.common.constants import MetadataFields
+from src.common.constants import MetadataFields, SupportedFormats
 from src.core.storage import StorageManager
 from src.pipeline.strategies import ParserFactory, ParserStrategy
 from src.processing.chunking import chunk_sections
@@ -29,14 +29,10 @@ def _process_single_file_helper(
     processed_dir: Path,
     cache_dir: Path,
 ) -> list[dict[str, Any]]:
-    try:
-        storage_manager = StorageManager(processed_dir, cache_dir)
-        active_strategy = ParserFactory.create(file_path, file_parser_types)
-        sections = active_strategy.parse(file_path, storage_manager=storage_manager)
-        return chunk_sections(sections)
-    except Exception as e:
-        logger.error(f"파일 처리 실패: {file_path.name} - {e!s}")
-        return []
+    storage_manager = StorageManager(processed_dir, cache_dir)
+    active_strategy = ParserFactory.create(file_path, file_parser_types)
+    sections = active_strategy.parse(file_path, storage_manager=storage_manager)
+    return chunk_sections(sections)
 
 
 class IngestionPipeline:
@@ -60,7 +56,7 @@ class IngestionPipeline:
 
     def scan_files(self, supported_exts: list[str] | None = None) -> list[Path]:
         if supported_exts is None:
-            supported_exts = [".pdf", ".md", ".markdown"]
+            supported_exts = SupportedFormats.EXTENSIONS
         files = []
         for ext in supported_exts:
             # 모든 하위 디렉토리를 포함하여 검색
@@ -93,8 +89,33 @@ class IngestionPipeline:
                 completed += 1
                 try:
                     data.extend(future.result())
+                except (TypeError, AttributeError) as e:
+                    # 직렬화 관련 예외(PicklingError 포함) 시에만 안전하게 메인 프로세스에서 순차 재시도
+                    logger.warning(f"병렬 직렬화 오류 감지: {file_path.name} ({e}). 순차 재시도를 수행합니다.")
+                    try:
+                        res = _process_single_file_helper(
+                            file_path,
+                            file_parser_types,
+                            self.storage_manager.processed_dir,
+                            self.storage_manager.cache_dir,
+                        )
+                        data.extend(res)
+                    except Exception as seq_e:
+                        logger.error(f"순차 재시도 처리 실패: {file_path.name} - {seq_e!s}")
                 except Exception as e:
-                    logger.error(f"병렬 파일 처리 실패: {file_path.name} - {e}")
+                    # 워커 OOM(BrokenProcessPool) 감지 시 즉시 중단하여 메인 프로세스 보호
+                    from concurrent.futures.process import BrokenProcessPool
+
+                    if isinstance(e, BrokenProcessPool):
+                        logger.critical(
+                            f"프로세스 풀이 파괴되었습니다(OOM 의심): {file_path.name} - {e!s}. "
+                            "메인 프로세스 보호를 위해 즉시 중단합니다."
+                        )
+                        raise RuntimeError(
+                            f"병렬 파싱 중 워커 OOM 발생으로 프로세스 풀이 손상되었습니다. 파일: {file_path.name}"
+                        ) from e
+                    # 개별 파싱 오류 등은 재시도 없이 에러 처리 후 계속 진행
+                    logger.error(f"병렬 파일 처리 실패 (재시도 안 함): {file_path.name} - {e!s}")
                 _safe_invoke_progress(progress_callback, completed, total, file_path.name)
         return data, completed
 

@@ -8,6 +8,7 @@ from src.pipeline.ingestion import (
 )
 from src.pipeline.strategies import (
     DoclingPDFParserStrategy,
+    HwpParserStrategy,
     ManualParserStrategy,
     MarkdownParserStrategy,
     ParserFactory,
@@ -58,6 +59,13 @@ def test_get_parser_strategy_for_file():
         mock_find_spec.return_value = None  # docling 미설치 모방
         strategy = ParserFactory.create(RAW_DATA_DIR / "test_docling.pdf", {"test_docling.pdf": "docling"})
         assert isinstance(strategy, ManualParserStrategy)
+
+    # 6. HWP/HWPX 파일은 HwpParserStrategy 반환 (ParserFactory 라우팅)
+    strategy = ParserFactory.create(RAW_DATA_DIR / "test.hwp", None)
+    assert isinstance(strategy, HwpParserStrategy)
+
+    strategy = ParserFactory.create(RAW_DATA_DIR / "test.hwpx", None)
+    assert isinstance(strategy, HwpParserStrategy)
 
 
 def test_split_table_into_row_chunks():

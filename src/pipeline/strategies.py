@@ -9,6 +9,7 @@ import fitz
 from src.common.config import settings
 from src.common.constants import MetadataFields
 from src.data.parser import ManualParser
+from src.processing.hwp_parser import HwpParser
 from src.processing.pdf_parser import DoclingPDFParser
 from src.utils.file_utils import generate_file_hash
 from src.utils.paths import RAW_DATA_DIR
@@ -140,12 +141,53 @@ class DoclingPDFParserStrategy(ParserStrategy):
             ]
 
 
+class HwpParserStrategy(ParserStrategy):
+    """markitdown-hwp(docpler Rust 엔진)를 사용하는 HWP/HWPX 파서 전략.
+
+    - HWP 5.0 바이너리 및 HWPX XML 형식 모두 지원
+    - docpler가 표 레코드(HWPTAG_TABLE)의 행/열 좌표를 복원하여 Markdown pipe table로 출력
+    - 변환된 Markdown을 MarkdownParserStrategy와 동일한 섹션 구조로 반환
+    """
+
+    def __init__(self):
+        self.hwp_parser = HwpParser()  # Lazy initialization, 첫 파싱 시 converter 로드
+
+    def parse(self, file_path: Path, storage_manager: Any = None) -> list[dict[str, Any]]:
+        ext = file_path.suffix.lower()
+        if ext not in (".hwp", ".hwpx"):
+            logger.warning(f"HwpParserStrategy: 지원하지 않는 확장자({ext}), 건너뜁니다: {file_path.name}")
+            return []
+
+        parsed = self.hwp_parser.parse(file_path)
+        markdown_text = parsed["markdown"]
+
+        if len(markdown_text.strip()) < 5:
+            logger.warning(f"HWP 파싱 결과가 너무 짧아 건너뜁니다: {file_path.name}")
+            return []
+
+        parser_type = "hwp"
+        base_metadata = {
+            MetadataFields.SOURCE_ID: generate_file_hash(file_path, parser_type),
+            MetadataFields.SRC_NAME: file_path.name,
+            MetadataFields.RELATIVE_PATH: str(_safe_relative_to(file_path, RAW_DATA_DIR)),
+            MetadataFields.PARSER_TYPE: parser_type,
+            MetadataFields.DOC_TYPE: parsed["extension"],
+            MetadataFields.PG_NUM: 1,
+            MetadataFields.CATEGORY: file_path.parent.name if file_path.parent.name != "raw" else "일반",
+        }
+
+        return [{"is_raw_markdown": True, "content": markdown_text, "metadata": base_metadata}]
+
+
 class ParserFactory:
     """파일 타입 및 매니페스트 설정에 따라 적절한 파서 전략을 생성하는 팩토리 클래스"""
 
     @staticmethod
     def create(file_path: Path, file_parser_types: dict[str, str] | None = None) -> ParserStrategy:
-        if file_path.suffix.lower() != ".pdf":
+        suffix = file_path.suffix.lower()
+        if suffix in (".hwp", ".hwpx"):
+            return HwpParserStrategy()
+        if suffix != ".pdf":
             return MarkdownParserStrategy()
 
         import importlib.util

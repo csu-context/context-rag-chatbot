@@ -3,6 +3,7 @@ from pathlib import Path
 
 from src.common.config import settings
 from src.utils.paths import RAW_DATA_DIR
+from src.utils.unicode import normalize_to_nfc
 
 
 def generate_file_hash(file_path: Path, parser_type: str = "manual", doc_type: str | None = None) -> str:
@@ -33,5 +34,7 @@ def generate_file_hash(file_path: Path, parser_type: str = "manual", doc_type: s
         stats = file_path.stat()
         content_hash = f"fallback_{stats.st_size}_{stats.st_mtime}"
 
-    unique_str = f"{relative_path}_{content_hash}_{parser_type}_{doc_type}"
+    # 경로는 NFC 정규화(develop #150: HWP 등 한글 파일명 정합성), 캐시 키엔 doc_type 포함(#149).
+    normalized_path_str = normalize_to_nfc(str(relative_path))
+    unique_str = f"{normalized_path_str}_{content_hash}_{parser_type}_{doc_type}"
     return hashlib.md5(unique_str.encode()).hexdigest()[:12]
