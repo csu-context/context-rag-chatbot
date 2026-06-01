@@ -74,11 +74,11 @@ def test_docling_pdf_parser_parse():
 
 def test_cells_to_markdown_doc_type_gating():
     # general 모드에서는 표 셀에 legal 규칙(분류어 역순·숫자단위 결합)이 누수되지 않아야 한다.
-    cells = [["구분", "제호 2"], ["값", "2 학기"]]
+    cells = [["구분", "제호 2"], ["값", "2 개월"]]
     legal = DoclingPDFParser._cells_to_markdown(cells, "legal")
     general = DoclingPDFParser._cells_to_markdown(cells, "general")
-    assert "제2호" in legal and "2학기" in legal  # legal: 도메인 규칙 적용
-    assert "제호 2" in general and "2 학기" in general  # general: 원형 보존
+    assert "제2호" in legal and "2개월" in legal  # legal: 도메인 규칙 적용
+    assert "제호 2" in general and "2 개월" in general  # general: 원형 보존
 
 
 def test_clean_pdf_noise_and_remove_repeated_lines():

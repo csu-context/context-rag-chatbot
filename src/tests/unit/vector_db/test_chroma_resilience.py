@@ -72,7 +72,7 @@ def test_normalize_pdf_text():
 
     # 자간(커닝) 재결합은 join_sorted_chars 좌표 기반 로직이 처리하므로
     # normalize_pdf_text는 숫자+단위 재결합만 수행한다.
-    assert normalize_pdf_text("2 학기") == "2학기"  # 숫자+단위 재결합
+    assert normalize_pdf_text("3 개월") == "3개월"  # 숫자+단위 재결합(범용 단위)
     # 정상 띄어쓰기가 보존되는지 확인 (이전 _KERNING_SEQ 오작동 회귀 테스트)
     assert normalize_pdf_text("복학 후 전과") == "복학 후 전과"
     assert normalize_pdf_text("홍 길 동") == "홍 길 동"  # 자간 교정은 좌표 단계에서 처리
@@ -84,11 +84,11 @@ def test_clean_text_doc_type_gating():
 
     # legal(기본): 도메인 규칙 적용
     assert clean_text("제호2 서식") == "제2호 서식"
-    assert clean_text("2 학기") == "2학기"
+    assert clean_text("3 개월") == "3개월"
     # general: 도메인 규칙 미적용 → 범용 경로로 누수 차단
     assert clean_text("제호2 서식", doc_type="general") == "제호2 서식"
-    assert clean_text("2 학기", doc_type="general") == "2 학기"
-    assert normalize_pdf_text("2 학기", doc_type="general") == "2 학기"
+    assert clean_text("3 개월", doc_type="general") == "3 개월"
+    assert normalize_pdf_text("3 개월", doc_type="general") == "3 개월"
     # 공백 정리 등 범용 규칙은 general에서도 그대로 동작
     assert clean_text("중복    공백", doc_type="general") == "중복 공백"
 

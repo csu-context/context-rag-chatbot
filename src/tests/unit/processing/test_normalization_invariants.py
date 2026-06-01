@@ -80,7 +80,7 @@ def test_num_unit_right_boundary_blocks_word_prefixes():
     assert clean_text("5 명령 체계") == "5 명령 체계"  # 명령
     # 단위가 공백/EOS 경계에 오는 정상 케이스는 그대로 결합
     assert clean_text("정원 5 명") == "정원 5명"
-    assert clean_text("2 학기") == "2학기"
+    assert clean_text("3 개월") == "3개월"
 
 
 def test_held_out_terms_are_not_rewritten():
