@@ -24,7 +24,6 @@ services:
       - REDIS_URL=redis://redis:6379/0
     ports:
       - "8501:8501"
-      - "9090:9090"
     # healthcheck 조건 기반 depends_on
     depends_on:
       chromadb:
