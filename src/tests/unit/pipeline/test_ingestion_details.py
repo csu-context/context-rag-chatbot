@@ -11,6 +11,7 @@ from src.pipeline.ingestion import (
 )
 from src.pipeline.strategies import (
     DoclingPDFParserStrategy,
+    HwpParserStrategy,
     ManualParserStrategy,
     MarkdownParserStrategy,
 )
@@ -53,6 +54,13 @@ def test_get_parser_strategy_for_file():
     with patch("importlib.util.find_spec", return_value=None):
         strategy = _get_parser_strategy_for_file(RAW_DATA_DIR / "test.pdf", file_parser_types)
         assert isinstance(strategy, ManualParserStrategy)
+
+    # 4. HWP/HWPX 파일은 HwpParserStrategy 반환
+    strategy = _get_parser_strategy_for_file(RAW_DATA_DIR / "test.hwp", None)
+    assert isinstance(strategy, HwpParserStrategy)
+
+    strategy = _get_parser_strategy_for_file(RAW_DATA_DIR / "test.hwpx", None)
+    assert isinstance(strategy, HwpParserStrategy)
 
 
 def test_split_table_into_row_chunks():
