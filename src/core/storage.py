@@ -4,6 +4,8 @@ import pickle
 from pathlib import Path
 from typing import Any
 
+from src.common.config import settings
+
 logger = logging.getLogger(__name__)
 
 
@@ -37,6 +39,20 @@ class StorageManager:
         path = self.get_cache_path(source_id)
         with open(path, "wb") as f:
             pickle.dump(data, f)
+        self._evict_cache_if_needed()
+
+    def _evict_cache_if_needed(self) -> None:
+        """MAX_PICKLE_CACHE_FILES 초과 시 오래된 캐시 자동 삭제."""
+        cache_files = sorted(self.cache_dir.glob("*_parsed.pkl"), key=lambda p: p.stat().st_mtime)
+        over = len(cache_files) - settings.MAX_PICKLE_CACHE_FILES
+        if over <= 0:
+            return
+        for old_file in cache_files[:over]:
+            try:
+                old_file.unlink()
+                logger.info(f"Pickle 캐시 Eviction: {old_file.name}")
+            except Exception as e:
+                logger.warning(f"캐시 삭제 실패 {old_file.name}: {e}")
 
     def save_processed_data(self, source_id: str, data: Any) -> Path:
         """최종 청크 가공 데이터를 JSON 형식의 물리 파일로 영속화합니다."""

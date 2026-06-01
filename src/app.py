@@ -1,16 +1,22 @@
 import os
+import sys
 
-# Python 3.13 + macOS 멀티스레드 환경의 segfault 방지를 위한 설정
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
-os.environ["OMP_NUM_THREADS"] = "1"
-os.environ["MKL_NUM_THREADS"] = "1"
-os.environ["OPENBLAS_NUM_THREADS"] = "1"
-os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
-os.environ["NUMEXPR_NUM_THREADS"] = "1"
-os.environ["RAYON_NUM_THREADS"] = "1"
+# macOS/Windows 전용 segfault 방지 — Linux 운영서버에는 적용 안 함
+# Linux에서 스레드 수 1 고정 시 CPU Starvation/OOM 유발 가능
+if sys.platform != "linux":
+    os.environ["TOKENIZERS_PARALLELISM"] = "false"
+    os.environ["OMP_NUM_THREADS"] = "1"
+    os.environ["MKL_NUM_THREADS"] = "1"
+    os.environ["OPENBLAS_NUM_THREADS"] = "1"
+    os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+    os.environ["NUMEXPR_NUM_THREADS"] = "1"
+    os.environ["RAYON_NUM_THREADS"] = "1"
+else:
+    os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 
 import logging
+import threading
 import time
 from pathlib import Path
 
@@ -74,6 +80,19 @@ ensure_directories()
 # --- 2. 세션 상태 초기화 (중앙 이관 호출) ---
 init_session_state()
 
+# Redis 세션 복원 — REDIS_URL 설정 시 이전 대화 기록 복구
+# 로드밸런서로 다른 인스턴스로 라우팅되어도 대화 연속성 유지
+if settings.REDIS_URL and "redis_session_loaded" not in st.session_state:
+    st.session_state.redis_session_loaded = True
+    _session_id = st.query_params.get("sid", "") or id(st.session_state)
+    st.session_state._redis_session_id = str(_session_id)
+    from src.utils.redis_session import RedisSessionStore
+
+    saved_msgs = RedisSessionStore.load_messages(st.session_state._redis_session_id)
+    if saved_msgs:
+        st.session_state.messages = saved_msgs
+        logger.info(f"Redis에서 세션 복원 ({len(saved_msgs)}개 메시지)")
+
 
 def reset_doc_dialog():
     st.session_state.dialog_doc_to_show = None
@@ -96,15 +115,21 @@ def show_document_dialog(doc: dict):
         st.rerun()
 
 
-# --- 3. RAG 시스템 초기화 (캐싱 및 팩토리 패턴 도입) ---
+# --- 3. RAG 시스템 초기화 ---
+# Stateless 개선 — DB/Retriever/RAG chain 모두 전역 캐시(세션 간 공유)
+# SemanticCache 데이터는 ChromaDB에 저장되므로 인스턴스 공유해도 충돌 없음
 @st.cache_resource
 def initialize_rag_system():
     retriever_type = os.getenv("RETRIEVER_TYPE", "vector").lower()
     from src.vector_db.chroma_manager import ChromaDBManager
 
     db_manager = ChromaDBManager()
-    # RetrieverFactory를 사용한 리트리버 동적 생성
     retriever = RetrieverFactory.create_retriever(retriever_type=retriever_type, chroma_manager=db_manager)
+    # 임베더 eager load (첫 질문 지연 제거)
+    # hybrid: retriever.chroma 가 ChromaDBManager / vector: retriever 자체가 ChromaDBManager
+    chroma_mgr = getattr(retriever, "chroma", None) or retriever
+    if hasattr(chroma_mgr, "embedding_fn"):
+        _ = chroma_mgr.embedding_fn.embedder
     rag_chain = get_rag_chain(retriever)
     return db_manager, rag_chain
 
@@ -122,6 +147,14 @@ if "metrics_server_started" not in st.session_state:
 
     MetricsServer.start()
 
+# 리랭커 Eager Loading (백그라운드 스레드, 최초 1회만)
+if not st.session_state.get("reranker_eager_load_started"):
+    st.session_state.reranker_eager_load_started = True
+    if settings.RERANKER_TYPE.lower() == "local":
+        from src.core.reranker import CrossEncoderReranker
+
+        CrossEncoderReranker.eager_load_background()
+
 # --- 모델 다운로드 및 준비 상태 사전 체크 ---
 model_ready = True
 is_ollama = settings.MODEL_TYPE == "ollama"
@@ -131,6 +164,10 @@ if is_ollama:
         llm_instance = LLMFactory.create_llm()
         if not llm_instance.is_model_available():
             model_ready = False
+        elif "llm_warmup_done" not in st.session_state:
+            st.session_state.llm_warmup_done = True
+            # 동기 warmup은 첫 페이지 로드를 멈춤 → 데몬 스레드로 백그라운드 실행 (리랭커 패턴과 동일)
+            threading.Thread(target=llm_instance.warmup, daemon=True, name="ollama-warmup").start()
     except Exception as e:
         model_ready = False
         logger.error(f"로컬 LLM 상태 진단 중 오류: {e}")
