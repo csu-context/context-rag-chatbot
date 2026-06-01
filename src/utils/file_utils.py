@@ -1,21 +1,14 @@
 import hashlib
 from pathlib import Path
 
-from src.common.config import settings
 from src.utils.paths import RAW_DATA_DIR
-from src.utils.unicode import normalize_to_nfc
 
 
-def generate_file_hash(file_path: Path, parser_type: str = "manual", doc_type: str | None = None) -> str:
+def generate_file_hash(file_path: Path, parser_type: str = "manual") -> str:
     """
-    [DataOps] 파일의 실제 본문 콘텐츠 해시와 파서/문서 타입을 조합하여 고유 ID(Hash)를 생성합니다.
+    [DataOps] 파일의 실제 본문 콘텐츠 해시와 파서 타입을 조합하여 고유 ID(Hash)를 생성합니다.
     단순 st_mtime 변경으로 인한 무의미한 재색인을 완전히 방지합니다.
-
-    doc_type은 파싱 결과(분류어 교정·표 셀 정규화 등)를 바꾸므로 캐시 키에 포함한다.
-    미지정 시 현재 settings.DOC_TYPE을 사용해 DOC_TYPE 전환 시 캐시가 자동 무효화되도록 한다.
     """
-    if doc_type is None:
-        doc_type = settings.DOC_TYPE
     try:
         # RAW_DATA_DIR 기준 상대 경로 포함
         relative_path = file_path.relative_to(RAW_DATA_DIR)
@@ -34,7 +27,5 @@ def generate_file_hash(file_path: Path, parser_type: str = "manual", doc_type: s
         stats = file_path.stat()
         content_hash = f"fallback_{stats.st_size}_{stats.st_mtime}"
 
-    # 경로는 NFC 정규화(develop #150: HWP 등 한글 파일명 정합성), 캐시 키엔 doc_type 포함(#149).
-    normalized_path_str = normalize_to_nfc(str(relative_path))
-    unique_str = f"{normalized_path_str}_{content_hash}_{parser_type}_{doc_type}"
+    unique_str = f"{relative_path}_{content_hash}_{parser_type}"
     return hashlib.md5(unique_str.encode()).hexdigest()[:12]

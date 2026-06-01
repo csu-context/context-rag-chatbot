@@ -127,17 +127,23 @@ class CrossEncoderReranker(BaseReranker):
             if self._model is not None:
                 return self._model
             try:
+                import warnings
+
                 automodel_args = (
                     {"torch_dtype": torch.float16}
                     if settings.RERANKER_USE_FP16 and self.device in ("cuda", "mps")
                     else {}
                 )
-                self._model = CrossEncoder(
-                    self.model_name,
-                    device=self.device,
-                    cache_dir=str(CROSS_ENCODER_CACHE_DIR),
-                    automodel_args=automodel_args,
-                )
+                # Issue 40: sentence-transformers/transformers 버전업 시 Deprecation Warning 억제
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("ignore", category=FutureWarning, module="sentence_transformers")
+                    warnings.filterwarnings("ignore", category=DeprecationWarning, module="transformers")
+                    self._model = CrossEncoder(
+                        self.model_name,
+                        device=self.device,
+                        cache_dir=str(CROSS_ENCODER_CACHE_DIR),
+                        automodel_args=automodel_args,
+                    )
             except Exception as e:
                 logger.error(f"Failed to load CrossEncoder: {e}")
                 raise

@@ -13,7 +13,6 @@ langchain-google-genai==4.2.2
 langchain-anthropic==1.4.3
 langchain-ollama==1.1.0
 google-genai==1.72.0
-google-generativeai==0.8.6
 langchain-huggingface==1.2.2
 openai==2.36.0
 langchain-openai==1.2.1
@@ -42,7 +41,6 @@ pytesseract==0.3.13
 pandas==3.0.2
 tabulate==0.10.0
 docling>=2.0.0
-markitdown-hwp==0.1.0
 
 # UI 및 유틸리티
 streamlit==1.57.0

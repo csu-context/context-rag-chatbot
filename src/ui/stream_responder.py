@@ -42,6 +42,8 @@ class StreamResponder:
             self.response_container.markdown(self.full_response + "▌")
         elif stage == "generation" and status == "complete":
             self.response_container.markdown(self.full_response)
+            if "token_usage" in step:
+                self.token_usage = step.get("token_usage", {})
         elif stage == "citation" and status == "complete":
             self.final_docs = self._format_docs(step.get("source_documents", []))
 
@@ -113,6 +115,8 @@ class StreamResponder:
             "system_stats": self.get_system_stats_fn(),
             "status": status,
         }
+        if hasattr(self, "token_usage"):
+            log_kwargs["token_usage"] = self.token_usage
         log_kwargs["query"] = st.session_state.current_prompt
         if error:
             log_kwargs["error"] = str(error)
@@ -125,6 +129,15 @@ class StreamResponder:
                 doc.get("metadata", {}).get("rerank_score", doc.get("score", 0.0)) for doc in self.final_docs
             ]
         self.perf_logger.log(**log_kwargs)
+
+        # Issue 32: 세션 토큰/과금 누적
+        if not error:
+            usage = log_kwargs.get("token_usage", {})
+            if usage:
+                tokens = st.session_state.setdefault("session_tokens", {"input": 0, "output": 0, "cost_usd": 0.0})
+                tokens["input"] += usage.get("input_tokens", 0)
+                tokens["output"] += usage.get("output_tokens", 0)
+                tokens["cost_usd"] += usage.get("cost_usd", 0.0)
 
         st.session_state.stream_iter = None
         st.session_state.current_prompt = ""

@@ -5,6 +5,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.core.chains import get_rag_chain
+from src.core.retriever import EnsembleRetriever
+from src.vector_db.bm25_manager import BM25Manager
+from src.vector_db.chroma_manager import ChromaDBManager
 
 TEST_CASES = [
     {
@@ -44,8 +47,9 @@ TEST_CASES = [
 def rag_setup():
     """RAG 파이프라인 전체를 초기화하는 Pytest Fixture (LLM/Reranker는 모킹하여 부하 감소)"""
     print("\n[초기화] RAG 파이프라인 설정 (LLM/Reranker 모킹)...")
+    db = ChromaDBManager(collection_name="rag_collection")
 
-    # 리트리버는 모킹하여 실제 DB 없이 시스템 부하를 줄임
+    # 리트리버는 실제 DB를 사용하되, LLM과 Reranker는 모킹하여 시스템 부하를 줄임
     with (
         patch("src.models.factory.LLMFactory.create_llm_with_fallback") as mock_llm_factory,
         patch("src.core.reranker.RerankerFactory.create") as mock_reranker_factory,
@@ -60,13 +64,9 @@ def rag_setup():
         mock_reranker = MagicMock()
         mock_reranker_factory.return_value = mock_reranker
 
-        from langchain_core.documents import Document
-
-        # 체인은 retriever.get_relevant_documents(query, n=k)를 호출한다(chains.py 참조).
-        retriever = MagicMock()
-        retriever.get_relevant_documents.return_value = [
-            Document(page_content="dummy", metadata={"source": "dummy.pdf"})
-        ]
+        # 체인 생성 (이 시점에서 팩토리가 패치된 상태여야 함)
+        bm25 = BM25Manager()
+        retriever = EnsembleRetriever(chroma_manager=db, bm25_manager=bm25)
         rag_chain = get_rag_chain(retriever)
 
         return rag_chain, mock_model, mock_reranker

@@ -22,18 +22,6 @@ def test_generate_file_hash_outside_raw_dir(tmp_path):
     assert len(h) == 12
 
 
-def test_generate_file_hash_includes_doc_type(tmp_path):
-    # doc_type이 캐시 키에 반영되어 DOC_TYPE 전환 시 해시가 달라져야 한다(stale 파싱 방지).
-    file_path = tmp_path / "doc.pdf"
-    file_path.write_bytes(b"same content")
-    with patch("src.utils.file_utils.RAW_DATA_DIR", tmp_path):
-        h_legal = generate_file_hash(file_path, "docling", doc_type="legal")
-        h_general = generate_file_hash(file_path, "docling", doc_type="general")
-        assert h_legal != h_general
-        # 동일 doc_type은 동일 해시(결정성)
-        assert h_legal == generate_file_hash(file_path, "docling", doc_type="legal")
-
-
 def test_generate_file_hash_fallback(tmp_path):
     # Exception 발생하여 fallback 로직 타는 케이스 검증
     file_path = tmp_path / "test_fallback.txt"

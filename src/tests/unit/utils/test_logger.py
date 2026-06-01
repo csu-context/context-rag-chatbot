@@ -27,11 +27,11 @@ def test_performance_logger_logging(tmp_path):
     test_log_file = tmp_path / "performance.jsonl"
 
     with patch("src.utils.logger.LOGS_DIR", tmp_path):
+        import logging
+
+        logging.getLogger("performance_logger").handlers.clear()
+        PerformanceLogger._instance = None
         logger = PerformanceLogger()
-        # 싱글톤이므로 기존 인스턴스의 설정을 강제로 변경
-        logger.log_file = test_log_file
-        if not test_log_file.exists():
-            test_log_file.touch()
 
         # 변경된 JSONL **kwargs 기반 로깅 방식에 맞춰 키워드 인자로 전달
         logger.log(log_type="TEST_TYPE", duration=1.23, info="Test Info")

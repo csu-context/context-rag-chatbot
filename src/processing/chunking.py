@@ -1,6 +1,6 @@
+import json
 import re
 import uuid
-from abc import ABC, abstractmethod
 from typing import Any, cast
 
 from langchain_text_splitters import (
@@ -10,22 +10,10 @@ from langchain_text_splitters import (
 
 from src.common.constants import MetadataFields
 from src.common.schema import ChildChunk, ChunkMetadata, ParentChunk
+from src.utils.paths import ensure_directories
 
 _PARENT_CHUNK_SIZE: int = 1500
 _CHILD_CHUNK_SIZE: int = 400
-_PAGE_BREAK_MARKER: str = "<!-- page break -->"
-
-
-def _net_page_breaks(text: str, prev_text: str | None, overlap: int) -> int:
-    """text 내 페이지브레이크 수에서 직전 split의 overlap 구간 중복분을 차감한다.
-
-    RecursiveCharacterTextSplitter가 이전 split 끝 overlap 문자를 다음 split 앞에 복사하므로
-    경계에서 마커가 이중 계수되는 것을 막는다.
-    """
-    count = text.count(_PAGE_BREAK_MARKER)
-    if prev_text is not None:
-        count -= prev_text[-overlap:].count(_PAGE_BREAK_MARKER)
-    return max(0, count)
 
 
 class MarkdownTableProtector:
@@ -171,9 +159,13 @@ class HierarchicalChunker:
 
             restored_text = MarkdownTableProtector.restore_tables(child_text, tables).strip()
 
-            prev_child = merged_docs[idx - 1] if idx > 0 else None
-            child_page_breaks = _net_page_breaks(restored_text, prev_child, self.child_chunk_overlap)
-            clean_text = restored_text.replace(_PAGE_BREAK_MARKER, "").strip()
+            child_page_breaks = restored_text.count("<!-- page break -->")
+            if idx > 0:
+                # 이전 child split 끝 overlap 구간과 중복된 마커만 제거
+                prev_tail = merged_docs[idx - 1][-self.child_chunk_overlap :]
+                child_page_breaks -= prev_tail.count("<!-- page break -->")
+            child_page_breaks = max(0, child_page_breaks)
+            clean_text = restored_text.replace("<!-- page break -->", "").strip()
 
             if not clean_text:
                 current_child_page += child_page_breaks
@@ -215,7 +207,7 @@ class HierarchicalChunker:
         current_page = base_metadata.get(MetadataFields.PG_NUM, 1)
 
         for doc in header_docs:
-            page_breaks_in_header = doc.page_content.count(_PAGE_BREAK_MARKER)
+            page_breaks_in_header = doc.page_content.count("<!-- page break -->")
 
             if not doc.page_content.strip():
                 current_page += page_breaks_in_header
@@ -242,8 +234,13 @@ class HierarchicalChunker:
 
                 children_list = self.split_into_children(p_text, parent_id, meta_for_children)
 
-                prev_parent = parent_splits[p_idx - 1] if p_idx > 0 else None
-                page_breaks_in_parent = _net_page_breaks(p_text, prev_parent, self.parent_chunk_overlap)
+                page_breaks_in_parent = p_text.count("<!-- page break -->")
+                if p_idx > 0:
+                    # 이전 split 끝 overlap 구간에도 포함된 마커만 중복으로 제거
+                    # (RecursiveCharacterTextSplitter가 이전 split 마지막 overlap 문자를 다음 split 앞에 복사하므로)
+                    prev_tail = parent_splits[p_idx - 1][-self.parent_chunk_overlap :]
+                    page_breaks_in_parent -= prev_tail.count("<!-- page break -->")
+                page_breaks_in_parent = max(0, page_breaks_in_parent)
 
                 if not children_list:
                     current_page += page_breaks_in_parent
@@ -262,7 +259,7 @@ class HierarchicalChunker:
                     MetadataFields.RELATIVE_PATH: base_metadata.get(MetadataFields.RELATIVE_PATH, "UNKNOWN"),
                 }
 
-                clean_p_text = p_text.replace(_PAGE_BREAK_MARKER, "").strip()
+                clean_p_text = p_text.replace("<!-- page break -->", "").strip()
 
                 hierarchical_data.append(
                     {
@@ -284,118 +281,26 @@ def create_parent_child_chunks(markdown_text: str, base_metadata: dict[str, Any]
     return cast(list[dict[str, Any]], chunker.chunk(markdown_text, base_metadata))
 
 
-def _split_table_into_row_chunks(content: str, parent_id: str, base_meta: dict) -> list[dict[str, Any]]:
-    """표를 행(row) 단위 청크로 분할. 각 청크에 표 제목 컨텍스트 + 헤더 행 보존."""
-    parts = content.split("\n\n", 1)
-    if len(parts) == 2 and "|" in parts[1]:
-        title_ctx, table_md = parts[0].strip(), parts[1].strip()
-    else:
-        title_ctx, table_md = "", content.strip()
+if __name__ == "__main__":
+    ensure_directories()
 
-    lines = [ln for ln in table_md.split("\n") if ln.strip()]
-    if len(lines) < 3:
-        return []
+    dummy_metadata = {
+        MetadataFields.SOURCE_ID: "TEST_001",
+        MetadataFields.SRC_NAME: "test_manual.md",
+        MetadataFields.DOC_TYPE: "markdown",
+        MetadataFields.PG_NUM: 1,
+    }
 
-    header, separator = lines[0], lines[1]
-    data_rows = lines[2:]
+    sample_text = """# 제1장
+## 제1조 정의
+이것은 테스트 문서입니다.
 
-    children = []
-    for i, row in enumerate(data_rows):
-        if not row.strip() or set(row.strip()) <= {"|", "-", " ", ":"}:
-            continue
-        row_content_parts = [header, separator, row]
-        if title_ctx:
-            row_content_parts = [title_ctx, "", *row_content_parts]
-        row_text = "\n".join(row_content_parts).strip()
-        child_id = f"{parent_id}_r{i}"
-        child_meta = {
-            **base_meta,
-            MetadataFields.CHUNK_ID: child_id,
-            MetadataFields.PARENT_ID: parent_id,
-            MetadataFields.IS_TABLE: True,
-        }
-        children.append({"chunk_id": child_id, "metadata": child_meta, "text": row_text})
+표 테스트:
+| 항목 | 내용 |
+|---|---|
+| 1 | 테스트 1 |
+| 2 | 테스트 2 |
 
-    return children
-
-
-class ChunkingStrategy(ABC):
-    @abstractmethod
-    def chunk(self, sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        pass
-
-
-class RawMarkdownChunkingStrategy(ChunkingStrategy):
-    def chunk(self, sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        chunker = HierarchicalChunker()
-        return cast(list[dict[str, Any]], chunker.chunk(sections[0]["content"], sections[0]["metadata"]))
-
-
-class CombinedChunkingStrategy(ChunkingStrategy):
-    def chunk(self, sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        chunker = HierarchicalChunker()
-        result = []
-        for sec in sections:
-            result.extend(chunker.chunk(sec["content"], sec["metadata"]))
-        return result
-
-
-class ManualPDFChunkingStrategy(ChunkingStrategy):
-    def chunk(self, sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        chunker = HierarchicalChunker()
-        result = []
-        for sec in sections:
-            parent_id = str(uuid.uuid4())
-            meta_for_children = sec["metadata"].copy()
-            sec_title = f"{sec.get('chapter', '기본 섹션')} > {sec.get('article', '기본 섹션')}"
-            meta_for_children[MetadataFields.SEC_TITLE] = sec_title
-            meta_for_children[MetadataFields.HEADER_PATH] = sec_title
-
-            if sec["metadata"].get(MetadataFields.IS_TABLE, False):
-                children = _split_table_into_row_chunks(sec["content"], parent_id, meta_for_children)
-            else:
-                children = chunker.split_into_children(sec["content"], parent_id, meta_for_children)
-
-            if children:
-                parent_metadata = {
-                    MetadataFields.SOURCE_ID: sec["metadata"].get(MetadataFields.SOURCE_ID, "UNKNOWN"),
-                    MetadataFields.SRC_NAME: sec["metadata"].get(MetadataFields.SRC_NAME, "UNKNOWN"),
-                    MetadataFields.DOC_TYPE: sec["metadata"].get(MetadataFields.DOC_TYPE, "pdf"),
-                    MetadataFields.PG_NUM: sec["metadata"].get(MetadataFields.PG_NUM, 1),
-                    MetadataFields.SEC_TITLE: sec_title,
-                    MetadataFields.CHUNK_ID: parent_id,
-                    MetadataFields.PARENT_ID: None,
-                    MetadataFields.HEADER_PATH: sec_title,
-                    MetadataFields.IS_TABLE: sec["metadata"].get(MetadataFields.IS_TABLE, False),
-                    MetadataFields.RELATIVE_PATH: sec["metadata"].get(MetadataFields.RELATIVE_PATH, "UNKNOWN"),
-                }
-                result.append(
-                    {
-                        "parent_id": parent_id,
-                        "parent_text": sec["content"],
-                        "metadata": parent_metadata,
-                        "children": children,
-                    }
-                )
-        return result
-
-
-class ChunkingFactory:
-    @staticmethod
-    def get_strategy(sections: list[dict[str, Any]]) -> ChunkingStrategy:
-        if not sections:
-            return RawMarkdownChunkingStrategy()
-        first = sections[0]
-        if first.get("is_raw_markdown"):
-            return RawMarkdownChunkingStrategy()
-        if first.get("is_combined"):
-            return CombinedChunkingStrategy()
-        return ManualPDFChunkingStrategy()
-
-
-def chunk_sections(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """다양한 파서 전략에서 나온 결과물(sections)을 적절한 전략으로 분할합니다."""
-    if not sections:
-        return []
-    strategy = ChunkingFactory.get_strategy(sections)
-    return strategy.chunk(sections)
+매우 짧은 문단"""
+    chunking_result = create_parent_child_chunks(sample_text, dummy_metadata)
+    print(json.dumps(chunking_result, ensure_ascii=False, indent=2))

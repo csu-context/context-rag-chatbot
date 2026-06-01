@@ -22,6 +22,8 @@ def init_session_state():
         "start_time": None,
         "show_expert_mode": False,
         "chunk_viewer_page": 0,
+        # Issue 32: API 토큰/과금 누적 추적
+        "session_tokens": {"input": 0, "output": 0, "cost_usd": 0.0},
     }
 
     for key, val in defaults.items():

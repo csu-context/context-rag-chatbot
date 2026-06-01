@@ -63,37 +63,25 @@ class PerformanceLogger:
     def _setup(self):
         LOGS_DIR.mkdir(parents=True, exist_ok=True)
         self.log_file = LOGS_DIR / "performance.jsonl"
-        if not self.log_file.exists():
-            self.log_file.touch()
 
-    def _rotate_if_needed(self):
-        """파일 크기가 한계를 초과하면 로그 로테이션을 수행합니다. (lock 보유 상태에서 호출)"""
-        if not self.log_file.exists() or self.log_file.stat().st_size < _PERF_LOG_MAX_BYTES:
-            return
+        from logging.handlers import RotatingFileHandler
 
-        for i in range(_PERF_LOG_BACKUP_COUNT - 1, 0, -1):
-            src = Path(f"{self.log_file}.{i}")
-            dst = Path(f"{self.log_file}.{i + 1}")
-            if src.exists():
-                if dst.exists():
-                    dst.unlink()
-                src.rename(dst)
+        self.perf_logger = logging.getLogger("performance_logger")
+        self.perf_logger.setLevel(logging.INFO)
+        self.perf_logger.propagate = False
 
-        backup = Path(f"{self.log_file}.1")
-        if backup.exists():
-            backup.unlink()
-        self.log_file.rename(backup)
-        self.log_file.touch()
+        if not self.perf_logger.handlers:
+            handler = RotatingFileHandler(
+                self.log_file, maxBytes=_PERF_LOG_MAX_BYTES, backupCount=_PERF_LOG_BACKUP_COUNT, encoding="utf-8"
+            )
+            handler.setFormatter(logging.Formatter("%(message)s"))
+            self.perf_logger.addHandler(handler)
 
     def log(self, **kwargs):
         """성능 로그를 JSONL 형식으로 파일에 기록합니다."""
         timestamp = datetime.now().isoformat()
         log_entry = {"timestamp": timestamp, **kwargs}
-
-        with self._lock:
-            self._rotate_if_needed()
-            with open(self.log_file, "a", encoding="utf-8") as f:
-                f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
+        self.perf_logger.info(json.dumps(log_entry, ensure_ascii=False))
 
     def log_inference(self, prompt: str, response: str, status: str, info: str = "", duration: float = 0.0):
         """추론 성능과 관련된 요약 정보를 performance.log에 기록합니다."""

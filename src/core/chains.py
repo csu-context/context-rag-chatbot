@@ -1,5 +1,9 @@
+import functools
+import json
 import logging
+import os
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 from langchain_core.documents import Document
@@ -11,13 +15,30 @@ from src.core.cache import SemanticCache
 from src.core.nodes import _MAX_HISTORY_MESSAGES, ContextBuilderNode
 from src.core.prompts import get_system_prompt
 from src.core.reranker import RerankerFactory
-from src.core.storage import StorageManager
 from src.models.factory import LLMFactory
 from src.utils.citation import format_citations
 from src.utils.logger import TracingLogger
-from src.utils.paths import CACHE_DIR, PROCESSED_DATA_DIR
+from src.utils.paths import PROCESSED_DATA_DIR
 
 logger = logging.getLogger(__name__)
+
+
+@functools.lru_cache(maxsize=128)
+def _load_source_json(json_path: Path) -> list | None:
+    """source_id별 JSON 파일을 LRU 캐시로 로드합니다. 동일 경로의 반복 디스크 I/O를 방지합니다."""
+    try:
+        if json_path.exists():
+            with open(json_path, encoding="utf-8") as f:
+                return json.load(f)
+        return None
+    except Exception as e:
+        logger.error(f"JSON 파일 로드 실패: {json_path} - {e}")
+        return None
+
+
+def invalidate_source_json_cache() -> None:
+    """인덱싱으로 JSON 파일이 갱신된 경우 LRU 캐시를 무효화합니다."""
+    _load_source_json.cache_clear()
 
 
 class RAGPipeline:
@@ -29,7 +50,6 @@ class RAGPipeline:
         self.reranker = reranker or RerankerFactory.create()
         self.tracing_logger = TracingLogger()
         self.cache = SemanticCache()
-        self.storage_manager = StorageManager(processed_dir=PROCESSED_DATA_DIR, cache_dir=CACHE_DIR)
 
     def _resolve_parent_documents(self, docs: list[Document]) -> list[Document]:
         """자식 청크로 검색된 문서들을 부모 청크의 원문으로 전환하며, 동일 부모 및 동일 텍스트 중복을 제거합니다."""
@@ -48,7 +68,8 @@ class RAGPipeline:
                 # IS_TABLE child는 sub-table 단위로 LLM 컨텍스트에 전달 (full table 크기 초과 방지)
                 if not doc.metadata.get(MetadataFields.IS_TABLE, False):
                     try:
-                        parents_list = self.storage_manager.load_processed_file_cached(source_id)
+                        json_path = PROCESSED_DATA_DIR / f"{source_id}.json"
+                        parents_list = _load_source_json(json_path)
                         if parents_list:
                             for p in parents_list:
                                 if p.get("parent_id") == parent_id:
@@ -81,9 +102,9 @@ class RAGPipeline:
                 else:
                     docs.append(
                         Document(
-                            page_content=res.get("content", "") or "",
+                            page_content=res.get("content", ""),
                             metadata={
-                                **(res.get("metadata") or {}),
+                                **res.get("metadata", {}),
                                 "score": res.get("score") or res.get("_rrf_score", 0),
                             },
                         )
@@ -176,8 +197,10 @@ class RAGPipeline:
             )
 
             full_answer = ""
+            last_chunk = None
             try:
                 for chunk in self.llm.stream(prompt_val):
+                    last_chunk = chunk
                     content = self._extract_answer(chunk)
                     full_answer += content
                     yield content
@@ -190,6 +213,20 @@ class RAGPipeline:
                     exc_info=True,
                 )
                 raise
+
+            from src.models.base import BaseLLM, LLMResponse
+
+            usage = BaseLLM.extract_usage(last_chunk) if last_chunk else {}
+            token_usage_dict = {}
+            if usage:
+                temp_resp = LLMResponse(content="", usage=usage, model_name=model_id)
+                token_usage_dict = {
+                    "input_tokens": usage.get("input_tokens", 0),
+                    "output_tokens": usage.get("output_tokens", 0),
+                    "total_tokens": usage.get("total_tokens", 0),
+                    "cost_usd": temp_resp.cost,
+                }
+            session.data["token_usage"] = token_usage_dict
 
             step.update({"answer_length": len(full_answer)})
             session.data["final_answer"] = full_answer
@@ -244,7 +281,7 @@ class RAGPipeline:
             for token in self._stream_generation(query, final_docs, history, session):
                 full_answer += token
                 yield {"stage": "generation", "status": "streaming", "output": token}
-            yield {"stage": "generation", "status": "complete"}
+            yield {"stage": "generation", "status": "complete", "token_usage": session.data.get("token_usage", {})}
 
             # 5. Final Formatting (Citation) & Caching
             yield {"stage": "citation", "status": "running"}
@@ -266,8 +303,13 @@ class RAGPipeline:
 
 
 def get_rag_chain(retriever_or_db):
-    """
-    RAG 파이프라인 체인을 생성합니다. LangChain Runnable 인터페이스를 준수합니다.
-    """
+    """RAG 파이프라인 체인을 생성합니다. LangChain Runnable 인터페이스를 준수합니다."""
+    from src.common.config import settings
+
+    # Issue 44: LANGCHAIN_TRACING_V2=True 시 LangSmith 자동 트레이싱 활성화
+    if settings.LANGCHAIN_TRACING_V2:
+        os.environ.setdefault("LANGCHAIN_TRACING_V2", "true")
+        logger.info("LangSmith 트레이싱 활성화됨 (LANGCHAIN_TRACING_V2=True)")
+
     pipeline = RAGPipeline(retriever_or_db)
     return RunnableLambda(pipeline.stream)
