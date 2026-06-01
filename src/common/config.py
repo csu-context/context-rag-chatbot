@@ -69,7 +69,7 @@ class Settings(BaseSettings):
     REDIS_SESSION_TTL_SEC: int = Field(default=86400)  # 세션 TTL 24시간
 
     # 모니터링/트레이싱 설정 (LangSmith)
-    LANGCHAIN_TRACING_V2: bool = Field(default=False)
+    LANGSMITH_TRACING: bool = Field(default=False)
 
     # 4. 파이프라인 및 파싱 설정
     PARSER_TYPE: Literal["manual", "docling"] = Field(default="docling")

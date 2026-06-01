@@ -350,10 +350,10 @@ def get_rag_chain(retriever_or_db):
     """RAG 파이프라인 체인을 생성합니다. LangChain Runnable 인터페이스를 준수합니다."""
     from src.common.config import settings
 
-    # LANGCHAIN_TRACING_V2=True 시 LangSmith 자동 트레이싱 활성화
-    if settings.LANGCHAIN_TRACING_V2:
-        os.environ.setdefault("LANGCHAIN_TRACING_V2", "true")
-        logger.info("LangSmith 트레이싱 활성화됨 (LANGCHAIN_TRACING_V2=True)")
+    # LANGSMITH_TRACING=True 시 LangSmith 자동 트레이싱 활성화
+    if settings.LANGSMITH_TRACING:
+        os.environ.setdefault("LANGSMITH_TRACING", "true")
+        logger.info("LangSmith 트레이싱 활성화됨 (LANGSMITH_TRACING=True)")
 
     pipeline = RAGPipeline(retriever_or_db)
     return RunnableLambda(pipeline.stream)
