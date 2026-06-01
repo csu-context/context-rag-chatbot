@@ -75,13 +75,9 @@ class EnsembleRetriever(BaseRetriever):
             logger.info(f"{name} 미연결 -> {name} 검색 생략")
             return []
         try:
-            results = manager.retrieve(query, n, metadata_filter=metadata_filter)
-            if not results:
-                logger.warning(
-                    f"{name} 검색 결과 없음 (query='{query[:50]}', filter={metadata_filter})"
-                )  # return results
+            return manager.retrieve(query, n, metadata_filter=metadata_filter)
         except Exception as e:
-            logger.error(f"{name} 검색 오류 (빈 리스트 폴백): {e}")
+            logger.error(f"{name} 검색 오류: {e}")
             return []
 
     def _get_bm25_results(self, query: str, n: int, metadata_filter: dict | None = None) -> list:
@@ -114,7 +110,7 @@ class EnsembleRetriever(BaseRetriever):
         if MetadataFields.CHUNK_ID in doc:
             return str(doc[MetadataFields.CHUNK_ID])
 
-        metadata = doc.get("metadata", {})
+        metadata = doc.get("metadata") or {}
 
         if MetadataFields.CHUNK_ID in metadata:
             return str(metadata[MetadataFields.CHUNK_ID])
