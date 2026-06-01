@@ -199,7 +199,7 @@ class RAGPipeline:
 
     def _stream_with_keepalive(self, prompt_val: Any, keepalive_interval: int = 20) -> Iterator[str]:
         """LLM 토큰을 스트리밍하되, 토큰 사이 유휴가 keepalive_interval(기본 20초)을 넘으면
-        빈 청크를 발사하여 Proxy 유휴 타임아웃에 의한 연결 단절을 방지한다 (Issue 20).
+        빈 청크를 발사하여 Proxy 유휴 타임아웃에 의한 연결 단절을 방지한다.
 
         동기 stream 루프는 next()에서 블로킹되어 토큰 사이 유휴 동안 코드가 진입하지 못한다.
         청크 생산을 별도 스레드로 분리하고 소비자는 timeout 폴링하여 유휴 구간에도 keepalive를 발사한다.

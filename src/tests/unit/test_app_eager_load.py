@@ -21,8 +21,6 @@ def mock_st_session_state():
 
 
 def test_reranker_eager_load(mock_st_session_state):
-    # Test bug_027 fix
-
     with (
         patch("src.core.reranker.CrossEncoderReranker") as mock_reranker,
         patch("src.vector_db.chroma_manager.ChromaDBManager"),
@@ -48,8 +46,6 @@ def test_reranker_eager_load(mock_st_session_state):
 
 
 def test_llm_warmup_guard(mock_st_session_state):
-    # Test bug_044 fix
-
     with (
         patch("src.app.st.set_page_config"),
         patch("src.app.st.sidebar"),

@@ -20,7 +20,7 @@ def reset_admin_active():
 
 
 def _render_sync_progress(initialize_rag_system_callback):
-    """R1: 백그라운드 동기화 진행률 폴링 프래그먼트."""
+    """백그라운드 동기화 진행률 폴링 프래그먼트."""
 
     @st.fragment(run_every="1s")
     def _progress_fragment():
@@ -63,7 +63,7 @@ def _render_sync_progress(initialize_rag_system_callback):
 
 @st.dialog("데이터 관리 시스템", width="large", on_dismiss=reset_admin_active)
 def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
-    # R1: 백그라운드 동기화 실행 중이면 진행률 표시
+    # 백그라운드 동기화 실행 중이면 진행률 표시
     current_job = st.session_state.get("_current_sync_job")
     if current_job and current_job.running:
         st.subheader("동기화 진행 중...")
@@ -109,7 +109,7 @@ def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
     with col_btn1:
         if st.button("업로드 실행", key="admin_upload_btn", use_container_width=True):
             if uploaded_files:
-                # Issue 13: AxiosError 400 방지 — 빈 파일·중복·경로 문제 사전 검증
+                # AxiosError 400 방지 — 빈 파일·중복·경로 문제 사전 검증
                 valid_files = [f for f in uploaded_files if f.name and f.size and f.size > 0]
                 invalid = [f.name for f in uploaded_files if not (f.name and f.size and f.size > 0)]
                 if invalid:
@@ -415,8 +415,6 @@ def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
                         st.success("복구가 완료되었습니다. 상태를 재확인하세요.")
                         time.sleep(0.5)
                         st.rerun()
-
-    st.divider()
 
     st.divider()
     if st.button("관리 시스템 종료 (닫기)", use_container_width=True):

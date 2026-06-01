@@ -1,4 +1,4 @@
-"""하이브리드 검색 병렬화 벤치마크 (Issue #131 / DoD A).
+"""하이브리드 검색 병렬화 벤치마크.
 
 EnsembleRetriever 는 BM25 leg 와 Vector leg 를 ThreadPoolExecutor 로 병렬 실행한다.
 본 스크립트는 *동일한 두 leg* 를 직렬(sequential)과 병렬(parallel)로 각각 실행해

@@ -66,7 +66,7 @@ class StreamResponder:
 
     @property
     def _stage_durations(self) -> dict[str, float]:
-        """Issue 25: display_latencies/finalize_stream 중복 제거."""
+        """display_latencies/finalize_stream 중복 제거."""
         return {s: v["end"] - v["start"] for s, v in self.stage_latencies.items() if "end" in v}
 
     def display_latencies(self):
@@ -113,7 +113,7 @@ class StreamResponder:
         )
         _trim_chat_history()
 
-        # Issue 12: Redis에 대화 기록 동기화 (REDIS_URL 설정 시)
+        # Redis에 대화 기록 동기화 (REDIS_URL 설정 시)
         from src.common.config import settings
 
         if settings.REDIS_URL:
@@ -163,7 +163,7 @@ class StreamResponder:
                     self.process_step(step)
 
             if st.session_state.stop_generation:
-                # Issue 10: 이터레이터 명시적 종료로 LLM HTTP 요청 취소
+                # 이터레이터 명시적 종료로 LLM HTTP 요청 취소
                 _iter = st.session_state.stream_iter
                 st.session_state.stop_generation = False
                 self.finalize_stream("interrupted")

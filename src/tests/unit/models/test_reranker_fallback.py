@@ -43,12 +43,12 @@ def test_reranker_cpu_fallback_on_gpu_error():
         assert call_count == 2
         assert len(result.documents) == 2
         assert result.scores[0] == pytest.approx(_sigmoid(0.8))
-        # R2: 서킷브레이커 - GPU 장애 시각이 기록되어야 함
+        # 서킷브레이커 - GPU 장애 시각이 기록되어야 함
         assert CrossEncoderReranker._gpu_failure_time is not None
 
 
 def test_circuit_breaker_gpu_recovery():
-    """R2: GPU 복구 인터벌 경과 후 GPU 재시도 검증."""
+    """GPU 복구 인터벌 경과 후 GPU 재시도 검증."""
     CrossEncoderReranker.reset_instance()
 
     reranker = CrossEncoderReranker.get_instance(device="cuda")
@@ -74,7 +74,7 @@ def test_circuit_breaker_gpu_recovery():
 
 
 def test_rerank_with_timeout_returns_fallback_on_timeout():
-    """R7: 타임아웃 시 원본 문서 즉시 반환 검증."""
+    """타임아웃 시 원본 문서 즉시 반환 검증."""
     CrossEncoderReranker.reset_instance()
 
     reranker = CrossEncoderReranker.get_instance(device="cpu")

@@ -1,4 +1,4 @@
-"""백그라운드 파싱 중 Streamlit 메인 스레드 논블로킹 검증 (Issue #4 / DoD B).
+"""백그라운드 파싱 중 Streamlit 메인 스레드 논블로킹 검증.
 
 DoD: "10개 PDF 파싱 중 Streamlit UI의 다른 탭·버튼이 메인 스레드 블로킹 없이 반응".
 

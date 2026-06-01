@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 class ManifestManager:
     """manifest.json을 통한 파일 상태 관리 및 변경점(Delta) 계산을 담당합니다."""
 
-    _manifest_lock = threading.Lock()  # Issue 7: manifest 파일 race condition 방지
+    _manifest_lock = threading.Lock()  # manifest 파일 race condition 방지
 
     def __init__(self, parser_type: str):
         self.parser_type = parser_type
@@ -56,7 +56,7 @@ class ManifestManager:
     def save_manifest(self, manifest: dict[str, Any]) -> None:
         """처리 완료 후 새로운 manifest 상태를 저장합니다.
 
-        Issue 7: atomic write(임시 파일 → rename)로 race condition 방지.
+        atomic write(임시 파일 → rename)로 race condition 방지.
         """
         tmp_path = self.manifest_path.with_suffix(".tmp")
         try:

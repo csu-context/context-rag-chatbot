@@ -8,7 +8,7 @@ from src.vector_db.chroma_manager import ChromaDBManager
 
 
 def test_hybrid_search_runs_parallel():
-    """R5: BM25와 Vector 검색이 병렬로 실행되는지 검증."""
+    """BM25와 Vector 검색이 병렬로 실행되는지 검증."""
     call_times: list[float] = []
     lock = threading.Lock()
 
@@ -27,7 +27,7 @@ def test_hybrid_search_runs_parallel():
 
     from unittest.mock import patch
 
-    # Issue 22 표 보조 검색 비활성화하여 병렬 타이밍만 검증
+    # 표 보조 검색 비활성화하여 병렬 타이밍만 검증
     with patch("src.core.retriever.settings") as mock_settings:
         mock_settings.RETRIEVER_CANDIDATE_POOL_MIN = 3
         mock_settings.TABLE_RETRIEVAL_ENABLED = False

@@ -7,7 +7,7 @@ services:
     volumes:
       - ./src:/app/src
       - ./data:/app/data
-      - model-cache:/app/models        # Issue 23: named volume — root 소유 충돌 방지
+      - model-cache:/app/models        # named volume — root 소유 충돌 방지
       - ./logs:/app/logs
       - ./.cache:/app/.cache
       - ./.env:/app/.env
@@ -18,11 +18,11 @@ services:
       - CHROMA_SERVER_PORT=8000
       - OLLAMA_BASE_URL=http://ollama:11434
       - HF_HOME=/app/models
-      # Issue 12: Redis 세션 스토어 (수평 확장 시 활성화)
+      # Redis 세션 스토어 (수평 확장 시 활성화)
       - REDIS_URL=redis://redis:6379/0
     ports:
       - "8501:8501"
-    # Issue 16: healthcheck 조건 기반 depends_on
+    # healthcheck 조건 기반 depends_on
     depends_on:
       chromadb:
         condition: service_healthy
@@ -34,7 +34,7 @@ services:
       - "host.docker.internal:host-gateway"
     networks:
       - rag-network
-    # Issue 9: 리소스 한도 / Issue 17: 무중단 배포 rolling update
+    # 리소스 한도 / 무중단 배포 rolling update
     deploy:
       resources:
         limits:
@@ -49,7 +49,7 @@ services:
       rollback_config:
         order: stop-first
     restart: unless-stopped
-    # Issue 16: app 자체 healthcheck
+    # app 자체 healthcheck
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health')"]
       interval: 30s
@@ -70,7 +70,7 @@ services:
     entrypoint: ["/bin/bash", "/root/ollama_init.sh"]
     networks:
       - rag-network
-    # Issue 9: Ollama GPU/CPU 리소스 한도
+    # Ollama GPU/CPU 리소스 한도
     deploy:
       resources:
         limits:
@@ -83,7 +83,7 @@ services:
     image: chromadb/chroma:latest
     container_name: rag-chatbot-chromadb
     volumes:
-      # Issue 6: named volume — 컨테이너 재시작 시 데이터 유실 방지
+      # named volume — 컨테이너 재시작 시 데이터 유실 방지
       - chroma-data:/data
     ports:
       - "8000:8000"
@@ -92,14 +92,14 @@ services:
       - PERSIST_DIRECTORY=/data
     networks:
       - rag-network
-    # Issue 9: ChromaDB 리소스 한도
+    # ChromaDB 리소스 한도
     deploy:
       resources:
         limits:
           memory: 2g
           cpus: "1.0"
     restart: unless-stopped
-    # Issue 16: ChromaDB healthcheck — app 기동 순서 보장
+    # ChromaDB healthcheck — app 기동 순서 보장
     # chromadb/chroma 이미지에는 python/curl/wget이 없고(최소 이미지) v1 API도 제거됨 →
     # bash /dev/tcp로 8000 포트 TCP 연결만 확인한다(서버 바인딩=수신 준비, API 버전 무관).
     healthcheck:
@@ -109,7 +109,7 @@ services:
       retries: 5
       start_period: 20s
 
-  # Issue 12: Redis 세션 스토어 — 수평 확장 시 대화 연속성 유지
+  # Redis 세션 스토어 — 수평 확장 시 대화 연속성 유지
   redis:
     image: redis:7-alpine
     container_name: rag-chatbot-redis
@@ -133,12 +133,12 @@ networks:
     driver: bridge
 
 volumes:
-  # Issue 6: 영속 볼륨 — 인프라 업데이트 시 데이터 유실 방지
+  # 영속 볼륨 — 인프라 업데이트 시 데이터 유실 방지
   chroma-data:
     driver: local
-  # Issue 23: 모델 캐시 named volume — Docker non-root 권한 충돌 방지
+  # 모델 캐시 named volume — Docker non-root 권한 충돌 방지
   model-cache:
     driver: local
-  # Issue 12: Redis 세션 영속화
+  # Redis 세션 영속화
   redis-data:
     driver: local

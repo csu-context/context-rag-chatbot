@@ -1,4 +1,4 @@
-# Issue 20: WebSocket 타임아웃 방어 — Proxy/폐쇄망 환경 연결 끊김 방지
+# WebSocket 타임아웃 방어 — Proxy/폐쇄망 환경 연결 끊김 방지
 [server]
 # 업로드 최대 크기 (MB)
 maxUploadSize = 200

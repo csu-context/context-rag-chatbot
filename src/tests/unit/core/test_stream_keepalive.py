@@ -1,4 +1,4 @@
-"""Issue 20: 스트리밍 keepalive 단위 테스트.
+"""스트리밍 keepalive 단위 테스트.
 
 토큰 사이 유휴가 keepalive_interval을 넘으면 빈 청크("")가 발사되어
 Proxy 유휴 타임아웃에 의한 연결 단절을 방지하는지 검증한다.

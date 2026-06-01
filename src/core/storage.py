@@ -43,7 +43,7 @@ class StorageManager:
         self._evict_cache_if_needed()
 
     def _evict_cache_if_needed(self) -> None:
-        """Issue 15: MAX_PICKLE_CACHE_FILES 초과 시 오래된 캐시 자동 삭제."""
+        """MAX_PICKLE_CACHE_FILES 초과 시 오래된 캐시 자동 삭제."""
         cache_files = sorted(self.cache_dir.glob("*_parsed.pkl"), key=lambda p: p.stat().st_mtime)
         over = len(cache_files) - settings.MAX_PICKLE_CACHE_FILES
         if over <= 0:

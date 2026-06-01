@@ -1,4 +1,4 @@
-"""리랭커 GPU 장애 → CPU 폴백 → GPU 복구 라이프사이클 실증 스크립트 (Issue #25 / DoD C).
+"""리랭커 GPU 장애 → CPU 폴백 → GPU 복구 라이프사이클 실증 스크립트.
 
 DoD: "리랭커 GPU 오류 모사 시 5분(=RERANKER_GPU_RECOVERY_INTERVAL_SEC=300초) 이내 정상 복구".
 
@@ -70,7 +70,7 @@ def main() -> int:
     settings.RERANKER_GPU_RECOVERY_INTERVAL_SEC = interval
 
     print("=" * 72)
-    print("🧪 리랭커 GPU 장애 → CPU 폴백 → GPU 복구 실증 (Issue #25 / DoD C)")
+    print("🧪 리랭커 GPU 장애 → CPU 폴백 → GPU 복구 실증")
     print(f"   복구 인터벌: {interval}초  (운영 기본값 = 300초 = 5분)")
     print(f"   로그 파일  : {log_path}")
     print("=" * 72)

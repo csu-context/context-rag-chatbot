@@ -1,4 +1,4 @@
-"""Issue 12: Redis 기반 세션 스토어 — Stateless 수평 확장 지원.
+"""Redis 기반 세션 스토어 — Stateless 수평 확장 지원.
 
 REDIS_URL 환경변수 설정 시 Redis에 세션 데이터를 저장합니다.
 미설정 시 아무 동작도 하지 않아 기존 Streamlit in-memory 동작을 유지합니다.

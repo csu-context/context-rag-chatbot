@@ -20,7 +20,7 @@ from src.utils.paths import CROSS_ENCODER_CACHE_DIR
 
 # 리랭킹 타임아웃용 공유 스레드풀 (호출마다 새로 만들면 스레드 누적)
 _rerank_executor = ThreadPoolExecutor(max_workers=1)
-# bug_006: 직전 rerank가 타임아웃 후에도 워커에서 계속 실행 중인지 표시.
+# 직전 rerank가 타임아웃 후에도 워커에서 계속 실행 중인지 표시.
 # set 상태면 새 작업을 큐에 쌓지 않고 즉시 원본 반환 (단일 워커 큐 누적 방지)
 _rerank_busy = threading.Event()
 
@@ -66,7 +66,7 @@ class BaseReranker(ABC):
         pass
 
     def rerank_with_timeout(self, query: str, documents: list[Document], **kwargs: Any) -> RerankResult:
-        """R7: 타임아웃 기반 리랭킹. 초과 시 원본 반환.
+        """타임아웃 기반 리랭킹. 초과 시 원본 반환.
 
         Note: Python 스레드는 중단 불가 — 타임아웃 시 caller만 해제되고
         워커 스레드는 완료될 때까지 계속 실행됩니다.
@@ -85,7 +85,7 @@ class BaseReranker(ABC):
                 elapsed_time_sec=time.time() - start_time,
             )
 
-        # bug_006 busy 가드: 직전 작업이 타임아웃 후에도 워커에서 실행 중이면
+        # busy 가드: 직전 작업이 타임아웃 후에도 워커에서 실행 중이면
         # 새 작업을 큐에 쌓지 않고 즉시 원본 반환
         if _rerank_busy.is_set():
             logger.warning(f"Reranker busy (이전 작업 진행 중) in {self.name}. Returning original documents.")
@@ -111,8 +111,8 @@ class CrossEncoderReranker(BaseReranker):
     _instance: Optional["CrossEncoderReranker"] = None
     _model: CrossEncoder | None = None
     _singleton_lock = threading.Lock()
-    _gpu_failure_time: float | None = None  # R2: 서킷브레이커 GPU 장애 기록
-    _eager_loading: bool = False  # Issue 18: 중복 eager load 스레드 방지
+    _gpu_failure_time: float | None = None  # 서킷브레이커 GPU 장애 기록
+    _eager_loading: bool = False  # 중복 eager load 스레드 방지
 
     def __init__(
         self,
@@ -124,7 +124,7 @@ class CrossEncoderReranker(BaseReranker):
         super().__init__(name="Local CrossEncoder", top_k=top_k, threshold=threshold)
         self.model_name = model_name or settings.RERANKER_MODEL_NAME
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-        self._original_device = self.device  # R2: 서킷브레이커 복구 기준
+        self._original_device = self.device  # 서킷브레이커 복구 기준
 
     @classmethod
     def get_instance(
@@ -152,11 +152,11 @@ class CrossEncoderReranker(BaseReranker):
             cls._instance = None
             cls._gpu_failure_time = None
             cls._eager_loading = False
-        _rerank_busy.clear()  # bug_006: 테스트 격리 — busy 플래그 초기화
+        _rerank_busy.clear()  # 테스트 격리 — busy 플래그 초기화
 
     @classmethod
     def eager_load_background(cls) -> threading.Thread | None:
-        """R3/Issue 18: 앱 시작 시 백그라운드 Eager Loading. 중복 스레드 방지."""
+        """앱 시작 시 백그라운드 Eager Loading. 중복 스레드 방지."""
         with cls._singleton_lock:
             if cls._eager_loading or cls._model is not None:
                 return None
@@ -208,7 +208,7 @@ class CrossEncoderReranker(BaseReranker):
         return scores_pred.tolist() if hasattr(scores_pred, "tolist") else list(scores_pred)
 
     def _predict_with_cpu_fallback(self, pairs: list) -> list:
-        # Issue 25: GPU 복구 판단·장치 전환·모델 초기화를 lock 내에서 원자적으로 수행
+        # GPU 복구 판단·장치 전환·모델 초기화를 lock 내에서 원자적으로 수행
         recovery_interval = settings.RERANKER_GPU_RECOVERY_INTERVAL_SEC
         with self._singleton_lock:
             if (

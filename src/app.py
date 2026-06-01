@@ -1,7 +1,7 @@
 import os
 import sys
 
-# Issue 8: macOS/Windows 전용 segfault 방지 — Linux 운영서버에는 적용 안 함
+# macOS/Windows 전용 segfault 방지 — Linux 운영서버에는 적용 안 함
 # Linux에서 스레드 수 1 고정 시 CPU Starvation/OOM 유발 가능
 if sys.platform != "linux":
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -80,7 +80,7 @@ ensure_directories()
 # --- 2. 세션 상태 초기화 (중앙 이관 호출) ---
 init_session_state()
 
-# Issue 12: Redis 세션 복원 — REDIS_URL 설정 시 이전 대화 기록 복구
+# Redis 세션 복원 — REDIS_URL 설정 시 이전 대화 기록 복구
 # 로드밸런서로 다른 인스턴스로 라우팅되어도 대화 연속성 유지
 if settings.REDIS_URL and "redis_session_loaded" not in st.session_state:
     st.session_state.redis_session_loaded = True
@@ -116,7 +116,7 @@ def show_document_dialog(doc: dict):
 
 
 # --- 3. RAG 시스템 초기화 ---
-# Issue 12: Stateless 개선 — DB/Retriever/RAG chain 모두 전역 캐시(세션 간 공유)
+# Stateless 개선 — DB/Retriever/RAG chain 모두 전역 캐시(세션 간 공유)
 # SemanticCache 데이터는 ChromaDB에 저장되므로 인스턴스 공유해도 충돌 없음
 @st.cache_resource
 def initialize_rag_system():
@@ -140,7 +140,7 @@ except Exception as e:
     st.error(f"시스템 초기화 오류: {e}")
     st.stop()
 
-# R3: 리랭커 Eager Loading (백그라운드 스레드, 최초 1회만)
+# 리랭커 Eager Loading (백그라운드 스레드, 최초 1회만)
 if not st.session_state.get("reranker_eager_load_started"):
     st.session_state.reranker_eager_load_started = True
     if settings.RERANKER_TYPE.lower() == "local":

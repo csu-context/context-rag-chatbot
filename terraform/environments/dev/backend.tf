@@ -1,4 +1,4 @@
-# Issue 11: Terraform State 공유 — S3 + DynamoDB 원격 백엔드로 팀 충돌 방지
+# Terraform State 공유 — S3 + DynamoDB 원격 백엔드로 팀 충돌 방지
 # 사용 전 S3 버킷 및 DynamoDB 테이블 사전 생성 필요:
 #   aws s3api create-bucket --bucket rag-chatbot-tfstate --region ap-northeast-2 \
 #     --create-bucket-configuration LocationConstraint=ap-northeast-2

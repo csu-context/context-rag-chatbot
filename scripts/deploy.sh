@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Issue 5: 프라이빗 레포 배포 스크립트 — 무한 대기 방지 (timeout + 헬스체크)
+# 프라이빗 레포 배포 스크립트 — 무한 대기 방지 (timeout + 헬스체크)
 set -euo pipefail
 
 TIMEOUT_SECONDS=${DEPLOY_TIMEOUT:-120}

@@ -15,7 +15,7 @@ class SyncCancelledError(BaseException):
     """백그라운드 동기화 사용자 취소 신호.
 
     BaseException 을 상속하여 파이프라인 전반의 `except Exception` 블록에 흡수되지 않고
-    sync_controller 의 취소 핸들러까지 전파되도록 한다. (bug_028)
+    sync_controller 의 취소 핸들러까지 전파되도록 한다.
     """
 
 
@@ -87,7 +87,7 @@ class SyncController:
         force: bool = False,
         clear_cache_callback: Callable | None = None,
     ) -> SyncJobState:
-        """R1/Issue 4: 비동기 백그라운드 동기화. 이미 실행 중이면 기존 job 반환."""
+        """비동기 백그라운드 동기화. 이미 실행 중이면 기존 job 반환."""
         existing = st.session_state.get("_current_sync_job")
         if existing and existing.running:
             return existing

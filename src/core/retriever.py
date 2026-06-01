@@ -9,7 +9,7 @@ from src.core.base_retriever import BaseRetriever
 
 logger = logging.getLogger(__name__)
 
-# Issue 19: 하이브리드 검색의 BM25/Vector leg를 병렬 실행하기 위한 공유 스레드풀.
+# 하이브리드 검색의 BM25/Vector leg를 병렬 실행하기 위한 공유 스레드풀.
 # 매 쿼리마다 ThreadPoolExecutor를 생성·해제하면 그 오버헤드(~수 ms)가 짧은 leg의
 # 병렬 이득을 잡아먹어 직렬보다 느려질 수 있다. 모듈 수명 동안 풀을 재사용해 이를 제거한다.
 # (워커는 submit 시점에 지연 생성되므로 import 비용은 사실상 없다.)
@@ -36,7 +36,7 @@ class EnsembleRetriever(BaseRetriever):
         return self.get_relevant_documents(query, n, metadata_filter=metadata_filter)
 
     def get_relevant_documents(self, query: str, n: int = 5, metadata_filter: dict | None = None) -> list:
-        """R5: BM25 + Vector 병렬 실행 후 RRF 병합."""
+        """BM25 + Vector 병렬 실행 후 RRF 병합."""
         n_candidates = max(settings.RETRIEVER_CANDIDATE_POOL_MIN, n)
 
         bm25_future = _RETRIEVAL_EXECUTOR.submit(self._get_bm25_results, query, n_candidates, metadata_filter)
@@ -56,7 +56,7 @@ class EnsembleRetriever(BaseRetriever):
 
         main_results = self._rrf_fusion(bm25_results, vector_results, n)
 
-        # Issue 22: 표 전용 보조 검색 — 일반 청크에 묻히는 표 데이터 보장
+        # 표 전용 보조 검색 — 일반 청크에 묻히는 표 데이터 보장
         if settings.TABLE_RETRIEVAL_ENABLED and metadata_filter is None:
             table_filter = {MetadataFields.IS_TABLE: True}
             table_n = max(2, n // 3)
