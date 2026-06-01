@@ -1,7 +1,6 @@
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from src.common.config import settings
 from src.pipeline.strategies import (
     DoclingPDFParserStrategy,
     ManualParserStrategy,
@@ -29,7 +28,7 @@ def test_manual_parser_strategy():
         patch("src.pipeline.strategies.ManualParser", return_value=mock_parser) as mock_class,
     ):
         res = strategy.parse(Path("/raw/test.pdf"))
-        mock_class.assert_called_once_with("test.pdf", parser_type="manual", doc_type=settings.DOC_TYPE)
+        mock_class.assert_called_once_with("test.pdf", parser_type="manual")
         assert res == [{"content": "manual parsed"}]
 
 
@@ -63,27 +62,20 @@ def test_docling_pdf_parser_strategy(tmp_path):
     mock_doc = MagicMock()
     mock_doc.__len__.return_value = 1
     mock_page = MagicMock()
-    mock_page.get_text.side_effect = lambda mode, **kw: (
-        {"blocks": []} if mode == "rawdict" else "Page Header\nSome regular non-table text\n"
-    )
-    mock_page.find_tables.return_value.tables = []
+    mock_page.get_text.return_value = "Page Header\nSome regular non-table text\n"
     mock_doc.__getitem__.return_value = mock_page
 
     with (
-        patch("src.pipeline.strategies.DoclingPDFParser") as mock_pdf_parser_class,
+        patch("src.pipeline.strategies.DoclingPDFParser", return_value=mock_pdf_parser),
         patch("src.pipeline.strategies.RAW_DATA_DIR", tmp_path),
         patch("src.pipeline.strategies.generate_file_hash", return_value="hash_docling"),
         patch("src.pipeline.strategies.ManualParser") as mock_manual_parser_class,
         patch("fitz.open", return_value=mock_doc),
     ):
-        mock_pdf_parser_class.return_value = mock_pdf_parser
-        mock_pdf_parser_class.build_table_content.return_value = "Page Header\n\n| A | B |\n|---|---|\n| 1 | 2 |"
         # mock manual parser return
         mock_manual_inst = MagicMock()
         mock_manual_inst.parse.return_value = [{"content": "manual text", "metadata": {}}]
         mock_manual_parser_class.return_value = mock_manual_inst
-        mock_manual_parser_class.get_table_bboxes.return_value = []
-        mock_manual_parser_class.clean_text.return_value = ""
 
         strategy = DoclingPDFParserStrategy()
         res = strategy.parse(pdf_file)

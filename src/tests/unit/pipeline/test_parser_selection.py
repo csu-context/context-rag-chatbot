@@ -34,7 +34,7 @@ class TestParserSelection:
         # 헬퍼 및 서브 모듈 모킹
         orchestrator.ingestion_pipeline = MagicMock()
         orchestrator.ingestion_pipeline.scan_files.return_value = []
-        orchestrator.manifest_manager.load_manifest = MagicMock(return_value={})
+        orchestrator._load_manifest = MagicMock(return_value={})
 
         # docling 라이브러리가 로드되는 상황을 모킹하기 위해 patch 사용
         with patch("src.pipeline.orchestrator.DoclingPDFParserStrategy") as mock_docling_strategy:
@@ -61,10 +61,10 @@ class TestParserSelection:
         orchestrator.ingestion_pipeline.scan_files.return_value = mock_files
 
         # manifest와 delta 계산 모킹
-        orchestrator.manifest_manager.load_manifest = MagicMock(
+        orchestrator._load_manifest = MagicMock(
             return_value={"version": "2.0", "global_parser_type": "manual", "files": {}}
         )
-        orchestrator.manifest_manager.calculate_delta = MagicMock(
+        orchestrator._calculate_delta = MagicMock(
             return_value=(mock_files, [], {"version": "2.0", "global_parser_type": "manual", "files": {}})
         )
 
@@ -104,7 +104,7 @@ class TestParserSelection:
         mock_json = json.dumps(mock_data)
 
         with patch("pathlib.Path.exists", return_value=True), patch("builtins.open", mock_open(read_data=mock_json)):
-            loaded = orchestrator.manifest_manager.load_manifest()
+            loaded = orchestrator._load_manifest()
 
             # 검증: 2.0 구조로 자동 래핑 전환 여부
             assert loaded["version"] == "2.0"
@@ -132,12 +132,10 @@ class TestParserSelection:
         }
 
         # generate_file_hash 함수가 호출될 때, 각 파서 타입이 의도대로 넘어가는지 모킹
-        with patch("src.pipeline.manifest_manager.generate_file_hash") as mock_hash_gen:
+        with patch("src.pipeline.orchestrator.generate_file_hash") as mock_hash_gen:
             mock_hash_gen.side_effect = lambda f, parser_type: f"hash_of_{f.name}_by_{parser_type}"
 
-            _, _, new_manifest = orchestrator.manifest_manager.calculate_delta(
-                mock_files, old_manifest, orchestrator.storage_manager, orchestrator.ingestion_pipeline.db_manager
-            )
+            _, _, new_manifest = orchestrator._calculate_delta(mock_files, old_manifest)
 
             # rules.pdf는 docling 기준, info.md는 manual 기준으로 해시가 호출되었는지 검증
             mock_hash_gen.assert_any_call(RAW_DATA_DIR / "rules.pdf", "docling")
@@ -158,17 +156,16 @@ class TestParserSelection:
             "files": {"rules.pdf": {"hash": "hash_val", "parser_type": "manual"}},
         }
 
-        orchestrator.manifest_manager.load_manifest = MagicMock(return_value=old_manifest)
-        orchestrator.manifest_manager.save_manifest = MagicMock()
-        orchestrator.manifest_manager.find_relative_path = MagicMock(return_value="rules.pdf")
+        orchestrator._load_manifest = MagicMock(return_value=old_manifest)
+        orchestrator._save_manifest = MagicMock()
         orchestrator.run_ingestion = MagicMock()
 
         # rules.pdf의 파서를 docling으로 변경 실행
         orchestrator.update_file_parser("rules.pdf", "docling")
 
         # 매니페스트 갱신 저장 확인
-        orchestrator.manifest_manager.save_manifest.assert_called_once()
-        saved_manifest = orchestrator.manifest_manager.save_manifest.call_args[0][0]
+        orchestrator._save_manifest.assert_called_once()
+        saved_manifest = orchestrator._save_manifest.call_args[0][0]
         assert saved_manifest["files"]["rules.pdf"]["parser_type"] == "docling"
 
         # 동기화 프로세스 실행 확인 (target_files 리스트 전달 검증)
@@ -190,22 +187,16 @@ class TestParserSelection:
             },
         }
 
-        orchestrator.manifest_manager.load_manifest = MagicMock(return_value=old_manifest)
-        orchestrator.manifest_manager.save_manifest = MagicMock()
-
-        def mock_find_relative_path(name, *_args, **_kwargs):
-            return name
-
-        orchestrator.manifest_manager.find_relative_path = MagicMock(side_effect=mock_find_relative_path)
-
+        orchestrator._load_manifest = MagicMock(return_value=old_manifest)
+        orchestrator._save_manifest = MagicMock()
         orchestrator.run_ingestion = MagicMock()
 
         # rules.pdf와 info.md를 모두 docling으로 변경 실행
         orchestrator.update_multiple_file_parsers({"rules.pdf": "docling", "info.md": "docling"})
 
         # 매니페스트 갱신 저장 확인
-        orchestrator.manifest_manager.save_manifest.assert_called_once()
-        saved_manifest = orchestrator.manifest_manager.save_manifest.call_args[0][0]
+        orchestrator._save_manifest.assert_called_once()
+        saved_manifest = orchestrator._save_manifest.call_args[0][0]
         assert saved_manifest["files"]["rules.pdf"]["parser_type"] == "docling"
         assert saved_manifest["files"]["info.md"]["parser_type"] == "docling"
 

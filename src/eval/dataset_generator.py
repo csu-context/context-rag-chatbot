@@ -1,6 +1,5 @@
 import json
 import logging
-import os
 import random
 from pathlib import Path
 from typing import Any
@@ -9,14 +8,15 @@ from dotenv import load_dotenv
 from langchain_core.prompts import ChatPromptTemplate
 from tqdm import tqdm
 
+from src.common.config import settings
 from src.models.factory import LLMFactory
+from src.utils.logger import setup_global_logging
 from src.utils.paths import EVAL_DATA_DIR, PROCESSED_DATA_DIR
 
-# 로깅 설정
-logging.basicConfig(level=logging.INFO)
+setup_global_logging()
 logger = logging.getLogger(__name__)
 
-load_dotenv()
+load_dotenv(override=False)
 
 GENERATION_PROMPT = """
 당신은 RAG(Retrieval-Augmented Generation) 시스템의 평가를 위한 정답 데이터셋(Golden Dataset) 제작 전문가입니다.
@@ -42,57 +42,61 @@ GENERATION_PROMPT = """
 
 class GoldenDatasetGenerator:
     def __init__(self, model_type: str = "claude", model_name: str = "claude-haiku-4-5"):
-        # 비용 효율을 위해 Haiku 모델 사용 (기존: claude-sonnet-4-6)
         self.llm_instance = LLMFactory.create_llm(model_type=model_type, model_name=model_name, temperature=0.3)
-        self.prompt = ChatPromptTemplate.from_template(GENERATION_PROMPT)
-        # LLMFactory 인스턴스에서 LangChain 모델 객체 추출
-        self.llm = self.llm_instance.get_model()
-        self.chain = self.prompt | self.llm
+        if hasattr(self.llm_instance, "warmup"):
+            self.llm_instance.warmup()
+        self.prompt_template = ChatPromptTemplate.from_template(GENERATION_PROMPT)
 
-    def load_processed_data(self, file_path: Path) -> list[dict[str, Any]]:
+    @staticmethod
+    def load_processed_data(file_path: Path) -> list[dict[str, Any]]:
         with open(file_path, encoding="utf-8") as f:
             return json.load(f)
 
-    def generate_pair(self, context: str) -> dict[str, str] | None:
+    @staticmethod
+    def _extract_json(content: Any) -> dict[str, str] | None:
+        """LLM 응답에서 JSON 파싱."""
         try:
-            response = self.chain.invoke({"context": context})
-            content = response.content
-
-            # content가 리스트인 경우 처리
             if isinstance(content, list):
-                text_parts = [part.get("text", "") if isinstance(part, dict) else str(part) for part in content]
-                content = "".join(text_parts)
+                content = "".join(part.get("text", "") if isinstance(part, dict) else str(part) for part in content)
             else:
                 content = str(content)
 
-            # JSON 파싱 시도
             if "```json" in content:
                 content = content.split("```json")[1].split("```")[0].strip()
             elif "```" in content:
                 content = content.split("```")[1].split("```")[0].strip()
 
             return json.loads(content)
-        except Exception as e:
-            logger.error(f"데이터 생성 중 오류 발생: {e}")
+        except Exception:
             return None
 
-    def run(self, input_file: Path, output_file: Path, num_samples: int = 20):
-        data = self.load_processed_data(input_file)
+    def run(self, input_files: list[Path], output_file: Path, num_samples: int = 50):
+        chunk_pool: list[tuple[str, str, str]] = []
+        for input_file in input_files:
+            data = self.load_processed_data(input_file)
+            chunk_pool += [
+                (
+                    child["text"],
+                    parent.get("metadata", {}).get("relative_path", "unknown"),
+                    parent.get("metadata", {}).get("source_id", "unknown"),
+                )
+                for parent in data
+                for child in parent.get("children", [])
+                if len(child["text"]) > 150
+            ]
+        chunk_pool = [
+            (text, src, sid)
+            for text, src, sid in chunk_pool
+            if sum(1 for ch in text if "가" <= ch <= "힣") / len(text) > 0.3
+        ]
+        chunk_pool = list({text: (text, src, sid) for text, src, sid in chunk_pool}.values())
 
-        # ... (기존 필터링 로직)
-        all_chunks = []
-        for parent in data:
-            for child in parent.get("children", []):
-                all_chunks.append(child["text"])
+        if not chunk_pool:
+            logger.error("유효한 청크가 없습니다. 필터 조건을 확인하세요.")
+            return
 
-        all_chunks = list(set([c for c in all_chunks if len(c) > 150]))
-        filtered_chunks = [c for c in all_chunks if len([char for char in c if "가" <= char <= "힣"]) / len(c) > 0.3]
-        all_chunks = filtered_chunks
-
-        if len(all_chunks) < num_samples:
-            num_samples = len(all_chunks)
-
-        samples = random.sample(all_chunks, num_samples)
+        num_samples = min(num_samples, len(chunk_pool))
+        samples = random.sample(chunk_pool, num_samples)
 
         golden_dataset = []
         total_input_tokens = 0
@@ -101,16 +105,15 @@ class GoldenDatasetGenerator:
 
         logger.info(f"{num_samples}개의 평가 데이터 생성을 시작합니다.")
 
-        for context in tqdm(samples):
+        for context, source, source_id in tqdm(samples):
             try:
-                # LLMFactory 인스턴스의 invoke를 직접 호출하여 토큰 정보를 가져오기 위해 로직 약간 수정
-                prompt_template = ChatPromptTemplate.from_template(GENERATION_PROMPT)
-                prompt_val = prompt_template.invoke({"context": context})
-
+                prompt_val = self.prompt_template.invoke({"context": context})
                 response_obj = self.llm_instance.invoke(prompt_val)
-                pair = self.generate_pair_from_response(response_obj)
+                pair = self._extract_json(response_obj.content)
 
                 if pair:
+                    pair["source"] = source
+                    pair["source_id"] = source_id
                     golden_dataset.append(pair)
                     total_cost += response_obj.cost
                     if response_obj.usage:
@@ -123,49 +126,25 @@ class GoldenDatasetGenerator:
         with open(output_file, "w", encoding="utf-8") as f:
             json.dump(golden_dataset, f, ensure_ascii=False, indent=4)
 
-        logger.info(f"성공적으로 {len(golden_dataset)}개의 데이터를 저장했습니다.")
-        print("\n" + "=" * 40)
-        print("   데이터 생성 비용 요약 (Estimated Cost)")
-        print("-" * 40)
-        print(f"- 사용 모델: {self.llm_instance.model_name}")
-        print(f"- 총 입력 토큰: {total_input_tokens:,}")
-        print(f"- 총 출력 토큰: {total_output_tokens:,}")
-        print(f"- 예상 합계 비용: ${total_cost:.4f}")
-        print("=" * 40)
-
-    def generate_pair_from_response(self, response_obj) -> dict[str, str] | None:
-        """LLMResponse 객체에서 정답 쌍을 파싱합니다."""
-        try:
-            content = response_obj.content
-            if isinstance(content, list):
-                content = "".join([part.get("text", "") if isinstance(part, dict) else str(part) for part in content])
-
-            if "```json" in content:
-                content = content.split("```json")[1].split("```")[0].strip()
-            elif "```" in content:
-                content = content.split("```")[1].split("```")[0].strip()
-
-            return json.loads(content)
-        except Exception:
-            return None
+        logger.info(f"데이터 저장 완료: {len(golden_dataset)}개 → {output_file}")
+        logger.info(f"모델: {self.llm_instance.model_name}")
+        logger.info(f"입력 토큰: {total_input_tokens:,} / 출력 토큰: {total_output_tokens:,}")
+        logger.info(f"예상 비용: ${total_cost:.4f}")
 
 
 if __name__ == "__main__":
-    # 가장 최근의 전처리 파일 찾기
-    processed_dir = PROCESSED_DATA_DIR
-    json_files = sorted(processed_dir.glob("preprocessed_*.json"), key=os.path.getmtime, reverse=True)
+    json_files = [f for f in PROCESSED_DATA_DIR.glob("*.json") if f.name != "manifest.json"]
 
     if not json_files:
-        print("전처리된 JSON 파일을 찾을 수 없습니다.")
+        logger.error("전처리된 JSON 파일을 찾을 수 없습니다.")
     else:
-        latest_file = json_files[0]
-        # 최신 파싱 결과를 반영한 신규 합성 데이터셋
-        output_path = EVAL_DATA_DIR / "synthetic_dataset_50.json"
-
-        # 데이터셋 생성용 모델 설정 (기본값: Claude)
-        gen_type = os.getenv("EVAL_DATA_GEN_TYPE", "claude")
-        gen_model = os.getenv("EVAL_DATA_GEN_MODEL", "claude-haiku-4-5")
-
-        generator = GoldenDatasetGenerator(model_type=gen_type, model_name=gen_model)
-        # 50개 샘플 생성
-        generator.run(latest_file, output_path, num_samples=50)
+        logger.info(f"대상 파일 {len(json_files)}개: {[f.name for f in json_files]}")
+        generator = GoldenDatasetGenerator(
+            model_type=settings.EVAL_DATA_GEN_TYPE,
+            model_name=settings.EVAL_DATA_GEN_MODEL,
+        )
+        generator.run(
+            input_files=json_files,
+            output_file=EVAL_DATA_DIR / "synthetic_dataset_50.json",
+            num_samples=settings.EVAL_DATA_GEN_SAMPLES,
+        )

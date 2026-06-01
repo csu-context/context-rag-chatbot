@@ -54,7 +54,7 @@ def test_ingestion_pipeline_process_and_chunk_single(mock_pipeline_setup):
 
     with (
         patch("src.pipeline.ingestion.ChromaDBManager"),
-        patch("src.pipeline.ingestion.ParserFactory.create", return_value=mock_strategy),
+        patch("src.pipeline.ingestion._get_parser_strategy_for_file", return_value=mock_strategy),
         patch("src.pipeline.ingestion.RAW_DATA_DIR", raw_dir),
         patch("src.data.parser.RAW_DATA_DIR", raw_dir),
         patch("src.utils.file_utils.RAW_DATA_DIR", raw_dir),

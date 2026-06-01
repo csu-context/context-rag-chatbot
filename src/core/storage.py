@@ -1,4 +1,3 @@
-import functools
 import json
 import logging
 import pickle
@@ -63,31 +62,8 @@ class StorageManager:
         """가공 파일 디렉토리 하위의 모든 JSON 파일 목록을 스캔합니다."""
         return list(self.processed_dir.glob("*.json"))
 
-    @staticmethod
-    @functools.lru_cache(maxsize=128)
-    def _load_cached_json(file_path: Path) -> Any | None:
-        """내부용: 경로 기반 LRU 캐시 JSON 로더"""
-        try:
-            if file_path.exists():
-                with open(file_path, encoding="utf-8") as f:
-                    return json.load(f)
-            return None
-        except Exception as e:
-            logger.error(f"JSON 파일 로드 실패: {file_path} - {e}")
-            return None
-
-    def load_processed_file_cached(self, source_id: str) -> Any | None:
-        """가공 JSON 파일을 LRU 캐시를 적용하여 역직렬화합니다."""
-        file_path = self.get_processed_path(source_id)
-        return self._load_cached_json(file_path)
-
-    @classmethod
-    def invalidate_json_cache(cls) -> None:
-        """인덱싱 등으로 파일이 갱신된 경우 JSON LRU 캐시를 무효화합니다."""
-        cls._load_cached_json.cache_clear()
-
     def load_processed_file(self, file_path: Path) -> Any:
-        """특정 JSON 데이터 파일을 역직렬화하여 읽습니다 (비캐시 버전)."""
+        """특정 JSON 데이터 파일을 역직렬화하여 읽습니다."""
         with open(file_path, encoding="utf-8") as f:
             return json.load(f)
 

@@ -1,5 +1,4 @@
 import logging
-import os
 import sys
 from pathlib import Path
 
@@ -25,10 +24,7 @@ LOGS_DIR = (BASE_DIR / "logs").resolve()
 EVAL_LOGS_DIR = (LOGS_DIR / "eval").resolve()
 
 # 4. 설정 및 사전 파일 경로
-# 동의어 사전은 도메인 종속 어휘이므로 패키지 코드 밖(data/config/)에서 주입한다.
-# SYNONYMS_PATH 환경변수로 외부 볼륨 경로를 오버라이드할 수 있고, 파일이 없으면
-# BM25Tokenizer가 빈 사전으로 폴백한다(범용 매뉴얼 RAG 기본 동작).
-SYNONYMS_FILE = Path(os.getenv("SYNONYMS_PATH") or (DATA_DIR / "config" / "synonyms.json")).resolve()
+SYNONYMS_FILE = (BASE_DIR / "src" / "common" / "synonyms.json").resolve()
 CACHE_DIR = (BASE_DIR / ".cache").resolve()
 BM25_CACHE_FILE = CACHE_DIR / "bm25_index.pkl"  # legacy — kept for reference only
 BM25_CACHE_DIR = CACHE_DIR / "bm25_v2"

@@ -1,4 +1,5 @@
 import logging
+import re
 import time
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -9,7 +10,6 @@ import fitz
 from src.common.config import settings
 from src.common.constants import MetadataFields
 from src.data.parser import ManualParser
-from src.processing.hwp_parser import HwpParser
 from src.processing.pdf_parser import DoclingPDFParser
 from src.utils.file_utils import generate_file_hash
 from src.utils.paths import RAW_DATA_DIR
@@ -38,8 +38,9 @@ class ManualParserStrategy(ParserStrategy):
     """기존 ManualParser를 사용하는 전략"""
 
     def parse(self, file_path: Path, storage_manager: Any = None) -> list[dict[str, Any]]:
+        # ManualParser는 RAW_DATA_DIR 기준 상대 경로를 받음
         relative_path = _safe_relative_to(file_path, RAW_DATA_DIR)
-        parser = ManualParser(str(relative_path), parser_type="manual", doc_type=settings.DOC_TYPE)
+        parser = ManualParser(str(relative_path), parser_type="manual")
         return parser.parse()
 
 
@@ -77,13 +78,12 @@ class DoclingPDFParserStrategy(ParserStrategy):
     """
 
     def __init__(self):
-        self.doc_type = settings.DOC_TYPE
-        self.pdf_parser = DoclingPDFParser(doc_type=self.doc_type)  # 표 추출 전용, AI 모델 1회만 로드
+        self.pdf_parser = DoclingPDFParser()  # 표 추출 전용, AI 모델 1회만 로드
 
     def parse(self, file_path: Path, storage_manager: Any = None) -> list[dict[str, Any]]:
         if file_path.suffix.lower() != ".pdf":
             relative_path = _safe_relative_to(file_path, RAW_DATA_DIR)
-            return ManualParser(str(relative_path), parser_type="docling", doc_type=self.doc_type).parse()
+            return ManualParser(str(relative_path), parser_type="docling").parse()
 
         source_id = generate_file_hash(file_path, parser_type="docling")
 
@@ -95,7 +95,7 @@ class DoclingPDFParserStrategy(ParserStrategy):
 
         # 1. 텍스트: ManualParser (rawdict 기반 정확한 읽기 순서)
         logger.info(f"ManualParser로 텍스트 추출: {file_path.name}")
-        text_sections = ManualParser(str(relative_path), parser_type="docling", doc_type=self.doc_type).parse()
+        text_sections = ManualParser(str(relative_path), parser_type="docling").parse()
         for sec in text_sections:
             sec["metadata"][MetadataFields.SOURCE_ID] = source_id
 
@@ -106,7 +106,31 @@ class DoclingPDFParserStrategy(ParserStrategy):
         elapsed = time.time() - start_time
         logger.info(f"Docling 표 추출 완료: {file_path.name} ({elapsed:.2f}초, 표 {parsed['table_count']}개)")
 
-        table_sections = self._build_table_sections(file_path, relative_path, parsed, source_id)
+        # 표 제목 컨텍스트 추출: PDF 페이지별 비-표 텍스트 캐싱
+        page_title_cache: dict[int, str] = {}
+        pdf_doc = fitz.open(str(file_path))
+
+        table_sections = [
+            {
+                "chapter": f"표 (p.{tbl['page']})",
+                "article": f"표 {tbl['table_index'] + 1}",
+                "content": self._build_table_content(tbl, pdf_doc, page_title_cache),
+                "metadata": {
+                    MetadataFields.SOURCE_ID: source_id,
+                    MetadataFields.SRC_NAME: file_path.name,
+                    MetadataFields.RELATIVE_PATH: str(relative_path),
+                    MetadataFields.PARSER_TYPE: "docling",
+                    MetadataFields.PG_NUM: tbl["page"],
+                    MetadataFields.DOC_TYPE: "pdf",
+                    MetadataFields.CATEGORY: file_path.parent.name,
+                    MetadataFields.IS_TABLE: True,
+                },
+            }
+            for tbl in parsed["tables"]
+            if tbl.get("markdown", "").strip()
+        ]
+
+        pdf_doc.close()
         results = text_sections + table_sections
 
         if storage_manager:
@@ -114,94 +138,46 @@ class DoclingPDFParserStrategy(ParserStrategy):
 
         return results
 
-    def _build_table_sections(
-        self, file_path: Path, relative_path: Path, parsed: dict[str, Any], source_id: str
-    ) -> list[dict[str, Any]]:
-        """Docling이 감지한 표를 페이지 컨텍스트(표 제목/설명)와 함께 표 청크 목록으로 변환한다."""
-        page_title_cache: dict[int, str] = {}
-        with fitz.open(str(file_path)) as pdf_doc:
-            return [
-                {
-                    "chapter": f"표 (p.{tbl['page']})",
-                    "article": f"표 {tbl['table_index'] + 1}",
-                    "content": DoclingPDFParser.build_table_content(tbl, pdf_doc, page_title_cache, self.doc_type),
-                    "metadata": {
-                        MetadataFields.SOURCE_ID: source_id,
-                        MetadataFields.SRC_NAME: file_path.name,
-                        MetadataFields.RELATIVE_PATH: str(relative_path),
-                        MetadataFields.PARSER_TYPE: "docling",
-                        MetadataFields.PG_NUM: tbl["page"],
-                        MetadataFields.DOC_TYPE: "pdf",
-                        MetadataFields.CATEGORY: file_path.parent.name,
-                        MetadataFields.IS_TABLE: True,
-                    },
-                }
-                for tbl in parsed["tables"]
-                if tbl.get("markdown", "").strip()
-            ]
-
-
-class HwpParserStrategy(ParserStrategy):
-    """markitdown-hwp(docpler Rust 엔진)를 사용하는 HWP/HWPX 파서 전략.
-
-    - HWP 5.0 바이너리 및 HWPX XML 형식 모두 지원
-    - docpler가 표 레코드(HWPTAG_TABLE)의 행/열 좌표를 복원하여 Markdown pipe table로 출력
-    - 변환된 Markdown을 MarkdownParserStrategy와 동일한 섹션 구조로 반환
-    """
-
-    def __init__(self):
-        self.hwp_parser = HwpParser()  # Lazy initialization, 첫 파싱 시 converter 로드
-
-    def parse(self, file_path: Path, storage_manager: Any = None) -> list[dict[str, Any]]:
-        ext = file_path.suffix.lower()
-        if ext not in (".hwp", ".hwpx"):
-            logger.warning(f"HwpParserStrategy: 지원하지 않는 확장자({ext}), 건너뜁니다: {file_path.name}")
-            return []
-
-        parsed = self.hwp_parser.parse(file_path)
-        markdown_text = parsed["markdown"]
-
-        if len(markdown_text.strip()) < 5:
-            logger.warning(f"HWP 파싱 결과가 너무 짧아 건너뜁니다: {file_path.name}")
-            return []
-
-        parser_type = "hwp"
-        base_metadata = {
-            MetadataFields.SOURCE_ID: generate_file_hash(file_path, parser_type),
-            MetadataFields.SRC_NAME: file_path.name,
-            MetadataFields.RELATIVE_PATH: str(_safe_relative_to(file_path, RAW_DATA_DIR)),
-            MetadataFields.PARSER_TYPE: parser_type,
-            MetadataFields.DOC_TYPE: parsed["extension"],
-            MetadataFields.PG_NUM: 1,
-            MetadataFields.CATEGORY: file_path.parent.name if file_path.parent.name != "raw" else "일반",
-        }
-
-        return [{"is_raw_markdown": True, "content": markdown_text, "metadata": base_metadata}]
-
-
-class ParserFactory:
-    """파일 타입 및 매니페스트 설정에 따라 적절한 파서 전략을 생성하는 팩토리 클래스"""
+    def _build_table_content(
+        self,
+        tbl: dict,
+        pdf_doc: "fitz.Document",
+        page_title_cache: dict[int, str],
+    ) -> str:
+        """표 마크다운 앞에 해당 페이지의 비-표 텍스트(표 제목/설명)를 붙여 반환한다."""
+        page_num = tbl["page"]
+        if page_num not in page_title_cache:
+            page_title_cache[page_num] = self._extract_non_table_text(pdf_doc, page_num)
+        title_ctx = page_title_cache[page_num]
+        md = tbl["markdown"]
+        return f"{title_ctx}\n\n{md}" if title_ctx else md
 
     @staticmethod
-    def create(file_path: Path, file_parser_types: dict[str, str] | None = None) -> ParserStrategy:
-        suffix = file_path.suffix.lower()
-        if suffix in (".hwp", ".hwpx"):
-            return HwpParserStrategy()
-        if suffix != ".pdf":
-            return MarkdownParserStrategy()
+    def _extract_non_table_text(pdf_doc: "fitz.Document", page_num: int) -> str:
+        """PDF 페이지에서 표 셀이 아닌 텍스트(표 제목/절 제목 등)를 추출한다.
 
-        import importlib.util
+        sort=True로 읽기 순서 확보 후, 표 구분자('|')가 없는 비-표 라인만 수집한다.
+        페이지 헤더(반복 출현 패턴)와 개정일 등 메타 노이즈는 제거한다.
+        """
+        if page_num < 1 or page_num > len(pdf_doc):
+            return ""
+        page = pdf_doc[page_num - 1]
+        raw = page.get_text("text", sort=True)
 
-        from src.utils.unicode import normalize_path_to_nfc, normalize_to_nfc
+        non_table_lines = []
+        for line in raw.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if "|" in stripped:
+                continue
+            # 개정일/신설 메타 노이즈 제거
+            if re.match(r"^<?(개정|신설|삭제)", stripped):
+                continue
+            non_table_lines.append(stripped)
 
-        rel_path = normalize_path_to_nfc(file_path.relative_to(RAW_DATA_DIR))
-        normalized_parser_types = {normalize_to_nfc(k): v for k, v in (file_parser_types or {}).items()}
-        file_parser = normalized_parser_types.get(rel_path, "manual").lower()
+        # 앞 1줄(페이지 헤더)은 제거
+        if non_table_lines:
+            non_table_lines = non_table_lines[1:]
 
-        if file_parser == "docling":
-            if importlib.util.find_spec("docling") is not None:
-                return DoclingPDFParserStrategy()
-            logger.error("docling 라이브러리가 없어 manual 전략으로 대체합니다.")
-            return ManualParserStrategy()
-
-        return ManualParserStrategy()
+        return " ".join(non_table_lines[:5]).strip()  # 최대 5줄 컨텍스트

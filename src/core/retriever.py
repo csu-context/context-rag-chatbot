@@ -25,9 +25,8 @@ class EnsembleRetriever(BaseRetriever):
 
     def get_relevant_documents(self, query: str, n: int = 5, metadata_filter: dict | None = None) -> list:
         """BM25 + Vector 하이브리드 검색 결과를 RRF로 병합하여 반환."""
-        n_candidates = max(settings.RETRIEVER_CANDIDATE_POOL_MIN, n)
-        bm25_results = self._get_bm25_results(query, n_candidates, metadata_filter=metadata_filter)
-        vector_results = self._get_vector_results(query, n_candidates, metadata_filter=metadata_filter)
+        bm25_results = self._get_bm25_results(query, n, metadata_filter=metadata_filter)
+        vector_results = self._get_vector_results(query, n, metadata_filter=metadata_filter)
 
         if not bm25_results and not vector_results:
             logger.warning(f"두 엔진 모두 결과 없음: '{query}'")
@@ -81,7 +80,7 @@ class EnsembleRetriever(BaseRetriever):
         if MetadataFields.CHUNK_ID in doc:
             return str(doc[MetadataFields.CHUNK_ID])
 
-        metadata = doc.get("metadata") or {}
+        metadata = doc.get("metadata", {})
 
         if MetadataFields.CHUNK_ID in metadata:
             return str(metadata[MetadataFields.CHUNK_ID])

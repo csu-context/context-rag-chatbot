@@ -49,48 +49,17 @@ def test_manual_parser_invalid_extension():
             parser.parse()
 
 
-def test_clean_text_legal_patterns():
-    from src.processing.text_utils import clean_text
-
-    # 기존 패턴
-    assert clean_text("제  1  조  목적") == "제1조 목적"
-    assert clean_text("제 2 조") == "제2조"
-    assert clean_text("문장 내 (  ) 빈 괄호 정제") == "문장 내 () 빈 괄호 정제"
-    assert clean_text("중복    공백    제거") == "중복 공백 제거"
-    # 분류어 역순 교정
-    assert clean_text("제호2 서식") == "제2호 서식"
-    assert clean_text("제항3") == "제3항"
-    assert clean_text("제절4") == "제4절"
-    assert clean_text("제장1") == "제1장"
-    # 이미 올바른 형태는 무변경
-    assert clean_text("제2호 서식") == "제2호 서식"
-    assert clean_text("제1조") == "제1조"
-
-
-def test_normalize_pdf_text():
-    from src.processing.text_utils import normalize_pdf_text
-
-    # 자간(커닝) 재결합은 join_sorted_chars 좌표 기반 로직이 처리하므로
-    # normalize_pdf_text는 숫자+단위 재결합만 수행한다.
-    assert normalize_pdf_text("3 개월") == "3개월"  # 숫자+단위 재결합(범용 단위)
-    # 정상 띄어쓰기가 보존되는지 확인 (이전 _KERNING_SEQ 오작동 회귀 테스트)
-    assert normalize_pdf_text("복학 후 전과") == "복학 후 전과"
-    assert normalize_pdf_text("홍 길 동") == "홍 길 동"  # 자간 교정은 좌표 단계에서 처리
-
-
-def test_clean_text_doc_type_gating():
-    # 도메인 특화 규칙(분류어 역순 교정·숫자단위 재결합)이 doc_type으로 게이트되는지 검증.
-    from src.processing.text_utils import clean_text, normalize_pdf_text
-
-    # legal(기본): 도메인 규칙 적용
-    assert clean_text("제호2 서식") == "제2호 서식"
-    assert clean_text("3 개월") == "3개월"
-    # general: 도메인 규칙 미적용 → 범용 경로로 누수 차단
-    assert clean_text("제호2 서식", doc_type="general") == "제호2 서식"
-    assert clean_text("3 개월", doc_type="general") == "3 개월"
-    assert normalize_pdf_text("3 개월", doc_type="general") == "3 개월"
-    # 공백 정리 등 범용 규칙은 general에서도 그대로 동작
-    assert clean_text("중복    공백", doc_type="general") == "중복 공백"
+def test_manual_parser_clean_text():
+    # 텍스트 청소 규칙 검증
+    with (
+        patch("pathlib.Path.exists", return_value=True),
+        patch("src.data.parser.generate_file_hash", return_value="hash_123"),
+    ):
+        parser = ManualParser("test.md")
+        assert parser._clean_text("제  1  조  목적") == "제1조 목적"
+        assert parser._clean_text("제 2 조") == "제2조"
+        assert parser._clean_text("문장 내 (  ) 빈 괄호 정제") == "문장 내 () 빈 괄호 정제"
+        assert parser._clean_text("중복    공백    제거") == "중복 공백 제거"
 
 
 def test_chroma_db_manager_operations():
@@ -116,7 +85,7 @@ def test_chroma_db_manager_operations():
     mock_embedder.encode.return_value = MagicMock(tolist=lambda: [[0.1] * 1024])
 
     with (
-        patch("src.vector_db.chroma_manager.ChromaConnectionMixin._create_client", return_value=mock_client),
+        patch("chromadb.PersistentClient", return_value=mock_client),
         patch("src.models.embedder.BGEEmbedder.get_instance", return_value=mock_embedder),
         patch("src.processing.chunking._PARENT_CHUNK_SIZE", 500),
         patch("src.processing.chunking._CHILD_CHUNK_SIZE", 200),

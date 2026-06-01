@@ -67,25 +67,9 @@ def test_search_basic(bm25_manager):
     assert "휴학" in results[0]["content"]
 
 
-def test_synonyms_from_file(tmp_path):
-    """외부 synonyms.json의 약어 확장(조대→조선대학교)이 검색에 반영되는지 확인.
-
-    NOTE: Kiwi는 후행어에 따라 '조선대학교'를 통째('안내' 등) 또는 분해('소개 자료' 등)로
-    다르게 토큰화한다. 동의어 확장은 문서 측 토큰화가 통째일 때 매칭되므로 그런 문맥으로 검증한다
-    (동의어 검색 효과가 토큰화에 의존적이라는 한계는 src/eval/overfit_ablation.py 참고).
-    """
-    manager = _make_manager(
-        tmp_path,
-        {
-            "uni.json": [
-                {
-                    "content": "조선대학교 안내 자료입니다.",
-                    "metadata": {"src_name": "uni.pdf", "pg_num": 1},
-                }
-            ]
-        },
-    )
-    results = manager.get_top_n("조대", n=1)
+def test_synonyms_from_file(bm25_manager):
+    """외부 synonyms.json 기반 동의어 치환 확인"""
+    results = bm25_manager.get_top_n("조대", n=1)
     assert len(results) == 1
     assert "조선대학교" in results[0]["content"]
 

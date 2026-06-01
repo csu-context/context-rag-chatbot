@@ -1,35 +1,55 @@
+import functools
+import json
 import logging
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda
 
+from src.common.config import settings
 from src.common.constants import MetadataFields
 from src.core.cache import SemanticCache
 from src.core.nodes import _MAX_HISTORY_MESSAGES, ContextBuilderNode
 from src.core.prompts import get_system_prompt
 from src.core.reranker import RerankerFactory
-from src.core.storage import StorageManager
 from src.models.factory import LLMFactory
 from src.utils.citation import format_citations
 from src.utils.logger import TracingLogger
-from src.utils.paths import CACHE_DIR, PROCESSED_DATA_DIR
+from src.utils.paths import PROCESSED_DATA_DIR
 
 logger = logging.getLogger(__name__)
+
+
+@functools.lru_cache(maxsize=128)
+def _load_source_json(json_path: Path) -> list | None:
+    """source_id별 JSON 파일을 LRU 캐시로 로드합니다. 동일 경로의 반복 디스크 I/O를 방지합니다."""
+    try:
+        if json_path.exists():
+            with open(json_path, encoding="utf-8") as f:
+                return json.load(f)
+        return None
+    except Exception as e:
+        logger.error(f"JSON 파일 로드 실패: {json_path} - {e}")
+        return None
+
+
+def invalidate_source_json_cache() -> None:
+    """인덱싱으로 JSON 파일이 갱신된 경우 LRU 캐시를 무효화합니다."""
+    _load_source_json.cache_clear()
 
 
 class RAGPipeline:
     """RAG 파이프라인의 핵심 로직을 관리하는 클래스"""
 
-    def __init__(self, retriever_or_db: Any, llm: Any = None, reranker: Any = None):
+    def __init__(self, retriever_or_db: Any, llm: Any = None, reranker: Any = None, use_cache: bool = True):
         self.retriever_or_db = retriever_or_db
         self.llm = llm or LLMFactory.create_llm_with_fallback()
         self.reranker = reranker or RerankerFactory.create()
         self.tracing_logger = TracingLogger()
-        self.cache = SemanticCache()
-        self.storage_manager = StorageManager(processed_dir=PROCESSED_DATA_DIR, cache_dir=CACHE_DIR)
+        self.cache = SemanticCache() if use_cache else None
 
     def _resolve_parent_documents(self, docs: list[Document]) -> list[Document]:
         """자식 청크로 검색된 문서들을 부모 청크의 원문으로 전환하며, 동일 부모 및 동일 텍스트 중복을 제거합니다."""
@@ -48,7 +68,8 @@ class RAGPipeline:
                 # IS_TABLE child는 sub-table 단위로 LLM 컨텍스트에 전달 (full table 크기 초과 방지)
                 if not doc.metadata.get(MetadataFields.IS_TABLE, False):
                     try:
-                        parents_list = self.storage_manager.load_processed_file_cached(source_id)
+                        json_path = PROCESSED_DATA_DIR / f"{source_id}.json"
+                        parents_list = _load_source_json(json_path)
                         if parents_list:
                             for p in parents_list:
                                 if p.get("parent_id") == parent_id:
@@ -81,9 +102,9 @@ class RAGPipeline:
                 else:
                     docs.append(
                         Document(
-                            page_content=res.get("content", "") or "",
+                            page_content=res.get("content", ""),
                             metadata={
-                                **(res.get("metadata") or {}),
+                                **res.get("metadata", {}),
                                 "score": res.get("score") or res.get("_rrf_score", 0),
                             },
                         )
@@ -203,14 +224,14 @@ class RAGPipeline:
     def stream(self, input_dict: dict[str, Any]) -> Iterator[dict[str, Any]]:
         """전체 RAG 파이프라인을 스트리밍 모드로 실행합니다."""
         query = input_dict.get("question", "")
-        retrieval_k = input_dict.get("k", 20)
-        final_k = input_dict.get("final_k", 5)
+        retrieval_k = input_dict.get("k", settings.RETRIEVAL_K)
+        final_k = input_dict.get("final_k", settings.RERANKER_MAX_DOCS)
         history = input_dict.get("history", [])
 
         with self.tracing_logger.start_session(query=query) as session:
             # 1. Semantic Cache Check
             yield {"stage": "cache", "status": "running"}
-            cached_result = self.cache.get(query)
+            cached_result = self.cache.get(query) if self.cache else None
             if cached_result:
                 session.data["cache_hit"] = True
                 yield {"stage": "cache", "status": "hit"}
@@ -260,14 +281,15 @@ class RAGPipeline:
                 for doc in final_docs
             ]
 
-            self.cache.add(query, full_answer, docs_for_cache)
+            if self.cache:
+                self.cache.add(query, full_answer, docs_for_cache)
 
             yield {"stage": "citation", "status": "complete", "output": citations_str, "source_documents": final_docs}
 
 
-def get_rag_chain(retriever_or_db):
+def get_rag_chain(retriever_or_db, llm: Any = None, use_cache: bool = True):
     """
     RAG 파이프라인 체인을 생성합니다. LangChain Runnable 인터페이스를 준수합니다.
     """
-    pipeline = RAGPipeline(retriever_or_db)
+    pipeline = RAGPipeline(retriever_or_db, llm=llm, use_cache=use_cache)
     return RunnableLambda(pipeline.stream)
