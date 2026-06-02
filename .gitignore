@@ -246,4 +246,4 @@ chroma/
 *.tfstate.backup
 .terraform.lock.hcl
 
-fused_issues_backlog.md
+tmp
