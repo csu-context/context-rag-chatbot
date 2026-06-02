@@ -311,17 +311,20 @@ class DoclingPDFParser:
     def _split_multiline_row(col_lines: list) -> list[list[str | None]]:
         """칸별 [(y,text)] 목록(None=병합 하단)을 항목 단위 논리 행들로 분할한다.
 
-        칸 간 줄 수가 다른 멀티라인 행만 최다 줄 칸을 기준으로 y정렬해 재구성하고,
-        그 외(모두 0~1줄)는 단일 행으로 합친다.
+        최다 줄 칸을 기준으로 y정렬해 재구성하되, 기준 칸 외에 2줄 이상인 칸이 하나도 없으면
+        (예: 학위가 1줄뿐인데 학과만 멀티라인) 정렬 근거가 약하고 누락된 값을 잘못 전파할 위험이
+        크므로 분할하지 않고 단일 행으로 합친다(cross-page 누락 표 방어, #166 참고).
+        그 외(모두 0~1줄)도 단일 행으로 합친다.
         """
         n_cols = len(col_lines)
-        max_lines = max((len(c) for c in col_lines if c is not None), default=0)
+        counts = {ci: len(col_lines[ci]) for ci in range(n_cols) if col_lines[ci] is not None}
+        max_lines = max(counts.values(), default=0)
+        single_row = [[(" ".join(t for _, t in c) if c is not None else None) for c in col_lines]]
         if max_lines <= 1:
-            return [[(" ".join(t for _, t in c) if c else None) for c in col_lines]]
-        anchor_ci = max(
-            (ci for ci in range(n_cols) if col_lines[ci] is not None),
-            key=lambda ci: len(col_lines[ci]),
-        )
+            return single_row
+        anchor_ci = max(counts, key=counts.get)
+        if not any(c >= 2 for ci, c in counts.items() if ci != anchor_ci):
+            return single_row
         anchor_lines = col_lines[anchor_ci]
         n_rows = len(anchor_lines)
         grid: list[list[str | None]] = [[None] * n_cols for _ in range(n_rows)]
