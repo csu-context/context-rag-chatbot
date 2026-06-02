@@ -1,11 +1,8 @@
 services:
   app:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ${ECR_REGISTRY:-rag-chatbot}/${ECR_REPOSITORY:-app}:${IMAGE_TAG:-latest}
     container_name: rag-chatbot-app
     volumes:
-      - ./src:/app/src
       - ./data:/app/data
       - model-cache:/app/models        # named volume — root 소유 충돌 방지
       - ./logs:/app/logs
