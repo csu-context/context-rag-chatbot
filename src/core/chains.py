@@ -1,6 +1,8 @@
 import functools
 import json
 import logging
+import queue
+import threading
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -21,6 +23,8 @@ from src.utils.logger import TracingLogger
 from src.utils.paths import PROCESSED_DATA_DIR
 
 logger = logging.getLogger(__name__)
+
+_STREAM_SENTINEL = object()  # 스트림 종료 표시용 큐 센티넬
 
 
 @functools.lru_cache(maxsize=128)
@@ -61,12 +65,15 @@ class RAGPipeline:
             parent_id = doc.metadata.get(MetadataFields.PARENT_ID)
             source_id = doc.metadata.get(MetadataFields.SOURCE_ID)
 
+            is_table = doc.metadata.get(MetadataFields.IS_TABLE, False)
+
             if parent_id and source_id:
-                if parent_id in seen_parents:
+                # 테이블 청크는 분할된 서브 테이블 각각이 고유 데이터를 가지므로 부모 단위 중복 필터링을 생략
+                if not is_table and parent_id in seen_parents:
                     continue  # 이미 부모 청크가 추가되었으므로 중복 자식은 생략
 
                 # IS_TABLE child는 sub-table 단위로 LLM 컨텍스트에 전달 (full table 크기 초과 방지)
-                if not doc.metadata.get(MetadataFields.IS_TABLE, False):
+                if not is_table:
                     try:
                         json_path = PROCESSED_DATA_DIR / f"{source_id}.json"
                         parents_list = _load_source_json(json_path)
@@ -78,8 +85,6 @@ class RAGPipeline:
                                     break
                     except Exception as e:
                         logger.error(f"부모 청크 로드 실패: {e}")
-                else:
-                    seen_parents.add(parent_id)
 
             # 텍스트 기반 중복 제거 (내용이 완전히 동일한 청크 필터링)
             text_hash = hash("".join(doc.page_content.split()))
@@ -198,8 +203,7 @@ class RAGPipeline:
 
             full_answer = ""
             try:
-                for chunk in self.llm.stream(prompt_val):
-                    content = self._extract_answer(chunk)
+                for content in self._stream_with_keepalive(prompt_val):
                     full_answer += content
                     yield content
             except Exception as exc:
@@ -214,6 +218,45 @@ class RAGPipeline:
 
             step.update({"answer_length": len(full_answer)})
             session.data["final_answer"] = full_answer
+
+    def _stream_with_keepalive(self, prompt_val: Any, keepalive_interval: int = 20) -> Iterator[str]:
+        """LLM 토큰을 스트리밍하되, 토큰 사이 유휴가 keepalive_interval(기본 20초)을 넘으면
+        빈 청크를 발사하여 Proxy 유휴 타임아웃에 의한 연결 단절을 방지한다.
+
+        동기 stream 루프는 next()에서 블로킹되어 토큰 사이 유휴 동안 코드가 진입하지 못한다.
+        청크 생산을 별도 스레드로 분리하고 소비자는 timeout 폴링하여 유휴 구간에도 keepalive를 발사한다.
+        """
+        chunk_q: queue.Queue = queue.Queue()
+        producer_exc: list[BaseException] = []
+        stop = threading.Event()
+
+        def _produce() -> None:
+            try:
+                for chunk in self.llm.stream(prompt_val):
+                    if stop.is_set():
+                        break
+                    chunk_q.put(chunk)
+            except BaseException as exc:  # 소비자 측에서 재발생
+                producer_exc.append(exc)
+            finally:
+                chunk_q.put(_STREAM_SENTINEL)
+
+        producer = threading.Thread(target=_produce, name="llm-stream-producer", daemon=True)
+        producer.start()
+        try:
+            while True:
+                try:
+                    item = chunk_q.get(timeout=keepalive_interval)
+                except queue.Empty:
+                    yield ""  # 유휴 keepalive: 빈 청크로 Proxy 유휴 타임아웃 방지
+                    continue
+                if item is _STREAM_SENTINEL:
+                    break
+                yield self._extract_answer(item)
+            if producer_exc:
+                raise producer_exc[0]
+        finally:
+            stop.set()  # 소비자 조기 종료(클라이언트 단절) 시 생산자 스레드 정리
 
     @staticmethod
     def _extract_answer(answer_obj: Any) -> str:

@@ -22,6 +22,9 @@ def init_session_state():
         "start_time": None,
         "show_expert_mode": False,
         "chunk_viewer_page": 0,
+        # 백그라운드 동기화 작업 상태
+        "_current_sync_job": None,
+        "reranker_eager_load_started": False,
     }
 
     for key, val in defaults.items():

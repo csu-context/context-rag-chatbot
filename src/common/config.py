@@ -41,9 +41,20 @@ class Settings(BaseSettings):
     HYBRID_WEIGHT_BM25: float = 0.5
     HYBRID_WEIGHT_VECTOR: float = 0.5
     RETRIEVAL_K: int = Field(default=50)
+    RETRIEVER_CANDIDATE_POOL_MIN: int = Field(default=15)
+    # 하이브리드 검색 두 leg 병렬 실행용 공유 스레드풀 크기 (동시 쿼리 x 2 leg 수용)
+    RETRIEVER_EXECUTOR_MAX_WORKERS: int = Field(default=8)
     RERANKER_MAX_DOCS: int = Field(default=5)
     RERANKER_BATCH_SIZE: int = Field(default=5)
     RERANKER_THRESHOLD: float = Field(default=0.5)
+    RERANKER_TIMEOUT_SEC: int = Field(default=5)
+    RERANKER_GPU_RECOVERY_INTERVAL_SEC: int = Field(default=300)
+    MAX_INGESTION_WORKERS: int = Field(default=4)
+    MAX_PICKLE_CACHE_FILES: int = Field(default=50)
+    TABLE_RETRIEVAL_ENABLED: bool = Field(default=True)
+    # Redis 기반 세션 스토어 (수평 확장용, 없으면 in-memory 폴백)
+    REDIS_URL: str | None = Field(default=None)
+    REDIS_SESSION_TTL_SEC: int = Field(default=86400)  # 세션 TTL 24시간
 
     # 4. 파이프라인 및 파싱 설정
     PARSER_TYPE: Literal["manual", "docling"] = Field(default="docling")

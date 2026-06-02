@@ -64,6 +64,11 @@ class StreamResponder:
                 formatted.append(doc)
         return formatted
 
+    @property
+    def _stage_durations(self) -> dict[str, float]:
+        """display_latencies/finalize_stream 중복 제거."""
+        return {s: v["end"] - v["start"] for s, v in self.stage_latencies.items() if "end" in v}
+
     def display_latencies(self):
         total_latency = time.time() - self.start_time
         over_limit = total_latency > 5.0
@@ -73,7 +78,7 @@ class StreamResponder:
             if over_limit:
                 header = f"⚠️ {header} (5초 초과)"
 
-            stage_durations = {s: v["end"] - v["start"] for s, v in self.stage_latencies.items() if "end" in v}
+            stage_durations = self._stage_durations
             bottleneck = max(stage_durations, key=lambda s: stage_durations[s]) if stage_durations else None
 
             lines = [header]
@@ -108,6 +113,17 @@ class StreamResponder:
         )
         _trim_chat_history()
 
+        # Redis에 대화 기록 동기화 (REDIS_URL 설정 시)
+        from src.common.config import settings
+
+        if settings.REDIS_URL:
+            from src.utils.redis_session import RedisSessionStore
+
+            session_id = st.session_state.get("_redis_session_id", "")
+            if session_id:
+                # citations는 _format_docs에서 이미 plain dict로 변환됨 → 그대로 저장
+                RedisSessionStore.save_messages(session_id, list(st.session_state.messages))
+
         log_kwargs: dict[str, Any] = {
             "total_latency": latency,
             "system_stats": self.get_system_stats_fn(),
@@ -118,9 +134,7 @@ class StreamResponder:
             log_kwargs["error"] = str(error)
         else:
             log_kwargs["answer"] = self.full_response
-            log_kwargs["latencies_per_stage"] = {
-                s: v["end"] - v["start"] for s, v in self.stage_latencies.items() if "end" in v
-            }
+            log_kwargs["latencies_per_stage"] = self._stage_durations
             log_kwargs["confidence_scores"] = [
                 doc.get("metadata", {}).get("rerank_score", doc.get("score", 0.0)) for doc in self.final_docs
             ]
@@ -149,8 +163,13 @@ class StreamResponder:
                     self.process_step(step)
 
             if st.session_state.stop_generation:
+                # 이터레이터 명시적 종료로 LLM HTTP 요청 취소
+                _iter = st.session_state.stream_iter
                 st.session_state.stop_generation = False
                 self.finalize_stream("interrupted")
+                with contextlib.suppress(Exception):
+                    if _iter is not None:
+                        _iter.close()
             else:
                 self.finalize_stream("success")
             st.rerun()

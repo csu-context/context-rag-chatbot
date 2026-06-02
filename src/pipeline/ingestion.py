@@ -6,6 +6,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
+from src.common.config import settings
 from src.common.constants import MetadataFields
 from src.core.chains import invalidate_source_json_cache
 from src.core.storage import StorageManager
@@ -27,6 +28,8 @@ def _safe_invoke_progress(callback, current: int, total: int, name: str) -> None
     if callback:
         try:
             callback(current, total, name)
+        except InterruptedError:
+            raise
         except Exception as cb_e:
             logger.error(f"진행 상황 콜백 호출 실패: {cb_e}")
 
@@ -205,7 +208,7 @@ class IngestionPipeline:
         self, files: list[Path], file_parser_types: dict | None, total: int, offset: int, progress_callback
     ) -> tuple[list, int]:
         data, completed = [], offset
-        max_workers = min(len(files), os.cpu_count() or 4)
+        max_workers = min(len(files), settings.MAX_INGESTION_WORKERS, os.cpu_count() or 4)
         logger.info(f"비-PDF 파일 병렬 파싱 활성화 ({len(files)}개 파일, Workers: {max_workers})")
         futures_map = {}
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
