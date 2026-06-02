@@ -7,8 +7,14 @@ echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting EC2 Boot Deployment script..."
 
 if [ -f "$APP_DIR/.env" ]; then
     echo "Loading configurations from .env..."
-    # Export ECR configurations
-    export $(grep -E '^(AWS_ACCOUNT_ID|AWS_REGION|ECR_REGISTRY|ECR_REPOSITORY|IMAGE_TAG)=' "$APP_DIR/.env" | xargs)
+    # Export ECR configurations safely while filtering
+    while IFS= read -r line || [ -n "$line" ]; do
+        if [[ ! "$line" =~ ^# ]] && [[ -n "$line" ]]; then
+            if [[ "$line" =~ ^(AWS_ACCOUNT_ID|AWS_REGION|ECR_REGISTRY|ECR_REPOSITORY|IMAGE_TAG)= ]]; then
+                export "$line"
+            fi
+        fi
+    done < "$APP_DIR/.env"
 fi
 
 # Set default values if not defined
@@ -26,10 +32,10 @@ fi
 cd "$APP_DIR"
 
 echo "Pulling latest Docker images..."
-docker compose pull
+docker compose -f docker-compose.yml pull
 
 echo "Starting containers..."
-docker compose up -d
+docker compose -f docker-compose.yml up -d
 
 echo "Cleaning up old/dangling docker images to optimize disk space..."
 docker image prune -f
