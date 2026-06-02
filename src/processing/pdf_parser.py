@@ -30,6 +30,9 @@ _PAGE_NUMBER = re.compile(r"^[-–]\s*\d+\s*[-–]$")  # noqa: RUF001
 
 
 _PAGE_BREAK_PLACEHOLDER = "<!-- page break -->"
+_CELL_LINE_TOL = 5.0  # 셀 내부 줄 분리 y 임계(pt) — 줄 간격보다 작고 한 줄 내 변동보다 큼
+# value 줄/anchor 줄 비율이 이상이면 1:1 매칭(대응 없는 행은 빈칸), 미만이면 세로 병합으로 보고 전파
+_ALIGN_ONE_TO_ONE_RATIO = 0.5
 _HEADER_FOOTER_LINES = 2  # 각 페이지 앞뒤에서 헤더/푸터 후보로 수집할 줄 수
 
 
@@ -215,7 +218,12 @@ class DoclingPDFParser:
     def _pymupdf_table_markdown(
         fitz_doc: "fitz.Document", page_num: int, idx_on_page: int, doc_type: str = "legal"
     ) -> str:
-        """셀별 ManualParser rawdict 추출로 마크다운을 재구성한다. 실패 시 빈 문자열."""
+        """셀별 rawdict 추출로 마크다운을 재구성한다. 실패 시 빈 문자열.
+
+        행 구분선이 없어 한 셀에 여러 항목이 멀티라인으로 들어간 표(예: 학과별 행이 나뉘지
+        않고 한 칸에 나열되며 학위는 세로 병합된 경우)는, 셀 내부 줄의 y좌표를 정렬해 항목
+        단위 논리 행으로 분할하고 빈 구간은 직전 값을 전파(Forward-fill)해 병합을 복원한다.
+        """
         try:
             page = fitz_doc[page_num - 1]
             # Docling은 reading order, PyMuPDF는 detection order로 표를 열거하므로 인덱스 직매칭은
@@ -225,13 +233,117 @@ class DoclingPDFParser:
                 return ""
             table = pymupdf_tables[idx_on_page]
             blocks = page.get_text("rawdict").get("blocks", [])
-            cells_grid = [
-                [DoclingPDFParser._extract_cell_text(blocks, cell) if cell else "" for cell in table_row.cells]
-                for table_row in table.rows
-            ]
-            return DoclingPDFParser._cells_to_markdown(cells_grid, doc_type)
+            grid: list[list[str | None]] = []
+            for table_row in table.rows:
+                col_lines = [
+                    DoclingPDFParser._extract_cell_lines(blocks, cell) if cell else None for cell in table_row.cells
+                ]
+                grid.extend(DoclingPDFParser._split_multiline_row(col_lines))
+            DoclingPDFParser._propagate_merged_cells(grid)
+            return DoclingPDFParser._cells_to_markdown(grid, doc_type)
         except Exception:
             return ""
+
+    @staticmethod
+    def _extract_cell_lines(blocks: list, cell_bbox: tuple) -> list[tuple[float, str]]:
+        """셀 bbox 내 문자를 줄(y) 단위로 그룹핑해 [(y_center, text)]로 반환한다.
+
+        한 셀에 여러 항목이 멀티라인으로 들어간 경우 항목별 정렬을 복원하기 위해 줄을 분리한다.
+        각 줄 텍스트는 _extract_cell_text와 동일하게 join_sorted_chars로 한글 띄어쓰기를 보존한다.
+        """
+        x0, y0, x1, y1 = cell_bbox
+        chars = []
+        for block in blocks:
+            if "lines" not in block:
+                continue
+            for line in block["lines"]:
+                for span in line["spans"]:
+                    for ch in collect_chars_from_span(span):
+                        cy, cx0, _c, _size, cx1 = ch
+                        if x0 <= (cx0 + cx1) / 2 <= x1 and y0 <= cy <= y1:
+                            chars.append(ch)
+        if not chars:
+            return []
+        chars.sort(key=lambda v: (v[0], v[1]))
+        lines: list[tuple[float, str]] = []
+        group = [chars[0]]
+        for ch in chars[1:]:
+            if abs(ch[0] - group[0][0]) <= _CELL_LINE_TOL:
+                group.append(ch)
+            else:
+                lines.append(DoclingPDFParser._finalize_cell_line(group, cell_bbox))
+                group = [ch]
+        lines.append(DoclingPDFParser._finalize_cell_line(group, cell_bbox))
+        return [(y, t) for y, t in lines if t]
+
+    @staticmethod
+    def _finalize_cell_line(group: list, cell_bbox: tuple) -> tuple[float, str]:
+        y = sum(c[0] for c in group) / len(group)
+        text = join_sorted_chars(sorted(group, key=lambda v: (v[0], v[1])), cell_bbox=cell_bbox).strip()
+        return (y, text)
+
+    @staticmethod
+    def _align_to_anchor(
+        anchor_lines: list[tuple[float, str]], value_lines: list[tuple[float, str]], tol: float = 5.0
+    ) -> list[str]:
+        """기준 칸(anchor)의 각 줄 y에 value 칸 줄을 정렬한다.
+
+        value 줄 수가 anchor와 비슷하면(_ALIGN_ONE_TO_ONE_RATIO 이상) 대부분 1:1 대응으로 보고
+        y가 일치하는 줄만 매칭하며, 대응 줄이 없는 anchor 행(예: 학부명)은 빈칸으로 둔다.
+        value 줄이 현저히 적으면 세로 병합으로 보고 직전 값을 전파(Forward-fill)하며, 상단의
+        value 없는 구간은 첫 value로 채운다.
+        """
+        if not value_lines:
+            return ["" for _ in anchor_lines]
+        if len(value_lines) / len(anchor_lines) >= _ALIGN_ONE_TO_ONE_RATIO:
+            return [next((vt for vy, vt in value_lines if abs(vy - ay) <= tol), "") for ay, _ in anchor_lines]
+        result = []
+        vi = 0
+        current = value_lines[0][1]
+        for ay, _ in anchor_lines:
+            while vi < len(value_lines) and value_lines[vi][0] <= ay + tol:
+                current = value_lines[vi][1]
+                vi += 1
+            result.append(current)
+        return result
+
+    @staticmethod
+    def _split_multiline_row(col_lines: list) -> list[list[str | None]]:
+        """칸별 [(y,text)] 목록(None=병합 하단)을 항목 단위 논리 행들로 분할한다.
+
+        칸 간 줄 수가 다른 멀티라인 행만 최다 줄 칸을 기준으로 y정렬해 재구성하고,
+        그 외(모두 0~1줄)는 단일 행으로 합친다.
+        """
+        n_cols = len(col_lines)
+        max_lines = max((len(c) for c in col_lines if c is not None), default=0)
+        if max_lines <= 1:
+            return [[(" ".join(t for _, t in c) if c else None) for c in col_lines]]
+        anchor_ci = max(
+            (ci for ci in range(n_cols) if col_lines[ci] is not None),
+            key=lambda ci: len(col_lines[ci]),
+        )
+        anchor_lines = col_lines[anchor_ci]
+        n_rows = len(anchor_lines)
+        grid: list[list[str | None]] = [[None] * n_cols for _ in range(n_rows)]
+        for ci in range(n_cols):
+            lns = col_lines[ci]
+            if ci == anchor_ci:
+                col_vals: list[str | None] = [t for _, t in anchor_lines]
+            elif lns is None:
+                col_vals = [None] * n_rows
+            else:
+                col_vals = list(DoclingPDFParser._align_to_anchor(anchor_lines, lns))
+            for ri in range(n_rows):
+                grid[ri][ci] = col_vals[ri]
+        return grid
+
+    @staticmethod
+    def _propagate_merged_cells(grid: list[list[str | None]]) -> None:
+        """병합 하단(None) 칸을 위 행의 같은 열 값으로 전파한다(rowspan 복원)."""
+        for ri in range(len(grid)):
+            for ci in range(len(grid[ri])):
+                if grid[ri][ci] is None:
+                    grid[ri][ci] = grid[ri - 1][ci] if ri > 0 else ""
 
     @staticmethod
     def _cells_to_markdown(cells: list[list[str | None]], doc_type: str = "legal") -> str:
