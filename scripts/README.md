@@ -13,9 +13,6 @@
 *   **`benchmark_ttft.py`**: 시맨틱 캐시의 동작 여부 및 응답 대기 시간(TTFT)을 측정합니다.
     *   **용도**: Cache Miss, 반복 질문(Cache Hit), 유사 질문(Cache Hit) 시나리오에 대한 성능(TTFT) 비교 및 검증.
     *   **실행**: `python scripts/benchmark_ttft.py`
-*   **`ablation_overfit.py`**: 동의어 사전을 토글하며 BM25 검색 지표(P@1·MRR·출처 혼동)를 측정합니다.
-    *   **용도**: Phase 1 과적합 제거 결정(학칙→학사규정 매핑 삭제·조대 약어 유지)의 정량 검증. 모델/API 불필요.
-    *   **실행**: `python scripts/ablation_overfit.py`
 *   **`benchmark_parallel_retrieval.py`**: 하이브리드 검색의 BM25 leg와 Vector leg를 직렬·병렬로 각각 실행해 소요 시간과 직렬 대비 단축률(%)을 측정합니다.
     *   **용도**: 검색 병렬화 이득의 정량 검증. 실데이터 우선, 없으면 합성 데이터로 폴백.
     *   **실행**: `python scripts/benchmark_parallel_retrieval.py [--mode synthetic] [--repeats 10 --n 5]`

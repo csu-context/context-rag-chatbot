@@ -65,9 +65,11 @@ RUN mkdir -p data/raw data/processed vector_db logs
 # 소스 코드 복사
 COPY src/ /app/src/
 COPY prompts/ /app/prompts/
+COPY config/ /app/config/
 
 # 포트 설정
 EXPOSE 8501
+EXPOSE 9090
 
 # 컨테이너 실행 명령
 CMD ["streamlit", "run", "src/app.py", "--server.address=0.0.0.0"]
