@@ -65,12 +65,15 @@ class RAGPipeline:
             parent_id = doc.metadata.get(MetadataFields.PARENT_ID)
             source_id = doc.metadata.get(MetadataFields.SOURCE_ID)
 
+            is_table = doc.metadata.get(MetadataFields.IS_TABLE, False)
+
             if parent_id and source_id:
-                if parent_id in seen_parents:
+                # 테이블 청크는 분할된 서브 테이블 각각이 고유 데이터를 가지므로 부모 단위 중복 필터링을 생략
+                if not is_table and parent_id in seen_parents:
                     continue  # 이미 부모 청크가 추가되었으므로 중복 자식은 생략
 
                 # IS_TABLE child는 sub-table 단위로 LLM 컨텍스트에 전달 (full table 크기 초과 방지)
-                if not doc.metadata.get(MetadataFields.IS_TABLE, False):
+                if not is_table:
                     try:
                         json_path = PROCESSED_DATA_DIR / f"{source_id}.json"
                         parents_list = _load_source_json(json_path)
@@ -82,8 +85,6 @@ class RAGPipeline:
                                     break
                     except Exception as e:
                         logger.error(f"부모 청크 로드 실패: {e}")
-                else:
-                    seen_parents.add(parent_id)
 
             # 텍스트 기반 중복 제거 (내용이 완전히 동일한 청크 필터링)
             text_hash = hash("".join(doc.page_content.split()))
