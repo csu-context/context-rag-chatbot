@@ -28,7 +28,13 @@ GOLDEN_DIR = "data/eval/golden"
 
 
 def _norm(s: str) -> str:
-    return re.sub(r"[\s()\-·‧,]", "", s or "")
+    """비교용 정규화: 공백·구두점 제거 + 단위어('학점') 제거.
+
+    골든 정답은 '75이상'처럼 단위를 생략하지만 LLM 답변은 '75학점 이상'으로 풀어
+    쓴다. 단위어를 지워 substring 매칭이 동치를 인식하게 한다('이상/이하'는 보존).
+    """
+    s = (s or "").replace("학점", "")
+    return re.sub(r"[\s()\-·‧,]", "", s)
 
 
 def rag_answer(chain, question: str) -> str:
