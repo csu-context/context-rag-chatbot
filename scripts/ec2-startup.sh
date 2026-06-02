@@ -32,10 +32,10 @@ fi
 cd "$APP_DIR"
 
 echo "Pulling latest Docker images..."
-docker compose -f docker-compose.yml pull
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml pull
 
 echo "Starting containers..."
-docker compose -f docker-compose.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
 
 echo "Cleaning up old/dangling docker images to optimize disk space..."
 docker image prune -f

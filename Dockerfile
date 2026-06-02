@@ -18,8 +18,8 @@ ENV PATH="/opt/venv/bin:$PATH"
 # pip 업그레이드
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
-# ARG를 통해 CPU / GPU 모드 선택 (기본값은 cpu)
-ARG DEVICE_TYPE=cpu
+# ARG를 통해 CPU / GPU 모드 선택 (기본값은 gpu)
+ARG DEVICE_TYPE=gpu
 
 # 의존성 파일 복사 및 설치 (CPU 및 GPU 맞춤 설정 사용, 캐시 마운트로 초고속화)
 COPY requirements-prod.txt .
