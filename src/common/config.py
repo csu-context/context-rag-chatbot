@@ -87,6 +87,10 @@ class Settings(BaseSettings):
     PDF_CONTEXT_HEADER_LINES: int = Field(default=1)
     # 표 컨텍스트로 사용할 최대 줄 수
     PDF_CONTEXT_WINDOW_LINES: int = Field(default=5)
+    # 표 셀 내부 줄 분리 및 칸 간 y정렬 허용 오차(pt). 줄 간격보다 작고 한 줄 내 변동보다 커야 함
+    TABLE_CELL_LINE_TOL: float = Field(default=5.0)
+    # 표 멀티라인 셀 정렬 시 1:1 매칭(값 줄≈기준 줄) vs 세로병합 전파를 가르는 줄 수 비율 임계
+    TABLE_ALIGN_RATIO_THRESHOLD: float = Field(default=0.5)
     # 숫자+단위 재결합 대상 한국어 단위. 코드 기본값은 범용 카운터(개·명·시간 등)만 둔다.
     # DOC_TYPE="legal"에서만 적용된다. 학사·법령 등 도메인 종속 단위는 코드에 하드코딩하지 않고
     # data/config/numeric_units.json(JSON 배열)로 분리해 주입한다(_merge_external_numeric_units).

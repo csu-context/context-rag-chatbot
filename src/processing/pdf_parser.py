@@ -30,9 +30,6 @@ _PAGE_NUMBER = re.compile(r"^[-–]\s*\d+\s*[-–]$")  # noqa: RUF001
 
 
 _PAGE_BREAK_PLACEHOLDER = "<!-- page break -->"
-_CELL_LINE_TOL = 5.0  # 셀 내부 줄 분리 y 임계(pt) — 줄 간격보다 작고 한 줄 내 변동보다 큼
-# value 줄/anchor 줄 비율이 이상이면 1:1 매칭(대응 없는 행은 빈칸), 미만이면 세로 병합으로 보고 전파
-_ALIGN_ONE_TO_ONE_RATIO = 0.5
 _HEADER_FOOTER_LINES = 2  # 각 페이지 앞뒤에서 헤더/푸터 후보로 수집할 줄 수
 
 
@@ -268,7 +265,7 @@ class DoclingPDFParser:
         lines: list[tuple[float, str]] = []
         group = [chars[0]]
         for ch in chars[1:]:
-            if abs(ch[0] - group[0][0]) <= _CELL_LINE_TOL:
+            if abs(ch[0] - group[0][0]) <= settings.TABLE_CELL_LINE_TOL:
                 group.append(ch)
             else:
                 lines.append(DoclingPDFParser._finalize_cell_line(group, cell_bbox))
@@ -284,18 +281,20 @@ class DoclingPDFParser:
 
     @staticmethod
     def _align_to_anchor(
-        anchor_lines: list[tuple[float, str]], value_lines: list[tuple[float, str]], tol: float = 5.0
+        anchor_lines: list[tuple[float, str]], value_lines: list[tuple[float, str]], tol: float | None = None
     ) -> list[str]:
         """기준 칸(anchor)의 각 줄 y에 value 칸 줄을 정렬한다.
 
-        value 줄 수가 anchor와 비슷하면(_ALIGN_ONE_TO_ONE_RATIO 이상) 대부분 1:1 대응으로 보고
-        y가 일치하는 줄만 매칭하며, 대응 줄이 없는 anchor 행(예: 학부명)은 빈칸으로 둔다.
-        value 줄이 현저히 적으면 세로 병합으로 보고 직전 값을 전파(Forward-fill)하며, 상단의
-        value 없는 구간은 첫 value로 채운다.
+        value 줄 수가 anchor와 비슷하면(settings.TABLE_ALIGN_RATIO_THRESHOLD 이상) 대부분 1:1
+        대응으로 보고 y가 일치하는 줄만 매칭하며, 대응 줄이 없는 anchor 행(예: 학부명)은 빈칸으로
+        둔다. value 줄이 현저히 적으면 세로 병합으로 보고 직전 값을 전파(Forward-fill)하며, 상단의
+        value 없는 구간은 첫 value로 채운다. tol 미지정 시 settings.TABLE_CELL_LINE_TOL을 쓴다.
         """
         if not value_lines:
             return ["" for _ in anchor_lines]
-        if len(value_lines) / len(anchor_lines) >= _ALIGN_ONE_TO_ONE_RATIO:
+        if tol is None:
+            tol = settings.TABLE_CELL_LINE_TOL
+        if len(value_lines) / len(anchor_lines) >= settings.TABLE_ALIGN_RATIO_THRESHOLD:
             return [next((vt for vy, vt in value_lines if abs(vy - ay) <= tol), "") for ay, _ in anchor_lines]
         result = []
         vi = 0
