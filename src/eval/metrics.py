@@ -1,19 +1,4 @@
 from langchain_core.prompts import PromptTemplate
-from ragas.metrics import (
-    answer_relevancy,
-    context_precision,
-    context_recall,
-    faithfulness,
-)
-
-# 기본 평가 지표 설정
-METRICS = [
-    faithfulness,
-    answer_relevancy,
-    context_precision,
-    context_recall,
-]
-
 
 # ── [파서 벤치마크 평가 로직 보존] ──────────────────────────────────────────
 
