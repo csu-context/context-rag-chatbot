@@ -1,0 +1,15 @@
+[Unit]
+Description=RAG Chatbot Automatic On-Demand Deployment
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/home/ubuntu/app
+ExecStart=/bin/bash /home/ubuntu/app/scripts/ec2-startup.sh
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

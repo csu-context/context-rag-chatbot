@@ -12,6 +12,7 @@ from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda
 
+from src.common.config import settings
 from src.common.constants import MetadataFields
 from src.core.cache import SemanticCache
 from src.core.nodes import _MAX_HISTORY_MESSAGES, ContextBuilderNode
@@ -48,12 +49,12 @@ def invalidate_source_json_cache() -> None:
 class RAGPipeline:
     """RAG 파이프라인의 핵심 로직을 관리하는 클래스"""
 
-    def __init__(self, retriever_or_db: Any, llm: Any = None, reranker: Any = None):
+    def __init__(self, retriever_or_db: Any, llm: Any = None, reranker: Any = None, use_cache: bool = True):
         self.retriever_or_db = retriever_or_db
         self.llm = llm or LLMFactory.create_llm_with_fallback()
         self.reranker = reranker or RerankerFactory.create()
         self.tracing_logger = TracingLogger()
-        self.cache = SemanticCache()
+        self.cache = SemanticCache() if use_cache else None
 
     def _resolve_parent_documents(self, docs: list[Document]) -> list[Document]:
         """자식 청크로 검색된 문서들을 부모 청크의 원문으로 전환하며, 동일 부모 및 동일 텍스트 중복을 제거합니다."""
@@ -285,14 +286,14 @@ class RAGPipeline:
     def stream(self, input_dict: dict[str, Any]) -> Iterator[dict[str, Any]]:
         """전체 RAG 파이프라인을 스트리밍 모드로 실행합니다."""
         query = input_dict.get("question", "")
-        retrieval_k = input_dict.get("k", 20)
+        retrieval_k = input_dict.get("k", settings.RETRIEVAL_K)
         final_k = input_dict.get("final_k", 5)
         history = input_dict.get("history", [])
 
         with self.tracing_logger.start_session(query=query) as session:
             # 1. Semantic Cache Check
             yield {"stage": "cache", "status": "running"}
-            cached_result = self.cache.get(query)
+            cached_result = self.cache.get(query) if self.cache else None
             if cached_result:
                 session.data["cache_hit"] = True
                 yield {"stage": "cache", "status": "hit"}
@@ -342,12 +343,13 @@ class RAGPipeline:
                 for doc in final_docs
             ]
 
-            self.cache.add(query, full_answer, docs_for_cache)
+            if self.cache:
+                self.cache.add(query, full_answer, docs_for_cache)
 
             yield {"stage": "citation", "status": "complete", "output": citations_str, "source_documents": final_docs}
 
 
-def get_rag_chain(retriever_or_db):
+def get_rag_chain(retriever_or_db, llm: Any = None, use_cache: bool = True):
     """RAG 파이프라인 체인을 생성합니다. LangChain Runnable 인터페이스를 준수합니다."""
     from src.common.config import settings
 
@@ -356,5 +358,5 @@ def get_rag_chain(retriever_or_db):
         os.environ.setdefault("LANGSMITH_TRACING", "true")
         logger.info("LangSmith 트레이싱 활성화됨 (LANGSMITH_TRACING=True)")
 
-    pipeline = RAGPipeline(retriever_or_db)
+    pipeline = RAGPipeline(retriever_or_db, llm=llm, use_cache=use_cache)
     return RunnableLambda(pipeline.stream)
