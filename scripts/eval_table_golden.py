@@ -40,7 +40,14 @@ def _norm(s: str) -> str:
 
 
 def to_lookups(golden_name: str, row: dict) -> list[tuple[list[str], str]]:
-    """골든셋 row를 표별 스키마에 맞춰 [(조회 키 목록, 정답값)] 으로 변환."""
+    """골든셋 row를 표별 스키마에 맞춰 [(조회 키 목록, 정답값)] 으로 변환.
+
+    cell_score:false 행은 셀채점에서 제외한다(원본 표에서 빈칸인 셀 — 파서가 빈칸을
+    출력하는 것이 정확하므로 결함이 아니다). 이런 행의 정답은 도메인 추론이라 RAG 추론
+    채점(eval_table_rag.py)에서만 평가한다.
+    """
+    if row.get("cell_score") is False:
+        return []
     if golden_name.startswith("degree"):
         return [([row["dept"]], row["degree"])]
     if golden_name.startswith("change"):
