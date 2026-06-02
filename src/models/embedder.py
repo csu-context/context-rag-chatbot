@@ -68,5 +68,5 @@ class BGEEmbedder:
             if self.device == "cuda":
                 torch.cuda.empty_cache()
 
-    def get_dimension(self) -> int:
-        return self.model.get_embedding_dimension()
+    def get_dimension(self):
+        return self.model.get_sentence_embedding_dimension()

@@ -20,25 +20,38 @@ class LLMResponse(BaseModel):
             self.cost = self._calculate_cost()
 
     def _calculate_cost(self) -> float:
-        """모델별 단가를 기반으로 비용을 계산합니다."""
-        from src.common.constants import LLMPricing
-
-        # 모델 명에서 버전 정보 등 제외하고 매칭 시도 (예: claude-haiku-4-5-2025... -> claude-haiku-4-5)
+        """config/pricing.yaml 동적 로드로 하드코딩 없이 신규 모델 과금 지원."""
+        pricing_table = _load_pricing()
         matched_model = ""
-        for known_model in LLMPricing.PRICING:
+        for known_model in pricing_table:
             if self.model_name.startswith(known_model):
                 matched_model = known_model
                 break
-
-        if not matched_model or matched_model not in LLMPricing.PRICING:
+        if not matched_model:
             return 0.0
-
-        pricing = LLMPricing.PRICING[matched_model]
+        pricing = pricing_table[matched_model]
         input_tokens = self.usage.get("input_tokens", 0)
         output_tokens = self.usage.get("output_tokens", 0)
+        return (input_tokens * pricing["input"] / 1_000_000) + (output_tokens * pricing["output"] / 1_000_000)
 
-        cost = (input_tokens * pricing["input"] / 1_000_000) + (output_tokens * pricing["output"] / 1_000_000)
-        return cost
+
+def _load_pricing() -> dict[str, dict[str, float]]:
+    """config/pricing.yaml 동적 로드. 실패 시 constants 폴백."""
+    from pathlib import Path
+
+    from src.common.constants import LLMPricing
+
+    pricing_file = Path(__file__).resolve().parent.parent.parent / "config" / "pricing.yaml"
+    if pricing_file.exists():
+        try:
+            import yaml  # type: ignore[import-untyped]
+
+            with open(pricing_file, encoding="utf-8") as f:
+                data = yaml.safe_load(f)
+            return data.get("llm_pricing", LLMPricing.PRICING)
+        except Exception:
+            pass
+    return LLMPricing.PRICING
 
 
 class BaseLLM(ABC):

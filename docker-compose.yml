@@ -9,6 +9,8 @@ services:
       - ./logs:/app/logs
       - ./.cache:/app/.cache
       - ./.env:/app/.env
+      - ./config:/app/config
+    # .env 파일 로드
     env_file:
       - .env
     environment:
@@ -32,6 +34,16 @@ services:
       - "host.docker.internal:host-gateway"
     networks:
       - rag-network
+    # 로그 로테이션 + 레이블 기반 중앙 수집 (Loki/Fluentd 연동 가능)
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+        labels: "service,version"
+    labels:
+      - "service=rag-app"
+      - "version=1.0"
     # 리소스 한도 / 무중단 배포 rolling update
     deploy:
       resources:

@@ -140,6 +140,13 @@ except Exception as e:
     st.error(f"시스템 초기화 오류: {e}")
     st.stop()
 
+# Metrics 엔드포인트 백그라운드 시작 (최초 1회)
+if "metrics_server_started" not in st.session_state:
+    st.session_state.metrics_server_started = True
+    from src.utils.metrics_server import MetricsServer
+
+    MetricsServer.start()
+
 # 리랭커 Eager Loading (백그라운드 스레드, 최초 1회만)
 if not st.session_state.get("reranker_eager_load_started"):
     st.session_state.reranker_eager_load_started = True
@@ -209,22 +216,34 @@ with st.sidebar:
     # 4. 기타 설정
     st.toggle("상세 추론 과정 보기", key="show_expert_mode", disabled=st.session_state.is_generating)
 
+    # API 토큰 사용량 및 실시간 과금 추적
+    session_tokens = st.session_state.get("session_tokens", {"input": 0, "output": 0, "cost_usd": 0.0})
+    if session_tokens["input"] > 0 or session_tokens["output"] > 0:
+        st.divider()
+        st.subheader("세션 토큰 사용량")
+        st.write(f"입력: **{session_tokens['input']:,}** / 출력: **{session_tokens['output']:,}** 토큰")
+        st.write(f"추정 비용: **${session_tokens['cost_usd']:.4f}** USD")
+
     st.divider()
     st.subheader("실시간 자원 모니터링")
     stats = get_system_stats()
 
-    st.write("CPU 사용량")
-    st.progress(int(stats["cpu"]), text=f"{stats['cpu']:.1f}%")
+    # @st.fragment(run_every) 로 실제 실시간 반영
+    @st.fragment(run_every="5s")
+    def _resource_monitor():
+        stats = get_system_stats()
+        st.write("CPU 사용량")
+        st.progress(int(stats["cpu"]), text=f"{stats['cpu']:.1f}%")
+        st.write("RAM 사용량")
+        st.progress(int(stats["memory"]), text=f"{stats['memory']:.1f}%")
+        if stats["gpu_vram"] is not None:
+            st.write("GPU VRAM 사용량")
+            st.progress(int(stats["gpu_vram"]), text=f"{stats['gpu_vram']:.1f}%")
+        else:
+            st.write("GPU VRAM 사용량")
+            st.info("현재 환경에서 GPU를 사용할 수 없습니다.")
 
-    st.write("RAM 사용량")
-    st.progress(int(stats["memory"]), text=f"{stats['memory']:.1f}%")
-
-    if stats["gpu_vram"] is not None:
-        st.write("GPU VRAM 사용량")
-        st.progress(int(stats["gpu_vram"]), text=f"{stats['gpu_vram']:.1f}%")
-    else:
-        st.write("GPU VRAM 사용량")
-        st.info("현재 환경에서 GPU를 사용할 수 없습니다.")
+    _resource_monitor()
 
 # --- 5. 다이얼로그 활성화 제어 (모듈화 이관 호출) ---
 if st.session_state.get("admin_active", False):
@@ -253,13 +272,7 @@ st.info("사내 규정 및 매뉴얼에 대해 질문하면 인용 출처와 함
 # --- 6.1. Ollama 모델 다운로드 실시간 상태 시각화 ---
 @st.fragment(run_every="1s")
 def render_download_progress(llm):
-    # 1단계: Ollama 서비스 자체 구동 여부 먼저 확인
-    if not llm.check_health():
-        st.error(f"Ollama 서비스({llm.base_url})에 연결할 수 없습니다. Ollama가 실행 중인지 확인해 주세요.")
-        st.info("터미널에서 `ollama serve` 명령으로 Ollama를 실행한 후 새로고침하세요.")
-        return
-
-    # 2단계: 서비스는 살아있으나 모델이 없는 경우 다운로드 시작
+    # 백그라운드 다운로드 시작
     llm.start_pull_background()
 
     # 이중 안전 체크: 백그라운드 진행 상태와 무관하게 실제 모델 다운로드가 완료되었는지 검증
@@ -341,9 +354,12 @@ for msg_idx, msg in enumerate(st.session_state.messages):
                 metadata = doc.get("metadata", {})
                 source = metadata.get(MetadataFields.SRC_NAME, "알 수 없음")
                 page = metadata.get(MetadataFields.PG_NUM, "-")
-                score = metadata.get("rerank_score", doc.get("score", 0.0))
-                display_score = max(0.0, (score - 0.5) * 2)
-                is_low_confidence = score < 0.5
+                # rerank_score 없을 때 RRF/기본값 0.0으로 무조건 경고 발생하는 오탐 방지
+                score = metadata.get("rerank_score")
+                has_rerank_score = score is not None
+                score = score if has_rerank_score else doc.get("score", 0.0)
+                display_score = max(0.0, (score - 0.5) * 2) if has_rerank_score else 1.0
+                is_low_confidence = has_rerank_score and score < 0.5
 
                 button_label = f"📄 {source} (p.{page}) - 신뢰도: {display_score:.2f}"
                 if is_low_confidence:
