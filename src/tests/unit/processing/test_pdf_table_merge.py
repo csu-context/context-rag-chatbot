@@ -87,3 +87,25 @@ class TestPropagateMergedCells:
         grid = [[None, "x"], ["B", "y"]]
         DoclingPDFParser._propagate_merged_cells(grid)
         assert grid == [["", "x"], ["B", "y"]]
+
+
+class TestDropEmptyColumns:
+    def test_phantom_column_dropped(self):
+        """PyMuPDF가 넓은 셀을 분할해 만든 전부 빈 유령 열(헤더 포함)은 제거된다(51p 학위표)."""
+        grid = [["대학", "학과", "학위", ""], ["외국어대학", "아랍어과", "문학사", ""]]
+        expected = [["대학", "학과", "학위"], ["외국어대학", "아랍어과", "문학사"]]
+        assert DoclingPDFParser._drop_empty_columns(grid) == expected
+
+    def test_partially_empty_column_kept(self):
+        """일부 행만 비는 열(예: 예과 행의 상위 학년)은 다른 행에 값이 있으므로 보존된다."""
+        grid = [["75", "34이상", "75이상", ""], ["160", "40이상", "80이상", "120이상"]]
+        assert DoclingPDFParser._drop_empty_columns(grid) == grid
+
+    def test_no_empty_column_unchanged(self):
+        grid = [["a", "b"], ["c", "d"]]
+        assert DoclingPDFParser._drop_empty_columns(grid) == grid
+
+    def test_all_empty_grid_unchanged(self):
+        """전 열이 비어도(degenerate) 그대로 둔다 — 떨굴 기준 열이 없음."""
+        grid = [["", ""], ["", ""]]
+        assert DoclingPDFParser._drop_empty_columns(grid) == grid

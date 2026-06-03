@@ -237,6 +237,7 @@ class DoclingPDFParser:
                 ]
                 grid.extend(DoclingPDFParser._split_multiline_row(col_lines))
             DoclingPDFParser._propagate_merged_cells(grid)
+            grid = DoclingPDFParser._drop_empty_columns(grid)
             return DoclingPDFParser._cells_to_markdown(grid, doc_type)
         except Exception:
             return ""
@@ -346,6 +347,22 @@ class DoclingPDFParser:
             for ci in range(len(grid[ri])):
                 if grid[ri][ci] is None:
                     grid[ri][ci] = grid[ri - 1][ci] if ri > 0 else ""
+
+    @staticmethod
+    def _drop_empty_columns(grid: list[list[str | None]]) -> list[list[str | None]]:
+        """모든 행에서 빈 열(헤더 포함 전부 공백)을 제거한다.
+
+        PyMuPDF가 넓은 셀(예: '학 위')을 가짜 경계선으로 분할해 항상 비는 유령 열을 만들면
+        모든 행에 무의미한 '|  |'가 붙는다. 어느 행에도 값이 없는 열만 떨궈 출력을 정리한다.
+        일부 행만 비는 열(예: 예과 행의 3·4학년)은 다른 행에 값이 있으므로 보존된다.
+        """
+        if not grid:
+            return grid
+        n_cols = max(len(r) for r in grid)
+        keep = [ci for ci in range(n_cols) if any(ci < len(r) and str(r[ci] or "").strip() for r in grid)]
+        if not keep or len(keep) == n_cols:
+            return grid
+        return [[r[ci] if ci < len(r) else None for ci in keep] for r in grid]
 
     @staticmethod
     def _cells_to_markdown(cells: list[list[str | None]], doc_type: str = "legal") -> str:
