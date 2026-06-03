@@ -224,6 +224,13 @@ class DoclingPDFParser:
             if idx_on_page >= len(pymupdf_tables):
                 return ""
             table = pymupdf_tables[idx_on_page]
+            # #166: 세로병합/멀티라인으로 텍스트 파싱이 깨지는 표는 VLM 경로로 복원(실패 시 fallback)
+            from src.processing.vlm_table_parser import needs_vlm, parse_table_vlm
+
+            if needs_vlm(table):
+                vlm_md = parse_table_vlm(page, table)
+                if vlm_md:
+                    return vlm_md
             blocks = page.get_text("rawdict").get("blocks", [])
             cells_grid = [
                 [DoclingPDFParser._extract_cell_text(blocks, cell) if cell else "" for cell in table_row.cells]
