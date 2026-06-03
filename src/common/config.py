@@ -92,10 +92,6 @@ class Settings(BaseSettings):
     TABLE_CELL_LINE_TOL: float = Field(default=5.0)
     # 표 멀티라인 셀 정렬 시 1:1 매칭(값 줄≈기준 줄) vs 세로병합 전파를 가르는 줄 수 비율 임계
     TABLE_ALIGN_RATIO_THRESHOLD: float = Field(default=0.5)
-    # 멀티라인 셀을 항목 리스트(행 분할)로 볼지 단순 줄바꿈(단일 행 병합)으로 볼지 가르는 최소 앵커 줄 수.
-    # 학과 나열처럼 한 셀에 여러 항목이 든 표는 앵커가 길고(5+), 일반 표의 셀 줄바꿈은 짧다(2~3).
-    # 앵커가 이 값 미만이면 줄바꿈으로 보고 분할하지 않는다(편입학점표 같은 정상 표 과분할 방지).
-    TABLE_SPLIT_MIN_ANCHOR_LINES: int = Field(default=4)
     # 숫자+단위 재결합 대상 한국어 단위. 코드 기본값은 범용 카운터(개·명·시간 등)만 둔다.
     # DOC_TYPE="legal"에서만 적용된다. 학사·법령 등 도메인 종속 단위는 코드에 하드코딩하지 않고
     # data/config/numeric_units.json(JSON 배열)로 분리해 주입한다(_merge_external_numeric_units).

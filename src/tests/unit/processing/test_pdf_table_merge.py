@@ -98,11 +98,11 @@ class TestSplitMultilineRow:
         joined = "전자공학부 (전자공학전공) (지능IoT전공) 정보통신공학부 (정보통신공학전공) (임베디드보안전공)"
         assert grid == [["", joined, "정보통신공학 공학사", None]]
 
-    def test_short_anchor_wrap_kept_single(self):
-        """앵커가 짧고(<4) 여러 칸이 함께 줄바꿈된 일반 표는 분할하지 않는다 (편입학점표 과분할 방지).
+    def test_non_degree_table_joins_wrap(self):
+        """학위표가 아닌 표(allow_split=False)는 셀 줄바꿈을 분할하지 않고 단일 행으로 합친다.
 
-        '8학기\\n이수대상자'·'64학점\\n이내'는 항목 리스트가 아니라 셀 줄바꿈이므로 행으로 찢으면
-        한 논리 행이 2행으로 깨지고 비고가 중복된다. 앵커 2줄(<4)이면 단일 행으로 합친다.
+        '8학기\\n이수대상자'·'64학점\\n이내'(편입학점표)는 리스트 셀(보건과학대학 5학과 1:1)과
+        형상이 동일해 기하로 구분 불가하므로, 분할은 학위표로 한정하고 그 외 표는 줄바꿈을 병합한다.
         """
         col_lines = [
             [(10.0, "8학기"), (20.0, "이수대상자")],  # 행 레이블 wrap 2줄
@@ -110,13 +110,49 @@ class TestSplitMultilineRow:
             [(10.0, "64학점"), (20.0, "이내")],  # 값 wrap 2줄
             [(15.0, "3학년으로 편입한 약학과 학생")],
         ]
-        grid = DoclingPDFParser._split_multiline_row(col_lines)
+        grid = DoclingPDFParser._split_multiline_row(col_lines, allow_split=False)
         assert grid == [["8학기 이수대상자", "-", "64학점 이내", "3학년으로 편입한 약학과 학생"]]
+
+    def test_degree_list_anchor3_splits(self):
+        """학위표(allow_split=True)에서는 짧은 앵커(3줄)도 학과 리스트로 분할된다 (p47 법학과 회귀 방지).
+
+        편입표 wrap과 형상이 같아도 학위표 도메인에서는 분할이 올바르므로 줄 수와 무관하게 분할한다.
+        """
+        col_lines = [
+            [(18.0, "법과대학")],  # 단과대학 1줄(병합) → 전 행 전파
+            [(10.0, "법학과"), (18.0, "글로벌법학과"), (30.0, "경찰행정학과")],  # 학과 3줄
+            [(14.0, "법학사"), (30.0, "경찰행정학사")],  # 학위 2줄(법학사 병합)
+        ]
+        grid = DoclingPDFParser._split_multiline_row(col_lines, allow_split=True)
+        assert grid == [
+            ["법과대학", "법학과", "법학사"],
+            ["법과대학", "글로벌법학과", "법학사"],
+            ["법과대학", "경찰행정학과", "경찰행정학사"],
+        ]
 
     def test_single_line_row_kept(self):
         """모든 칸 0~1줄이면 단일 행으로 유지(None은 병합 표시로 보존)."""
         col_lines = [[(10.0, "군사학부")], [(10.0, "군사학부")], [(10.0, "군사학사")], None]
         assert DoclingPDFParser._split_multiline_row(col_lines) == [["군사학부", "군사학부", "군사학사", None]]
+
+
+class TestIsDegreeMappingTable:
+    class _FakeTable:
+        def __init__(self, header):
+            self._header = header
+
+        def extract(self):
+            return [self._header]
+
+    def test_degree_header_true(self):
+        """헤더에 '학위'(공백 포함 '학 위')가 있으면 학위표로 본다 → 분할 허용."""
+        t = self._FakeTable(["대 학", "학 과(부)", "학 위"])
+        assert DoclingPDFParser._is_degree_mapping_table(t) is True
+
+    def test_non_degree_header_false(self):
+        """'학위' 열이 없는 표(편입학점표 등)는 학위표가 아니다 → 분할 금지(병합)."""
+        t = self._FakeTable(["구 분", "120~130학점체제의 경우", "비 고"])
+        assert DoclingPDFParser._is_degree_mapping_table(t) is False
 
 
 class TestPropagateMergedCells:
