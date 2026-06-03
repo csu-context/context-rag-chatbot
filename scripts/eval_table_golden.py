@@ -83,8 +83,14 @@ def score_credit(rows: list[list[str]], gt_rows: list[dict]) -> tuple[int, int, 
     c = t = 0
     misses = []
     for row in gt_rows:
-        key = _norm(row["note"] or row["grad_credit"])
-        target = next((cells for cells in rows if key and key in _norm("".join(cells))), None)
+        # 졸업학점 열(첫 칸) exact 매칭으로 행을 고정한다. 비고 substring 매칭은
+        # 부분문자열 충돌(의예과 ⊂ 치의예과)로 인접 행을 오선택하므로 쓰지 않는다.
+        gc = _norm(row["grad_credit"])
+        cand = [cells for cells in rows if cells and _norm(cells[0]) == gc]
+        # 졸업학점 중복(160=의학과 vs 건축학)은 비고로 분기한다.
+        nt = _norm(row["note"])
+        target = next((cells for cells in cand if nt and nt in _norm("".join(cells))), cand[0] if cand else None)
+        label = row["note"] or row["grad_credit"]
         for yr, val in row["by_year"].items():
             t += 1
             ci = year_col.get(yr)
@@ -92,7 +98,7 @@ def score_credit(rows: list[list[str]], gt_rows: list[dict]) -> tuple[int, int, 
             if got is not None and _norm(val) in _norm(got):
                 c += 1
             else:
-                misses.append(([key, yr], f"정답 '{val}' / 파싱칸 '{got}'"))
+                misses.append(([label, yr], f"정답 '{val}' / 파싱칸 '{got}'"))
     return c, t, misses
 
 
