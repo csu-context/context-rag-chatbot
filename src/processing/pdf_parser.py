@@ -313,16 +313,19 @@ class DoclingPDFParser:
     def _split_multiline_row(col_lines: list) -> list[list[str | None]]:
         """칸별 [(y,text)] 목록(None=병합 하단)을 항목 단위 논리 행들로 분할한다.
 
-        최다 줄 칸을 기준으로 y정렬해 재구성하되, 기준 칸 외에 2줄 이상인 칸이 하나도 없으면
-        (예: 학위가 1줄뿐인데 학과만 멀티라인) 정렬 근거가 약하고 누락된 값을 잘못 전파할 위험이
-        크므로 분할하지 않고 단일 행으로 합친다(cross-page 누락 표 방어, #166 참고).
+        최다 줄 칸을 기준으로 y정렬해 재구성하되, 다음은 분할하지 않고 단일 행으로 합친다:
+        - 앵커가 짧은 경우(settings.TABLE_SPLIT_MIN_ANCHOR_LINES 미만): 한 셀에 여러 항목이 나열된
+          리스트가 아니라 일반 표 셀의 줄바꿈(wrap)으로 본다. 여러 칸이 함께 2~3줄로 접히는 정상
+          표(편입학점표 등)를 논리 행으로 찢는 과분할을 막는다.
+        - 기준 칸 외에 2줄 이상인 칸이 하나도 없는 경우(예: 학위 1줄뿐+학과만 멀티라인): 정렬 근거가
+          약하고 누락 값을 잘못 전파할 위험이 커 보류한다(cross-page 누락 표 방어, #166 참고).
         그 외(모두 0~1줄)도 단일 행으로 합친다.
         """
         n_cols = len(col_lines)
         counts = {ci: len(col_lines[ci]) for ci in range(n_cols) if col_lines[ci] is not None}
         max_lines = max(counts.values(), default=0)
         single_row = [[(" ".join(t for _, t in c) if c is not None else None) for c in col_lines]]
-        if max_lines <= 1:
+        if max_lines < settings.TABLE_SPLIT_MIN_ANCHOR_LINES:
             return single_row
         anchor_ci = max(counts, key=counts.get)
         if not any(c >= 2 for ci, c in counts.items() if ci != anchor_ci):
