@@ -243,6 +243,7 @@ async def _score_and_save(result: InferenceResult, missing_docs: list[str] | Non
         model=settings.EVAL_JUDGE_MODEL,
         provider="anthropic",
         temperature=0,
+        max_tokens=8192,
     )
     ragas_llm.model_args.pop("top_p", None)
     ragas_embeddings = RagasHFEmbeddings(model=settings.EMBEDDING_MODEL_NAME)
@@ -255,7 +256,7 @@ async def _score_and_save(result: InferenceResult, missing_docs: list[str] | Non
     ]
 
     sem = asyncio.Semaphore(settings.EVAL_MAX_WORKERS)
-    metric_params = {m: set(inspect.signature(m.ascore).parameters) for m in metrics}
+    metric_params = {m.name: set(inspect.signature(m.ascore).parameters) for m in metrics}
 
     async def _ascore(metric: Any, sample: SingleTurnSample) -> float:
         all_kwargs = {
@@ -264,7 +265,7 @@ async def _score_and_save(result: InferenceResult, missing_docs: list[str] | Non
             "retrieved_contexts": sample.retrieved_contexts or [],
             "reference": sample.reference or "",
         }
-        kwargs = {k: v for k, v in all_kwargs.items() if k in metric_params[metric]}
+        kwargs = {k: v for k, v in all_kwargs.items() if k in metric_params[metric.name]}
         async with sem:
             result_obj = await metric.ascore(**kwargs)
         return float(result_obj.value)
