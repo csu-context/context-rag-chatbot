@@ -217,9 +217,11 @@ class DoclingPDFParser:
     ) -> str:
         """셀별 rawdict 추출로 마크다운을 재구성한다. 실패 시 빈 문자열.
 
-        행 구분선이 없어 한 셀에 여러 항목이 멀티라인으로 들어간 표(예: 학과별 행이 나뉘지
-        않고 한 칸에 나열되며 학위는 세로 병합된 경우)는, 셀 내부 줄의 y좌표를 정렬해 항목
-        단위 논리 행으로 분할하고 빈 구간은 직전 값을 전파(Forward-fill)해 병합을 복원한다.
+        PyMuPDF가 감지한 행/열 구조를 그대로 따른다: 각 셀은 bbox 내 문자를 한 칸으로 합치고
+        (셀 내부 줄바꿈은 공백으로 병합), PyMuPDF가 None으로 준 병합 하단 칸은 위 값으로 전파해
+        rowspan을 복원한다. 멀티라인 셀을 논리 행으로 분할하는 휴리스틱은 두지 않는다 — '한 셀에
+        나열된 항목 리스트'와 '셀 줄바꿈'이 기하적으로 동일해(보건과학대학 5학과 1:1 == 편입표
+        8학기/이수대상자 wrap) 안전히 가를 수 없고, 분할은 타 문서 일반 표를 과분할하기 때문이다.
         """
         try:
             page = fitz_doc[page_num - 1]
@@ -229,141 +231,16 @@ class DoclingPDFParser:
             if idx_on_page >= len(pymupdf_tables):
                 return ""
             table = pymupdf_tables[idx_on_page]
-            # 멀티라인 셀의 행 분할은 학위표(학과 나열→세로병합 학위)에서만 적용한다. 그 외 표는
-            # 셀 줄바꿈을 그대로 병합(아래 _is_degree_mapping_table 참고 — 기하로는 리스트와 줄바꿈
-            # 구분 불가하므로 도메인으로 한정).
-            allow_split = DoclingPDFParser._is_degree_mapping_table(table)
             blocks = page.get_text("rawdict").get("blocks", [])
-            grid: list[list[str | None]] = []
-            for table_row in table.rows:
-                col_lines = [
-                    DoclingPDFParser._extract_cell_lines(blocks, cell) if cell else None for cell in table_row.cells
-                ]
-                grid.extend(DoclingPDFParser._split_multiline_row(col_lines, allow_split))
+            grid: list[list[str | None]] = [
+                [DoclingPDFParser._extract_cell_text(blocks, cell) if cell else None for cell in table_row.cells]
+                for table_row in table.rows
+            ]
             DoclingPDFParser._propagate_merged_cells(grid)
             grid = DoclingPDFParser._drop_empty_columns(grid)
             return DoclingPDFParser._cells_to_markdown(grid, doc_type)
         except Exception:
             return ""
-
-    @staticmethod
-    def _is_degree_mapping_table(table) -> bool:
-        """헤더에 '학위' 열이 있는 학과→학위 매핑표인지 판정한다.
-
-        멀티라인 셀의 행 분할(un-merge)은 '리스트 셀'과 '셀 줄바꿈'을 기하적으로 구분할 수 없다
-        (보건과학대학 5학과 1:1 정렬 vs 편입표 8학기/이수대상자 wrap이 같은 형상). 줄 수·비율·정렬
-        어떤 기하 규칙으로도 못 가르므로, 분할은 이 heuristic의 본래 도메인인 학위표(헤더에 '학위'
-        열)로 한정하고 그 외 표는 줄바꿈을 그대로 병합한다(타 문서 일반 표 과분할 방지).
-        """
-        try:
-            header = table.extract()[0]
-        except Exception:
-            return False
-        htext = "".join(c or "" for c in header).replace(" ", "").replace("\n", "")
-        return "학위" in htext
-
-    @staticmethod
-    def _extract_cell_lines(blocks: list, cell_bbox: tuple) -> list[tuple[float, str]]:
-        """셀 bbox 내 문자를 줄(y) 단위로 그룹핑해 [(y_center, text)]로 반환한다.
-
-        한 셀에 여러 항목이 멀티라인으로 들어간 경우 항목별 정렬을 복원하기 위해 줄을 분리한다.
-        각 줄 텍스트는 _extract_cell_text와 동일하게 join_sorted_chars로 한글 띄어쓰기를 보존한다.
-        """
-        x0, y0, x1, y1 = cell_bbox
-        chars = []
-        for block in blocks:
-            if "lines" not in block:
-                continue
-            for line in block["lines"]:
-                for span in line["spans"]:
-                    for ch in collect_chars_from_span(span):
-                        cy, cx0, _c, _size, cx1 = ch
-                        if x0 <= (cx0 + cx1) / 2 <= x1 and y0 <= cy <= y1:
-                            chars.append(ch)
-        if not chars:
-            return []
-        chars.sort(key=lambda v: (v[0], v[1]))
-        lines: list[tuple[float, str]] = []
-        group = [chars[0]]
-        for ch in chars[1:]:
-            if abs(ch[0] - group[0][0]) <= settings.TABLE_CELL_LINE_TOL:
-                group.append(ch)
-            else:
-                lines.append(DoclingPDFParser._finalize_cell_line(group, cell_bbox))
-                group = [ch]
-        lines.append(DoclingPDFParser._finalize_cell_line(group, cell_bbox))
-        return [(y, t) for y, t in lines if t]
-
-    @staticmethod
-    def _finalize_cell_line(group: list, cell_bbox: tuple) -> tuple[float, str]:
-        y = sum(c[0] for c in group) / len(group)
-        text = join_sorted_chars(sorted(group, key=lambda v: (v[0], v[1])), cell_bbox=cell_bbox).strip()
-        return (y, text)
-
-    @staticmethod
-    def _align_to_anchor(
-        anchor_lines: list[tuple[float, str]], value_lines: list[tuple[float, str]], tol: float | None = None
-    ) -> list[str]:
-        """기준 칸(anchor)의 각 줄 y에 value 칸 줄을 정렬한다.
-
-        value 줄 수가 anchor를 초과 비율(settings.TABLE_ALIGN_RATIO_THRESHOLD)보다 많으면 대부분 1:1
-        대응으로 보고 y가 일치하는 줄만 매칭하며, 대응 줄이 없는 anchor 행(예: 학부명)은 빈칸으로
-        둔다. value 줄이 그 이하면 세로 병합으로 보고 직전 값을 전파(Forward-fill)하며, 상단의
-        value 없는 구간은 첫 value로 채운다. tol 미지정 시 settings.TABLE_CELL_LINE_TOL을 쓴다.
-        경계(정확히 0.5 등)는 1:1이 아니라 병합으로 본다(엄격 >): p54 체육대학처럼 학위 3/학과 6=0.5
-        세로병합을 1:1로 처리하면 병합 학위가 한 행에만 붙고 나머지가 빈칸이 되기 때문(엄격 비교로 복원).
-        """
-        if not value_lines:
-            return ["" for _ in anchor_lines]
-        if tol is None:
-            tol = settings.TABLE_CELL_LINE_TOL
-        if len(value_lines) / len(anchor_lines) > settings.TABLE_ALIGN_RATIO_THRESHOLD:
-            return [next((vt for vy, vt in value_lines if abs(vy - ay) <= tol), "") for ay, _ in anchor_lines]
-        result = []
-        vi = 0
-        current = value_lines[0][1]
-        for ay, _ in anchor_lines:
-            while vi < len(value_lines) and value_lines[vi][0] <= ay + tol:
-                current = value_lines[vi][1]
-                vi += 1
-            result.append(current)
-        return result
-
-    @staticmethod
-    def _split_multiline_row(col_lines: list, allow_split: bool = True) -> list[list[str | None]]:
-        """칸별 [(y,text)] 목록(None=병합 하단)을 항목 단위 논리 행들로 분할한다.
-
-        최다 줄 칸을 기준으로 y정렬해 재구성하되, 다음은 분할하지 않고 단일 행으로 합친다:
-        - allow_split=False(학위표가 아닌 표): 리스트 셀과 줄바꿈 셀은 기하적으로 구분 불가하므로
-          (보건과학대학 5학과 1:1 vs 편입표 8학기/이수대상자 wrap이 동일 형상) 분할을 학위표로
-          한정한다. 그 외 표는 셀 줄바꿈을 그대로 병합한다(일반 표 과분할 방지).
-        - 기준 칸 외에 2줄 이상인 칸이 하나도 없는 경우(예: 학위 1줄뿐+학과만 멀티라인): 정렬 근거가
-          약하고 누락 값을 잘못 전파할 위험이 커 보류한다(cross-page 누락 표 방어, #166 참고).
-        그 외(모두 0~1줄)도 단일 행으로 합친다.
-        """
-        n_cols = len(col_lines)
-        counts = {ci: len(col_lines[ci]) for ci in range(n_cols) if col_lines[ci] is not None}
-        max_lines = max(counts.values(), default=0)
-        single_row = [[(" ".join(t for _, t in c) if c is not None else None) for c in col_lines]]
-        if max_lines <= 1 or not allow_split:
-            return single_row
-        anchor_ci = max(counts, key=counts.get)
-        if not any(c >= 2 for ci, c in counts.items() if ci != anchor_ci):
-            return single_row
-        anchor_lines = col_lines[anchor_ci]
-        n_rows = len(anchor_lines)
-        grid: list[list[str | None]] = [[None] * n_cols for _ in range(n_rows)]
-        for ci in range(n_cols):
-            lns = col_lines[ci]
-            if ci == anchor_ci:
-                col_vals: list[str | None] = [t for _, t in anchor_lines]
-            elif lns is None:
-                col_vals = [None] * n_rows
-            else:
-                col_vals = list(DoclingPDFParser._align_to_anchor(anchor_lines, lns))
-            for ri in range(n_rows):
-                grid[ri][ci] = col_vals[ri]
-        return grid
 
     @staticmethod
     def _propagate_merged_cells(grid: list[list[str | None]]) -> None:
