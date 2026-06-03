@@ -30,6 +30,25 @@ class TestAlignToAnchor:
         out = DoclingPDFParser._align_to_anchor(anchor, value)
         assert out == ["", "컨설팅학사", "컨설팅학사", "", "공학사"]
 
+    def test_ratio_exactly_half_is_merge(self):
+        """비율 정확히 0.5는 1:1이 아니라 세로병합으로 본다 (54p 체육대학: 학위 3/학과 6).
+
+        체육학사가 4개 학과(체육학과·공연예술무용과·태권도·스포츠산업)에 세로병합인데
+        1:1로 처리하면 가장 가까운 한 행에만 붙고 나머지가 빈칸이 된다. 엄격 비교(>)로
+        forward-fill 분기에 보내 병합 학위를 전 구간에 복원한다.
+        """
+        anchor = [
+            (121.7, "체육학과"),
+            (132.5, "공연예술무용과"),
+            (143.5, "태권도학과"),
+            (154.6, "스포츠산업학과"),
+            (165.6, "스포츠건강재활융합전공"),
+            (176.6, "공연·예술융합전공"),
+        ]
+        value = [(132.5, "체육학사"), (165.6, "헬스케어학사"), (176.6, "공연·예술학사")]  # 3/6=0.5
+        out = DoclingPDFParser._align_to_anchor(anchor, value)
+        assert out == ["체육학사", "체육학사", "체육학사", "체육학사", "헬스케어학사", "공연·예술학사"]
+
     def test_empty_value(self):
         anchor = [(10.0, "a"), (20.0, "b")]
         assert DoclingPDFParser._align_to_anchor(anchor, []) == ["", ""]

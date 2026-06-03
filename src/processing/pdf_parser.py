@@ -286,16 +286,18 @@ class DoclingPDFParser:
     ) -> list[str]:
         """기준 칸(anchor)의 각 줄 y에 value 칸 줄을 정렬한다.
 
-        value 줄 수가 anchor와 비슷하면(settings.TABLE_ALIGN_RATIO_THRESHOLD 이상) 대부분 1:1
+        value 줄 수가 anchor를 초과 비율(settings.TABLE_ALIGN_RATIO_THRESHOLD)보다 많으면 대부분 1:1
         대응으로 보고 y가 일치하는 줄만 매칭하며, 대응 줄이 없는 anchor 행(예: 학부명)은 빈칸으로
-        둔다. value 줄이 현저히 적으면 세로 병합으로 보고 직전 값을 전파(Forward-fill)하며, 상단의
+        둔다. value 줄이 그 이하면 세로 병합으로 보고 직전 값을 전파(Forward-fill)하며, 상단의
         value 없는 구간은 첫 value로 채운다. tol 미지정 시 settings.TABLE_CELL_LINE_TOL을 쓴다.
+        경계(정확히 0.5 등)는 1:1이 아니라 병합으로 본다(엄격 >): p54 체육대학처럼 학위 3/학과 6=0.5
+        세로병합을 1:1로 처리하면 병합 학위가 한 행에만 붙고 나머지가 빈칸이 되기 때문(엄격 비교로 복원).
         """
         if not value_lines:
             return ["" for _ in anchor_lines]
         if tol is None:
             tol = settings.TABLE_CELL_LINE_TOL
-        if len(value_lines) / len(anchor_lines) >= settings.TABLE_ALIGN_RATIO_THRESHOLD:
+        if len(value_lines) / len(anchor_lines) > settings.TABLE_ALIGN_RATIO_THRESHOLD:
             return [next((vt for vy, vt in value_lines if abs(vy - ay) <= tol), "") for ay, _ in anchor_lines]
         result = []
         vi = 0
