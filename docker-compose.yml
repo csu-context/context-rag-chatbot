@@ -83,7 +83,8 @@ services:
     deploy:
       resources:
         limits:
-          memory: 24g
+          # AWS g4dn.xlarge 기준: 시스템 메모리 16GB (T4 16GB VRAM이면 RAM offload 적음)
+          memory: 16g
         reservations:
           memory: 2g
     restart: unless-stopped
