@@ -42,7 +42,8 @@ VLM_PROMPT = (
     "| B학부 | 문학사 |\n"
     "| (c전공) | 문학사 |\n\n"
     "규칙:\n"
-    "1) 위 예시처럼 학위 칸이 비어 보이는 행은 바로 위에서 이어진 학위로 채워라. 어떤 행도 학위를 비우지 마라.\n"
+    "1) 위 예시처럼 학위 칸이 비어 보이는 행은 바로 위에서 이어진 학위로 채워라. 어떤 행도 학위를 비우지 마라. "
+    "한 학위가 10행, 20행에 걸쳐 길게 이어져도 그 블록이 끝나는 행까지 빠짐없이 반복하라(중간에 멈추지 마라).\n"
     "2) 괄호로 들여쓴 (OOO전공)은 위 학부(과)의 하위 전공이다.\n"
     "3) 학과(부)와 학위를 같은 행끼리 정확히 대응시켜라(위/아래로 밀리지 않게).\n"
     "4) 대학명도 세로병합이면 모든 행에 채워라.\n"
@@ -86,6 +87,33 @@ def vlm_markdown(png: bytes, retries: int = 2) -> str:
     return f"[VLM 실패 {retries + 1}회] {last}"
 
 
+def forward_fill_degree(md: str) -> str:
+    """VLM 출력 마크다운의 학위(마지막 칸) 빈칸을 위 행 값으로 채운다(세로병합 보강).
+
+    VLM은 OCR(행 분리 + 글자)은 정확하나 긴 세로병합 블록의 전파(빈칸 채우기)를
+    일관되게 못 하므로, 결정적 후처리로 보강한다. 헤더/구분선은 건드리지 않는다.
+    """
+    out = []
+    last_deg = ""
+    seen_header = False
+    for line in md.splitlines():
+        s = line.strip()
+        if not (s.startswith("|") and "---" not in s and s.count("|") >= 3):
+            out.append(line)
+            continue
+        if not seen_header:
+            seen_header = True  # 첫 표 행 = 헤더(전파 대상 아님)
+            out.append(line)
+            continue
+        cells = [c.strip() for c in s.strip("|").split("|")]
+        if cells and cells[-1]:
+            last_deg = cells[-1]
+        elif cells and last_deg:
+            cells[-1] = last_deg
+        out.append("| " + " | ".join(cells) + " |")
+    return "\n".join(out)
+
+
 def main() -> None:
     # (0-index 페이지, 라벨) — 텍스트 파싱이 깨지거나(p54/p36) 정상(p51)인 대조군
     targets = [
@@ -110,7 +138,7 @@ def main() -> None:
         print("=" * 90)
         print(label)
         try:
-            md = vlm_markdown(crops[page_no])
+            md = forward_fill_degree(vlm_markdown(crops[page_no]))
         except Exception as e:
             md = f"[VLM 실패] {e}"
         print(md)
