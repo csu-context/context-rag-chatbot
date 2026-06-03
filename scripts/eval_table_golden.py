@@ -102,6 +102,39 @@ def score_credit(rows: list[list[str]], gt_rows: list[dict]) -> tuple[int, int, 
     return c, t, misses
 
 
+def score_transfer(rows: list[list[str]], gt_rows: list[dict], columns: list[str]) -> tuple[int, int, list]:
+    """편입학점 매트릭스: 헤더의 학점체제 열 인덱스를 찾아 (구분, 비고)로 행을 고정해 셀 정밀 채점.
+
+    한 논리 행이 행으로 과분할되면 '8학기 이수대상자' 같은 구분 키가 한 행에 모이지 않아
+    행 매칭이 실패한다 → 셀 줄바꿈 과분할 회귀를 직접 잡는다. 6학기처럼 구분이 중복되는 행은
+    비고로 분기한다(2학년 외국인 vs 3학년 건축학부).
+    """
+    col_idx: dict[str, int] = {}
+    for cells in rows:
+        for i, cell in enumerate(cells):
+            ncell = _norm(cell)
+            for col in columns:
+                if _norm(col) in ncell:
+                    col_idx.setdefault(col, i)
+    c = t = 0
+    misses = []
+    for row in gt_rows:
+        gub = _norm(row["gubun"])
+        nt = _norm(row["note"])
+        cand = [cells for cells in rows if gub and gub in _norm("".join(cells))]
+        target = next((cells for cells in cand if nt and nt in _norm("".join(cells))), cand[0] if cand else None)
+        label = f"{row['gubun']}/{row['note']}"
+        for col, val in row["by_credit"].items():
+            t += 1
+            ci = col_idx.get(col)
+            got = target[ci] if (target and ci is not None and ci < len(target)) else None
+            if got is not None and _norm(val) in _norm(got):
+                c += 1
+            else:
+                misses.append(([label, col], f"정답 '{val}' / 파싱칸 '{got}'"))
+    return c, t, misses
+
+
 def main() -> None:
     grand_c = grand_t = 0
     print("=== 표 파싱 골든셋 셀 채점 (현재 파서, RAG 우회) ===")
@@ -111,6 +144,8 @@ def main() -> None:
         rows = parse_table_rows(gold["meta"]["source"], gold["meta"]["page"])
         if name.startswith("credit"):
             c, t, misses = score_credit(rows, gold["ground_truth_rows"])
+        elif name.startswith("transfer"):
+            c, t, misses = score_transfer(rows, gold["ground_truth_rows"], gold["columns"])
         else:
             c = t = 0
             misses = []
