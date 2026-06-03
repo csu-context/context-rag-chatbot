@@ -33,7 +33,8 @@ MODEL_NAME=${MODEL_NAME:-"gemma2:2b"}
 # 사용하지 않는 기존 모델 자동 삭제 (디스크 용량 최적화)
 echo "Cleaning up outdated models..."
 ollama list | tail -n +2 | while read -r name id size modified; do
-    if [ -n "$name" ] && [ "$name" != "$MODEL_NAME" ]; then
+    # MODEL_NAME(생성 LLM) + vision 모델(qwen2.5vl:*, #166 표 파싱용)은 보존
+    if [ -n "$name" ] && [ "$name" != "$MODEL_NAME" ] && [[ "$name" != qwen2.5vl:* ]]; then
         echo "Removing outdated model: $name"
         ollama rm "$name"
     fi
