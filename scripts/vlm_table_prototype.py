@@ -22,7 +22,7 @@ from src.common.config import settings
 PDF = "data/raw/조선대학교_학칙.pdf"
 OUT_DIR = "tmp/vlm_out"
 SCALE = 3.0  # 확대 배율 — OCR 정확도 우선(OLLAMA_NUM_PARALLEL=1로 메모리 확보 전제)
-VLM_MODEL = "qwen2.5vl:7b"  # vision OCR 전용 — 7B(3B는 runner segfault). 메모리는 컨테이너 limit 상향으로 확보
+VLM_MODEL = settings.MODEL_NAME  # 생성 LLM과 통합(동일 qwen2.5vl:7b로 챗봇+표파싱). 3B는 runner segfault라 7B 고정
 
 VLM_PROMPT = (
     "이 이미지는 대학의 학위 수여 표다(컬럼: 대학 | 학과(부) | 학위). 표를 마크다운으로 변환하라.\n\n"

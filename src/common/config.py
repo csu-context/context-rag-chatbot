@@ -29,7 +29,7 @@ class Settings(BaseSettings):
 
     # 1. LLM 및 모델 설정
     MODEL_TYPE: Literal["gemini", "claude", "ollama"] = Field(default="ollama")
-    MODEL_NAME: str = Field(default="llama3.2:1b")
+    MODEL_NAME: str = Field(default="qwen2.5vl:7b")  # 생성 LLM + #166 표 VLM 통합 단일 모델
     EMBEDDING_MODEL_NAME: str = Field(default="BAAI/bge-m3")
     TEMPERATURE: float = Field(default=0.1)
 

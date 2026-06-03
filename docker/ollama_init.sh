@@ -27,8 +27,8 @@ until ollama list > /dev/null 2>&1; do
     sleep 2
 done
 
-# .env 또는 환경 변수에서 모델명 가져오기 (기본값: gemma2:2b)
-MODEL_NAME=${MODEL_NAME:-"gemma2:2b"}
+# .env 또는 환경 변수에서 모델명 가져오기 (기본값: qwen2.5vl:7b — 생성+표VLM 통합)
+MODEL_NAME=${MODEL_NAME:-"qwen2.5vl:7b"}
 
 # 사용하지 않는 기존 모델 자동 삭제 (디스크 용량 최적화)
 echo "Cleaning up outdated models..."
