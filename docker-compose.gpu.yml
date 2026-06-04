@@ -3,8 +3,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      args:
-        - DEVICE_TYPE=gpu
     deploy:
       resources:
         reservations:

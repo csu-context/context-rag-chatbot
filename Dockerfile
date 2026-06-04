@@ -18,19 +18,12 @@ ENV PATH="/opt/venv/bin:$PATH"
 # pip 업그레이드
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
-# ARG를 통해 CPU / GPU 모드 선택 (기본값은 gpu)
-ARG DEVICE_TYPE=gpu
-
-# 의존성 파일 복사 및 설치 (CPU 및 GPU 맞춤 설정 사용, 캐시 마운트로 초고속화)
+# 의존성 파일 복사 및 설치 (GPU 맞춤 설정 사용, 캐시 마운트로 초고속화)
 COPY requirements-prod.txt .
 RUN --mount=type=cache,target=/root/.cache/pip \
-    if [ "$DEVICE_TYPE" = "gpu" ]; then \
-        sed -i 's/+cpu//g' requirements-prod.txt && \
-        sed -i 's|whl/cpu|whl/cu130|g' requirements-prod.txt && \
-        pip install -r requirements-prod.txt; \
-    else \
-        pip install -r requirements-prod.txt; \
-    fi
+    sed -i 's/+cpu//g' requirements-prod.txt && \
+    sed -i 's|whl/cpu|whl/cu130|g' requirements-prod.txt && \
+    pip install -r requirements-prod.txt
 
 
 # --- Stage 2: Final Runtime ---
