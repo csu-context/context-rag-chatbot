@@ -14,10 +14,10 @@ if sys.platform != "linux":
 else:
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
+import json
 import logging
 import threading
 import time
-import json
 from pathlib import Path
 
 import streamlit as st
