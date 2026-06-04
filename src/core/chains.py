@@ -54,7 +54,8 @@ class RAGPipeline:
         self.llm = llm or LLMFactory.create_llm_with_fallback()
         self.reranker = reranker or RerankerFactory.create()
         self.tracing_logger = TracingLogger()
-        self.cache = SemanticCache() if use_cache else None
+        # 전역 토글이 마스터 스위치: 기본 비활성이며, use_cache 인자(예: 평가는 False)와 AND로 결합한다. (#157)
+        self.cache = SemanticCache() if (use_cache and settings.SEMANTIC_CACHE_ENABLED) else None
 
     def _resolve_parent_documents(self, docs: list[Document]) -> list[Document]:
         """자식 청크로 검색된 문서들을 부모 청크의 원문으로 전환하며, 동일 부모 및 동일 텍스트 중복을 제거합니다."""

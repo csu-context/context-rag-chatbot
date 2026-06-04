@@ -44,7 +44,7 @@ class PipelineOrchestrator:
             self.ingestion_pipeline = IngestionPipeline(self.strategy, storage_manager=self.storage_manager)
             self.manifest_manager = ManifestManager(self.parser_type)
             self.tracing_logger = TracingLogger()
-            self.cache = SemanticCache()
+            self.cache = SemanticCache() if settings.SEMANTIC_CACHE_ENABLED else None  # 기본 비활성 (#157)
             self._initialized = True
             logger.info("PipelineOrchestrator 초기화 완료.")
 
@@ -133,7 +133,7 @@ class PipelineOrchestrator:
     ):
         has_changes = bool(files_to_process or source_ids_to_delete or relative_paths_to_delete)
 
-        if has_changes:
+        if has_changes and self.cache:
             with session.trace_step("cache_flush"):
                 logger.info("데이터 변경이 감지되어 시맨틱 캐시를 초기화합니다.")
                 self.cache.flush()

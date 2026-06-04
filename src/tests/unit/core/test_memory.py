@@ -25,6 +25,7 @@ class TestRAGPipelineMemory:
         with (
             patch("src.core.chains.SemanticCache") as mock_cache_class,
             patch("src.core.chains.TracingLogger") as mock_logger_class,
+            patch("src.core.chains.settings.SEMANTIC_CACHE_ENABLED", True),
         ):
             mock_cache_class.return_value = MagicMock()
             mock_logger_class.return_value = MagicMock()
