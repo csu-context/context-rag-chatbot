@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from ragas import SingleTurnSample
 
-from src.eval.evaluator import InferenceResult, run_rag_inference
+from src.eval.evaluator import InferenceResult, _get_inference_settings, run_rag_inference
 
 
 @pytest.fixture
@@ -84,3 +84,28 @@ async def test_run_rag_inference_error_handling(
     result = await run_rag_inference(test_data)
 
     assert len(result.samples) == 0
+
+
+def test_inference_settings_ollama_includes_ollama_params(monkeypatch):
+    """ollama 백엔드면 공통(temperature) + ollama 전용 추론 파라미터를 모두 기록한다."""
+    monkeypatch.setattr("src.eval.evaluator.settings.MODEL_TYPE", "ollama")
+    monkeypatch.setattr("src.eval.evaluator.settings.OLLAMA_NUM_PREDICT", 2048)
+    monkeypatch.setattr("src.eval.evaluator.settings.OLLAMA_REPEAT_PENALTY", 1.1)
+
+    info = _get_inference_settings()
+
+    assert "temperature" in info
+    assert info["num_predict"] == 2048
+    assert info["repeat_penalty"] == 1.1
+    assert {"num_ctx", "keep_alive", "think"} <= info.keys()
+
+
+def test_inference_settings_non_ollama_only_common(monkeypatch):
+    """비-ollama(gemini/claude) 백엔드면 ollama 전용 키 없이 공통 항목만 기록한다."""
+    monkeypatch.setattr("src.eval.evaluator.settings.MODEL_TYPE", "claude")
+
+    info = _get_inference_settings()
+
+    assert "temperature" in info
+    assert "num_predict" not in info
+    assert all(not k.startswith(("num_", "repeat_", "keep_", "think")) for k in info)

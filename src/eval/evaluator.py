@@ -112,6 +112,25 @@ def _get_system_info() -> dict[str, Any]:
     return info
 
 
+def _get_inference_settings() -> dict[str, Any]:
+    """생성 LLM의 추론(생성) 파라미터를 기록용으로 수집한다.
+
+    지표가 어떤 설정으로 산출됐는지 요약(eval_summary)만으로 역추적하기 위함이다.
+    ollama 백엔드일 때만 ollama 전용 파라미터를 포함하고, 그 외(gemini/claude)는
+    공통 항목(temperature)만 기록해 의미 없는 키가 끼지 않게 한다.
+    """
+    info: dict[str, Any] = {"temperature": settings.TEMPERATURE}
+    if settings.MODEL_TYPE == "ollama":
+        info |= {
+            "num_predict": settings.OLLAMA_NUM_PREDICT,
+            "num_ctx": settings.OLLAMA_NUM_CTX,
+            "repeat_penalty": settings.OLLAMA_REPEAT_PENALTY,
+            "keep_alive": settings.OLLAMA_KEEP_ALIVE,
+            "think": settings.OLLAMA_THINK,
+        }
+    return info
+
+
 def _get_indexed_documents() -> list[str]:
     try:
         paths = sorted([f for f in PROCESSED_DATA_DIR.glob("*.json") if f.name != "manifest.json"])
@@ -322,6 +341,7 @@ async def _score_and_save(result: InferenceResult, missing_docs: list[str] | Non
             "reranker": (
                 f"{settings.RERANKER_TYPE}/{settings.RERANKER_MODEL_NAME} (top_k={settings.RERANKER_MAX_DOCS})"
             ),
+            "inference": _get_inference_settings(),
         },
         "judge": {
             "llm": f"{settings.EVAL_JUDGE_TYPE}/{settings.EVAL_JUDGE_MODEL}",
