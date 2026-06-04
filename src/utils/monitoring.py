@@ -1,16 +1,10 @@
 import logging
 import shutil
+import subprocess
 
 import psutil
 
 logger = logging.getLogger(__name__)
-
-try:
-    import torch
-
-    TORCH_AVAILABLE = True
-except ImportError:
-    TORCH_AVAILABLE = False
 
 
 def get_cpu_usage():
@@ -24,23 +18,19 @@ def get_memory_usage():
 
 
 def get_gpu_vram_usage():
-    """Returns GPU VRAM usage in percentage, if available using PyTorch."""
-    if not TORCH_AVAILABLE:
-        return None
-
+    """Returns GPU VRAM usage in percentage via nvidia-smi, or None if unavailable."""
     try:
-        if not torch.cuda.is_available():
+        out = subprocess.check_output(
+            ["nvidia-smi", "--query-gpu=memory.used,memory.total", "--format=csv,noheader,nounits"],
+            text=True,
+            timeout=3,
+        )
+        used, total = out.strip().splitlines()[0].split(",")
+        total_mb = float(total.strip())
+        if total_mb == 0:
             return None
-
-        free_memory, total_memory = torch.cuda.mem_get_info(torch.cuda.current_device())
-
-        if total_memory == 0:
-            return None
-
-        used_memory = total_memory - free_memory
-        return (used_memory / total_memory) * 100
-    except Exception as e:
-        logger.error(f"Failed to get GPU VRAM usage via PyTorch: {e}")
+        return (float(used.strip()) / total_mb) * 100
+    except Exception:
         return None
 
 

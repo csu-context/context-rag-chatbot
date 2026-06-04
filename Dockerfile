@@ -18,8 +18,8 @@ ENV PATH="/opt/venv/bin:$PATH"
 # pip 업그레이드
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
-# ARG를 통해 CPU / GPU 모드 선택 (기본값은 cpu)
-ARG DEVICE_TYPE=cpu
+# ARG를 통해 CPU / GPU 모드 선택 (기본값은 gpu)
+ARG DEVICE_TYPE=gpu
 
 # 의존성 파일 복사 및 설치 (CPU 및 GPU 맞춤 설정 사용, 캐시 마운트로 초고속화)
 COPY requirements-prod.txt .
@@ -65,9 +65,11 @@ RUN mkdir -p data/raw data/processed vector_db logs
 # 소스 코드 복사
 COPY src/ /app/src/
 COPY prompts/ /app/prompts/
+COPY config/ /app/config/
 
 # 포트 설정
 EXPOSE 8501
+EXPOSE 9090
 
 # 컨테이너 실행 명령
 CMD ["streamlit", "run", "src/app.py", "--server.address=0.0.0.0"]

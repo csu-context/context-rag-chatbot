@@ -1,0 +1,17 @@
+# 신규 모델 과금 누락 방지 — 코드 배포 없이 단가 추가/수정 가능
+llm_pricing:
+  claude-sonnet-4-6:
+    input: 3.0
+    output: 15.0
+  claude-haiku-4-5:
+    input: 1.0
+    output: 5.0
+  gemini-2.0-flash:
+    input: 0.1
+    output: 0.4
+  gemini-1.5-pro:
+    input: 1.25
+    output: 5.0
+  gpt-4o:
+    input: 2.5
+    output: 10.0
