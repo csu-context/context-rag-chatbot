@@ -192,24 +192,69 @@ class DoclingPDFParser:
         return tables
 
     @staticmethod
-    def _extract_cell_text(blocks: list, cell_bbox: tuple) -> str:
-        """rawdict blocks + join_sorted_chars로 셀 bbox 내 문자를 ManualParser 방식으로 추출한다."""
-        x0, y0, x1, y1 = cell_bbox
-        all_chars = []
+    def _pick_cell(cx: float, cy: float, positions: list[tuple[tuple[int, int], tuple]]) -> tuple[int, int] | None:
+        """글자(중심 cx, cy)를 담을 셀 키를 고른다 — 포함 셀 우선, 없으면 2D 최근접 셀로 회수.
+
+        포함(정확한 x·y) 셀이 있으면 그 셀이 이기므로 괘선 표·세로병합 헤더처럼 글자가 제 셀 안에
+        있는 표에서는 기존 셀별 추출과 동일하게 동작한다(회귀 없음). 어느 셀 bbox에도 안 든 글자
+        (무테두리 표에서 좁은 칸 경계 틈에 떨어진 주석 등)만 가장 가까운 셀로 회수해 누락(소스 표기
+        손실)을 막는다. 같은 행 글자는 보통 수직 정렬돼 있어 2D 최근접이 인접 칸을 고른다. (#154)
+        """
+        best_key: tuple[int, int] | None = None
+        best_dist = float("inf")
+        for key, (x0, y0, x1, y1) in positions:
+            dx = 0.0 if x0 <= cx <= x1 else min(abs(cx - x0), abs(cx - x1))
+            dy = 0.0 if y0 <= cy <= y1 else min(abs(cy - y0), abs(cy - y1))
+            if dx == 0.0 and dy == 0.0:
+                return key
+            dist = dx * dx + dy * dy
+            if dist < best_dist:
+                best_dist = dist
+                best_key = key
+        return best_key
+
+    @staticmethod
+    def _assign_chars_to_cells(
+        blocks: list, table_bbox: tuple, positions: list[tuple[tuple[int, int], tuple]]
+    ) -> dict[tuple[int, int], list]:
+        """표 bbox 안의 글자를 셀별 버킷으로 1:1 배정한다(표 전체 단일 패스).
+
+        표 범위 밖(페이지 여백) 글자는 배제해 외부 유입을 막고, 나머지는 _pick_cell로 포함/최근접
+        셀에 배정한다. 행 단위가 아니라 표 전체로 배정하므로 한 글자가 두 셀에 중복되지 않는다.
+        """
+        tx0, ty0, tx1, ty1 = table_bbox
+        buckets: dict[tuple[int, int], list] = {key: [] for key, _ in positions}
         for block in blocks:
-            if "lines" not in block:
-                continue
-            for line in block["lines"]:
+            for line in block.get("lines", ()):
                 for span in line["spans"]:
                     for ch in collect_chars_from_span(span):
                         cy, cx0, _c, _size, cx1 = ch
-                        cx_center = (cx0 + cx1) / 2
-                        if x0 <= cx_center <= x1 and y0 <= cy <= y1:
-                            all_chars.append(ch)
-        if not all_chars:
-            return ""
-        all_chars.sort(key=lambda v: (v[0], v[1]))
-        return join_sorted_chars(all_chars, cell_bbox=cell_bbox).strip()
+                        cx = (cx0 + cx1) / 2
+                        if not (tx0 <= cx <= tx1 and ty0 <= cy <= ty1):
+                            continue
+                        key = DoclingPDFParser._pick_cell(cx, cy, positions)
+                        if key is not None:
+                            buckets[key].append(ch)
+        return buckets
+
+    @staticmethod
+    def _buckets_to_grid(cell_grid: list[list], buckets: dict[tuple[int, int], list]) -> list[list[str | None]]:
+        """셀 버킷을 마크다운용 텍스트 격자로 합친다. None 셀(병합 하단)은 None 유지(rowspan 전파 호환)."""
+        grid: list[list[str | None]] = []
+        for ri, row in enumerate(cell_grid):
+            line: list[str | None] = []
+            for ci, cell in enumerate(row):
+                if cell is None:
+                    line.append(None)
+                    continue
+                chars = buckets.get((ri, ci)) or []
+                if chars:
+                    chars.sort(key=lambda v: (v[0], v[1]))
+                    line.append(join_sorted_chars(chars, cell_bbox=cell).strip())
+                else:
+                    line.append("")
+            grid.append(line)
+        return grid
 
     @staticmethod
     def _pymupdf_table_markdown(
@@ -232,10 +277,10 @@ class DoclingPDFParser:
                 return ""
             table = pymupdf_tables[idx_on_page]
             blocks = page.get_text("rawdict").get("blocks", [])
-            grid: list[list[str | None]] = [
-                [DoclingPDFParser._extract_cell_text(blocks, cell) if cell else None for cell in table_row.cells]
-                for table_row in table.rows
-            ]
+            cell_grid = [list(table_row.cells) for table_row in table.rows]
+            positions = [((ri, ci), c) for ri, row in enumerate(cell_grid) for ci, c in enumerate(row) if c]
+            buckets = DoclingPDFParser._assign_chars_to_cells(blocks, table.bbox, positions)
+            grid = DoclingPDFParser._buckets_to_grid(cell_grid, buckets)
             DoclingPDFParser._propagate_merged_cells(grid)
             grid = DoclingPDFParser._drop_empty_columns(grid)
             return DoclingPDFParser._cells_to_markdown(grid, doc_type)
@@ -268,16 +313,31 @@ class DoclingPDFParser:
 
     @staticmethod
     def _cells_to_markdown(cells: list[list[str | None]], doc_type: str = "legal") -> str:
-        """2D 셀 배열을 마크다운 표로 변환한다. 각 셀에 doc_type 인지 clean_text를 적용한다."""
+        """2D 셀 배열을 마크다운 표로 변환한다. 각 셀에 doc_type 인지 정제를 적용한다."""
         if not cells:
             return ""
         rows = []
         for i, row in enumerate(cells):
-            cleaned = [clean_text(str(c or "").replace("\n", " "), doc_type) for c in row]
+            cleaned = [DoclingPDFParser._clean_cell(c, doc_type) for c in row]
             rows.append("| " + " | ".join(cleaned) + " |")
             if i == 0:
                 rows.append("|" + "|".join(["---"] * len(row)) + "|")
         return "\n".join(rows)
+
+    @staticmethod
+    def _clean_cell(cell: str | None, doc_type: str) -> str:
+        """셀 텍스트를 정제하되, 정제가 비어있지 않은 셀을 통째로 비우면 원문 표기를 보존한다.
+
+        clean_text는 법령 어노테이션(<개정 …>, <삭제> 등)을 제거하는데, 셀 전체가 그 표기인
+        경우(예: 폐지된 등급 칸의 <삭제>) 정제 결과가 빈칸이 돼 소스 표기가 통째로 사라진다.
+        다른 내용이 같이 있으면(예: '점수 <개정 2020>') 어노테이션만 정상 제거되고, 어노테이션이
+        내용 전부일 때만 원문을 보존한다 — 특정 토큰이 아니라 '무손실' 불변식이다. (#154)
+        """
+        raw = str(cell or "").replace("\n", " ")
+        cleaned = clean_text(raw, doc_type)
+        if cleaned or not raw.strip():
+            return cleaned
+        return re.sub(r"\s+", " ", raw).strip()
 
     def _get_page_count(self, doc) -> int:
         """Docling Document에서 전체 페이지 수를 추출"""
