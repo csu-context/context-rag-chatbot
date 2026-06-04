@@ -277,7 +277,6 @@ with st.sidebar:
     st.subheader("실시간 자원 모니터링")
     stats = get_system_stats()
 
-
     # @st.fragment(run_every) 로 실제 실시간 반영
     @st.fragment(run_every="5s")
     def _resource_monitor():
@@ -292,7 +291,6 @@ with st.sidebar:
         else:
             st.write("GPU VRAM 사용량")
             st.info("현재 환경에서 GPU를 사용할 수 없습니다.")
-
 
     _resource_monitor()
 
@@ -439,9 +437,9 @@ def on_chat_submit():
 
 
 if prompt := st.chat_input(
-        "규정에 대해 궁금한 점을 물어보세요.",
-        on_submit=on_chat_submit,
-        disabled=st.session_state.is_generating or not model_ready,
+    "규정에 대해 궁금한 점을 물어보세요.",
+    on_submit=on_chat_submit,
+    disabled=st.session_state.is_generating or not model_ready,
 ):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
