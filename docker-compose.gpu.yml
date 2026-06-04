@@ -1,8 +1,5 @@
 services:
   app:
-    build:
-      context: .
-      dockerfile: Dockerfile
     deploy:
       resources:
         reservations:

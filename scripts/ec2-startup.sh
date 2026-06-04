@@ -31,8 +31,11 @@ fi
 
 cd "$APP_DIR"
 
-echo "Pre-cleaning dangling/unused docker resources to free up space..."
-docker image prune -f
+echo "Stopping existing containers to release image layers..."
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml down
+
+echo "Aggressively cleaning up old/dangling docker resources to free up space..."
+docker system prune -a -f
 
 echo "Pulling latest Docker images..."
 docker compose -f docker-compose.yml -f docker-compose.gpu.yml pull
