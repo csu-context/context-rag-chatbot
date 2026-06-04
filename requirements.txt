@@ -57,5 +57,3 @@ pytest-mock==3.15.1
 pytest-cov==7.1.0
 ruff==0.15.10
 redis==8.0.0
-
-st-copy-to-clipboard

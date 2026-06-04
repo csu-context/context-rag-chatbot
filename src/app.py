@@ -14,15 +14,15 @@ if sys.platform != "linux":
 else:
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
-
 import logging
 import threading
 import time
+import json
 from pathlib import Path
 
 import streamlit as st
+import streamlit.components.v1 as components
 from dotenv import load_dotenv
-from st_copy_to_clipboard import st_copy_to_clipboard
 
 from src.common.config import settings
 from src.common.constants import MetadataFields
@@ -44,6 +44,54 @@ setup_global_logging()
 logging.getLogger("asyncio").setLevel(logging.CRITICAL)
 perf_logger = PerformanceLogger()  # 전용 로거 인스턴스 생성
 logger = logging.getLogger(__name__)
+
+
+# --- 커스텀 Material Icon 복사 버튼 렌더러 ---
+def render_custom_copy_button(text_to_copy: str, key_suffix: str):
+    safe_text = json.dumps(text_to_copy)
+    html_code = f"""
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet" />
+    <style>
+        .copy-btn {{
+            background: transparent;
+            border: none;
+            cursor: pointer;
+            color: #555;
+            padding: 4px;
+            border-radius: 4px;
+            transition: background 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }}
+        .copy-btn:hover {{
+            background: #f0f0f0;
+        }}
+        .material-symbols-outlined {{
+            font-size: 20px;
+        }}
+    </style>
+    <button class="copy-btn" onclick="copyText()" title="답변 복사하기">
+        <span class="material-symbols-outlined" id="icon-{key_suffix}">content_copy</span>
+    </button>
+    <script>
+        function copyText() {{
+            const text = {safe_text};
+            navigator.clipboard.writeText(text).then(function() {{
+                const icon = document.getElementById('icon-{key_suffix}');
+                icon.innerText = 'check';
+                icon.style.color = '#4CAF50';
+                setTimeout(function() {{
+                    icon.innerText = 'content_copy';
+                    icon.style.color = '#555';
+                }}, 2000);
+            }}).catch(function(err) {{
+                console.error('Copy Failed', err);
+            }});
+        }}
+    </script>
+    """
+    components.html(html_code, height=35, width=35)
 
 
 def get_doc_field(doc, field, default=None):
@@ -163,16 +211,17 @@ is_ollama = settings.MODEL_TYPE == "ollama"
 if is_ollama:
     try:
         llm_instance = LLMFactory.create_llm()
-        if not llm_instance.is_model_available():
+
+        if hasattr(llm_instance, "is_model_available") and not llm_instance.is_model_available():
             model_ready = False
         elif "llm_warmup_done" not in st.session_state:
             st.session_state.llm_warmup_done = True
-            # 동기 warmup은 첫 페이지 로드를 멈춤 → 데몬 스레드로 백그라운드 실행 (리랭커 패턴과 동일)
-            threading.Thread(target=llm_instance.warmup, daemon=True, name="ollama-warmup").start()
+
+            if hasattr(llm_instance, "warmup"):
+                threading.Thread(target=llm_instance.warmup, daemon=True, name="ollama-warmup").start()
     except Exception as e:
         model_ready = False
         logger.error(f"로컬 LLM 상태 진단 중 오류: {e}")
-
 
 # CSS 추가 (style.css에서 동적 주입)
 css_file_path = Path(__file__).parent / "ui" / "style.css"
@@ -180,7 +229,6 @@ if css_file_path.exists():
     with open(css_file_path, encoding="utf-8") as f:
         custom_css = f.read()
     st.markdown(f"<style>{custom_css}</style>", unsafe_allow_html=True)
-
 
 # --- 4. 사이드바 (Sidebar) 구성 ---
 with st.sidebar:
@@ -229,6 +277,7 @@ with st.sidebar:
     st.subheader("실시간 자원 모니터링")
     stats = get_system_stats()
 
+
     # @st.fragment(run_every) 로 실제 실시간 반영
     @st.fragment(run_every="5s")
     def _resource_monitor():
@@ -243,6 +292,7 @@ with st.sidebar:
         else:
             st.write("GPU VRAM 사용량")
             st.info("현재 환경에서 GPU를 사용할 수 없습니다.")
+
 
     _resource_monitor()
 
@@ -336,7 +386,6 @@ if is_ollama and not model_ready:
     except Exception as e:
         st.error(f"로컬 LLM 상태 진단 중 오류가 발생했습니다: {e}")
 
-
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
@@ -348,7 +397,7 @@ for msg_idx, msg in enumerate(st.session_state.messages):
         if msg["role"] == "assistant" and msg.get("latency") is not None:
             st.caption(f"답변 소요 시간: {msg['latency']:.2f}초")
 
-        # 인용 출처(citations)를 먼저 화면에 띄웁니다
+        # --- [순서 1] 인용 출처(citations) 렌더링 (오탐 방지 버그 수정 로직 포함) ---
         if msg.get("citations"):
             for i, doc in enumerate(msg["citations"]):
                 if not isinstance(doc, dict):
@@ -356,37 +405,7 @@ for msg_idx, msg in enumerate(st.session_state.messages):
                 metadata = doc.get("metadata", {})
                 source = metadata.get(MetadataFields.SRC_NAME, "알 수 없음")
                 page = metadata.get(MetadataFields.PG_NUM, "-")
-                score = metadata.get("rerank_score", doc.get("score", 0.0))
-                display_score = max(0.0, (score - 0.5) * 2)
-                is_low_confidence = score < 0.5
 
-                button_label = f"📄 {source} (p.{page}) - 신뢰도: {display_score:.2f}"
-                if is_low_confidence:
-                    button_label += " ⚠️"
-
-                if st.button(button_label, key=f"cite_{msg_idx}_{i}", disabled=st.session_state.is_generating):
-                    st.session_state.dialog_doc_to_show = doc
-                    st.session_state.should_rerun_app = True
-
-                if is_low_confidence:
-                    st.caption("⚠️ 신뢰도가 낮아 환각 발생 가능성이 있습니다. 원문을 직접 확인하세요.")
-
-        # AI 답변 클립보드 복사 버튼
-        if msg["role"] == "assistant":
-            st_copy_to_clipboard(
-                msg["content"],
-                before_copy_label="❐",
-                after_copy_label="✓",
-                key=f"copy_btn_{msg_idx}",
-            )
-
-        if msg.get("citations"):
-            for i, doc in enumerate(msg["citations"]):
-                if not isinstance(doc, dict):
-                    continue
-                metadata = doc.get("metadata", {})
-                source = metadata.get(MetadataFields.SRC_NAME, "알 수 없음")
-                page = metadata.get(MetadataFields.PG_NUM, "-")
                 # rerank_score 없을 때 RRF/기본값 0.0으로 무조건 경고 발생하는 오탐 방지
                 score = metadata.get("rerank_score")
                 has_rerank_score = score is not None
@@ -400,10 +419,14 @@ for msg_idx, msg in enumerate(st.session_state.messages):
 
                 if st.button(button_label, key=f"cite_{msg_idx}_{i}", disabled=st.session_state.is_generating):
                     st.session_state.dialog_doc_to_show = doc
-                    st.session_state.should_rerun_app = True  # Set flag instead of direct rerun
+                    st.session_state.should_rerun_app = True
 
                 if is_low_confidence:
                     st.caption("⚠️ 신뢰도가 낮아 환각 발생 가능성이 있습니다. 원문을 직접 확인하세요.")
+
+        # --- [순서 2] 커스텀 Material Icon 복사 버튼 (출처 밑으로 렌더링) ---
+        if msg["role"] == "assistant":
+            render_custom_copy_button(text_to_copy=msg["content"], key_suffix=str(msg_idx))
 
 if st.session_state.dialog_doc_to_show:
     show_document_dialog(st.session_state.dialog_doc_to_show)
@@ -416,9 +439,9 @@ def on_chat_submit():
 
 
 if prompt := st.chat_input(
-    "규정에 대해 궁금한 점을 물어보세요.",
-    on_submit=on_chat_submit,
-    disabled=st.session_state.is_generating or not model_ready,
+        "규정에 대해 궁금한 점을 물어보세요.",
+        on_submit=on_chat_submit,
+        disabled=st.session_state.is_generating or not model_ready,
 ):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
@@ -441,7 +464,6 @@ if prompt := st.chat_input(
         }
     )
     st.rerun()
-
 
 # active generation UI (컨트롤러로 비즈니스 논리 이관 호출)
 if st.session_state.is_generating:
