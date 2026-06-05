@@ -14,14 +14,12 @@ if sys.platform != "linux":
 else:
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
-import json
 import logging
 import threading
 import time
 from pathlib import Path
 
 import streamlit as st
-import streamlit.components.v1 as components
 from dotenv import load_dotenv
 
 from src.common.config import settings
@@ -29,11 +27,11 @@ from src.common.constants import MetadataFields
 from src.core.chains import get_rag_chain
 from src.core.retriever import RetrieverFactory
 from src.models.factory import LLMFactory
+from src.ui.copy_button import render_custom_copy_button
 from src.ui.dialogs.admin import show_admin_dialog
 from src.ui.dialogs.chunk_viewer import show_chunks_viewer_dialog
 from src.ui.session import init_session_state
 from src.ui.stream_responder import StreamResponder
-from src.ui.copy_button import render_custom_copy_button
 from src.utils.logger import PerformanceLogger, setup_global_logging
 from src.utils.monitoring import get_system_stats
 from src.utils.paths import ensure_directories

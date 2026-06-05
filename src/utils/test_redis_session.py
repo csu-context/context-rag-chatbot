@@ -12,10 +12,7 @@ def test_delete_session_success(mock_get_client):
 
     test_session_id = "test_user_123"
     expected_pattern = f"rag:session:{test_session_id}:*"
-    mock_keys_to_delete = [
-        f"rag:session:{test_session_id}:messages",
-        f"rag:session:{test_session_id}:docs"
-    ]
+    mock_keys_to_delete = [f"rag:session:{test_session_id}:messages", f"rag:session:{test_session_id}:docs"]
 
     # client.keys()가 실행될 때 가짜 키 리스트를 반환하도록 세팅
     mock_redis.keys.return_value = mock_keys_to_delete
