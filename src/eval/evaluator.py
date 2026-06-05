@@ -173,6 +173,19 @@ def _get_resource_snapshot() -> dict[str, float]:
     return snapshot
 
 
+def _average_resources(df: pd.DataFrame) -> dict[str, float]:
+    """샘플별 자원 스냅샷(cpu/ram/vram)에서 평균을 집계한다.
+
+    GPU 미탑재 등으로 수집되지 않은 항목(예: vram_mb 열 부재)은 건너뛴다.
+    """
+    columns = {"cpu_percent": "avg_cpu_percent", "ram_mb": "avg_ram_mb", "vram_mb": "avg_vram_mb"}
+    averages: dict[str, float] = {}
+    for col, out_key in columns.items():
+        if col in df.columns and not df[col].isna().all():
+            averages[out_key] = round(float(df[col].mean()), 1)
+    return averages
+
+
 async def run_rag_inference(test_data: list[dict[str, Any]]) -> InferenceResult:
     """RAG 추론 수행 및 SingleTurnSample 리스트 생성 (시스템 표준 체인 사용)"""
     from src.core.chains import get_rag_chain
@@ -351,6 +364,7 @@ async def _score_and_save(result: InferenceResult, missing_docs: list[str] | Non
         "results": {
             **avg_scores,
             "avg_latency_sec": avg_latency,
+            **_average_resources(df),
             "total_samples": len(df),
         },
         "system": _get_system_info(),
