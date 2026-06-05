@@ -4,18 +4,24 @@ import streamlit as st
 
 logger = logging.getLogger(__name__)
 
-try:
-    from streamlit.web.server.websocket_headers import _get_websocket_headers
-except ImportError:
-    _get_websocket_headers = None
-
-
 
 def get_cookie_session_id() -> str | None:
     """Streamlit WebSocket 헤더 정보에서 브라우저 쿠키를 읽어 세션 ID를 식별합니다."""
+    try:
+        from streamlit.web.server.websocket_headers import _get_websocket_headers
+    except ImportError:
+        logger.debug("streamlit websocket_headers 모듈 임포트 실패 (테스트/CLI 환경)")
+        return None
+
     if _get_websocket_headers is None:
         return None
-    headers = _get_websocket_headers()
+
+    try:
+        headers = _get_websocket_headers()
+    except Exception as e:
+        logger.debug(f"웹소켓 헤더 조회 실패: {e}")
+        return None
+
     if not headers:
         return None
 
