@@ -1,12 +1,19 @@
 import logging
 import streamlit as st
-from streamlit.web.server.websocket_headers import _get_websocket_headers
 
 logger = logging.getLogger(__name__)
+
+try:
+    from streamlit.web.server.websocket_headers import _get_websocket_headers
+except ImportError:
+    _get_websocket_headers = None
+
 
 
 def get_cookie_session_id() -> str | None:
     """Streamlit WebSocket 헤더 정보에서 브라우저 쿠키를 읽어 세션 ID를 식별합니다."""
+    if _get_websocket_headers is None:
+        return None
     headers = _get_websocket_headers()
     if not headers:
         return None

@@ -138,7 +138,7 @@ if settings.REDIS_URL and "redis_session_loaded" not in st.session_state:
 
     # 1. 쿼리 스트링 또는 브라우저 쿠키에서 기존 세션 식별 시도
     _session_id = st.query_params.get("sid", "") or get_cookie_session_id()
-    
+
     # 2. 식별 불가능한 경우 새로 발급한 session_uuid 사용 및 브라우저 쿠키 동기화
     if not _session_id:
         _session_id = st.session_state.get("session_uuid")
@@ -146,7 +146,7 @@ if settings.REDIS_URL and "redis_session_loaded" not in st.session_state:
     else:
         # 기존 세션 ID가 확인되었으므로, 현재 session_state 변수에도 덮어쓰기하여 일관성 유지
         st.session_state.session_uuid = str(_session_id)
-        
+
     st.session_state._redis_session_id = str(_session_id)
 
     saved_msgs = RedisSessionStore.load_messages(st.session_state._redis_session_id)
