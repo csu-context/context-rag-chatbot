@@ -133,7 +133,7 @@ init_session_state()
 # 로드밸런서로 다른 인스턴스로 라우팅되어도 대화 연속성 유지
 if settings.REDIS_URL and "redis_session_loaded" not in st.session_state:
     st.session_state.redis_session_loaded = True
-    _session_id = st.query_params.get("sid", "") or id(st.session_state)
+    _session_id = st.query_params.get("sid", "") or st.session_state.get("session_uuid")
     st.session_state._redis_session_id = str(_session_id)
     from src.utils.redis_session import RedisSessionStore
 

@@ -5,6 +5,10 @@ import streamlit as st
 
 def init_session_state():
     """Streamlit 애플리케이션의 세션 상태 변수들을 중앙 집중식으로 초기화합니다."""
+    import uuid
+    if "session_uuid" not in st.session_state:
+        st.session_state["session_uuid"] = str(uuid.uuid4())
+
     defaults = {
         "admin_active": False,
         "dialog_doc_to_show": None,
