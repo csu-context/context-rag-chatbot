@@ -69,7 +69,7 @@ AI 추론 및 리랭킹 연산의 성능을 극대화하기 위해 배포 서버
 * **실행 명령어**:
   ```bash
   # 기본 서비스와 GPU 예약 구성을 결합하여 CUDA 가속 버전으로 기동
-  docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+  docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
   ```
 
 ### 2. 로컬 개발 환경 (macOS / Windows / Non-NVIDIA)

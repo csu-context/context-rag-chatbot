@@ -21,8 +21,6 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 # 의존성 파일 복사 및 설치 (GPU 맞춤 설정 사용, 캐시 마운트로 초고속화)
 COPY requirements-prod.txt .
 RUN --mount=type=cache,target=/root/.cache/pip \
-    sed -i 's/+cpu//g' requirements-prod.txt && \
-    sed -i 's|whl/cpu|whl/cu130|g' requirements-prod.txt && \
     pip install -r requirements-prod.txt
 
 
