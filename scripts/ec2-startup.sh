@@ -31,13 +31,17 @@ fi
 
 cd "$APP_DIR"
 
-echo "Pulling latest Docker images..."
-docker compose -f docker-compose.yml -f docker-compose.gpu.yml pull
+echo "Stopping and removing the old app container to release locks on layers..."
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml stop app
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml rm -f app
+
+echo "Cleaning up the old app image to free up disk space (preserving active DB images)..."
+docker image prune -af
+
+echo "Pulling the latest App image from ECR..."
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml pull app
 
 echo "Starting containers..."
 docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
-
-echo "Cleaning up old/dangling docker images to optimize disk space..."
-docker image prune -f
 
 echo "Deployment completed successfully!"

@@ -59,40 +59,41 @@
 
 ---
 
-## Docker 환경에서 시작하기 (Docker Setup)
+## 실행 및 개발 환경 가이드 (Setup & Execution Guide)
 
-팀원 간 라이브러리 버전 충돌을 방지하고, ChromaDB 서버를 안정적으로 운영하기 위해 Docker 환경 사용을 권장합니다.
+AI 추론 및 리랭킹 연산의 성능을 극대화하기 위해 배포 서버는 NVIDIA GPU(CUDA) 가속 기반의 Docker 환경으로 완전히 단일화하여 운영합니다. 이에 따라 로컬 개발 환경(Mac 및 AMD GPU PC 등)에서는 아래 가이드에 맞추어 하드웨어 가속을 최대한 활용할 수 있도록 이원화하여 구동할 것을 권장합니다.
 
-### 1. 필수 요구사항
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) 설치
-- (Windows/Linux GPU 사용 시) [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) 설치
-
-### 2. 실행 방법
-본인의 하드웨어 환경(CPU 또는 GPU)에 맞는 명령어를 입력하세요.
-
-* **CPU 전용 환경:**
+### 1. 배포 및 서버 환경 (Docker + NVIDIA GPU)
+* **대상**: AWS EC2 등 NVIDIA GPU 하드웨어가 장착된 서버 환경
+* **특징**: 컨테이너 빌드 및 구동 시 CUDA 가속 환경을 강제 전제하여 빌드됩니다.
+* **실행 명령어**:
   ```bash
-  # 컨테이너 빌드 및 실행 (기본 CPU 모드)
-  docker-compose up -d --build
+  # 기본 서비스와 GPU 예약 구성을 결합하여 CUDA 가속 버전으로 기동
+  docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
   ```
 
-* **GPU 환경 (NVIDIA 외장 그래픽 활용 시):**
-  > [!IMPORTANT]
-  > GPU 가속을 사용하기 전, 호스트 시스템에 **NVIDIA Container Toolkit**이 정상적으로 설치되고 Docker 설정에 등록되어 있어야 합니다.
-  
+### 2. 로컬 개발 환경 (macOS / Windows / Non-NVIDIA)
+Apple Silicon(M 시리즈) 및 AMD GPU 환경에서는 가상화 레이어의 제약으로 인해 컨테이너 내 GPU 포트포워딩이 지원되지 않거나 복잡합니다. 따라서 무거운 AI 연산(Ollama, PyTorch)은 로컬 호스트 네이티브로 실행하고, DB류만 Docker로 격리 기동하는 방식을 권장합니다.
+
+* **단계 A: 공통 인프라 기동 (Docker)**
   ```bash
-  # 기본 서비스에 GPU 설정을 병합하여 CUDA 가속 버전으로 빌드 및 실행
-  docker-compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+  # ChromaDB, Redis 등 데이터 스토어만 백그라운드로 기동
+  docker compose up -d chromadb redis
   ```
 
-### 3. 서비스 접속
-- **Streamlit UI:** `http://localhost:8501`
-- **ChromaDB 상태 확인:** `http://localhost:8000/api/v2/heartbeat` (숫자가 표시되면 정상)
+* **단계 B: 로컬 AI 엔진 및 앱 기동 (Host Native)**
+  1. **Ollama**:
+     - 각 OS에 맞는 [Ollama Desktop](https://ollama.com)을 직접 설치 및 백그라운드 실행합니다. (Mac의 Apple GPU/NPU 가속, Windows/Linux의 AMD 가속을 자동 감지하여 최고 속도로 가동합니다.)
+  2. **Python Application**:
+     - 로컬 터미널 가상환경에서 Streamlit을 직접 가동합니다. PyTorch가 호스트의 MPS(Mac) 가속기를 자동 포착하여 임베딩 및 리랭커 연산 속도를 가속합니다.
+     ```bash
+     pip install -r requirements.txt
+     streamlit run src/app.py
+     ```
 
-### 4. 주요 명령어
-- **로그 확인:** `docker-compose logs -f app`
-- **컨테이너 중지:** `docker-compose down`
-- **컨테이너 내 명령어 실행:** `docker-compose exec app bash`
+### 3. 서비스 접속 정보
+* **Streamlit UI (로컬 기동 시)**: `http://localhost:8501`
+* **ChromaDB 상태 확인**: `http://localhost:8000/api/v2/heartbeat` (정상 작동 시 숫자가 반환됨)
 
 ---
 
