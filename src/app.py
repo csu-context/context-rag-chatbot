@@ -33,6 +33,7 @@ from src.ui.dialogs.admin import show_admin_dialog
 from src.ui.dialogs.chunk_viewer import show_chunks_viewer_dialog
 from src.ui.session import init_session_state
 from src.ui.stream_responder import StreamResponder
+from src.ui.copy_button import render_custom_copy_button
 from src.utils.logger import PerformanceLogger, setup_global_logging
 from src.utils.monitoring import get_system_stats
 from src.utils.paths import ensure_directories
@@ -44,54 +45,6 @@ setup_global_logging()
 logging.getLogger("asyncio").setLevel(logging.CRITICAL)
 perf_logger = PerformanceLogger()  # 전용 로거 인스턴스 생성
 logger = logging.getLogger(__name__)
-
-
-# --- 커스텀 Material Icon 복사 버튼 렌더러 ---
-def render_custom_copy_button(text_to_copy: str, key_suffix: str):
-    safe_text = json.dumps(text_to_copy)
-    html_code = f"""
-    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet" />
-    <style>
-        .copy-btn {{
-            background: transparent;
-            border: none;
-            cursor: pointer;
-            color: #555;
-            padding: 4px;
-            border-radius: 4px;
-            transition: background 0.2s;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }}
-        .copy-btn:hover {{
-            background: #f0f0f0;
-        }}
-        .material-symbols-outlined {{
-            font-size: 20px;
-        }}
-    </style>
-    <button class="copy-btn" onclick="copyText()" title="답변 복사하기">
-        <span class="material-symbols-outlined" id="icon-{key_suffix}">content_copy</span>
-    </button>
-    <script>
-        function copyText() {{
-            const text = {safe_text};
-            navigator.clipboard.writeText(text).then(function() {{
-                const icon = document.getElementById('icon-{key_suffix}');
-                icon.innerText = 'check';
-                icon.style.color = '#4CAF50';
-                setTimeout(function() {{
-                    icon.innerText = 'content_copy';
-                    icon.style.color = '#555';
-                }}, 2000);
-            }}).catch(function(err) {{
-                console.error('Copy Failed', err);
-            }});
-        }}
-    </script>
-    """
-    components.html(html_code, height=35, width=35)
 
 
 def get_doc_field(doc, field, default=None):
@@ -276,6 +229,26 @@ with st.sidebar:
     st.divider()
     st.subheader("실시간 자원 모니터링")
     stats = get_system_stats()
+
+    st.divider()
+    st.subheader("세션 관리")
+
+    # 대화 초기화 버튼 클릭 시 동작하는 로직
+    if st.button("대화 초기화", type="primary", use_container_width=True, disabled=st.session_state.is_generating):
+        # 로컬 세션의 대화 상태 초기화
+        st.session_state.messages = []
+        st.session_state.docs = []
+        st.session_state.final_docs = []
+
+        # Redis 연결이 활성화되어 있고 현재 세션 ID가 존재하는 경우 원격 DB 데이터 삭제
+        if settings.REDIS_URL and hasattr(st.session_state, "_redis_session_id"):
+            from src.utils.redis_session import RedisSessionStore
+
+            RedisSessionStore.delete_session(st.session_state._redis_session_id)
+            logger.info("Redis 대화 세션 정보가 정상적으로 삭제되었습니다.")
+
+        # 화면 갱신을 통한 상태 동기화
+        st.session_state.should_rerun_app = True
 
     # @st.fragment(run_every) 로 실제 실시간 반영
     @st.fragment(run_every="5s")
