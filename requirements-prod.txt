@@ -1,5 +1,5 @@
-# [Pytorch CPU 전용 인덱스]
---extra-index-url https://download.pytorch.org/whl/cpu
+# [Pytorch NVIDIA GPU 전용 인덱스]
+--extra-index-url https://download.pytorch.org/whl/cu130
 
 # 핵심 프레임워크 (2026년 최신 안정 버전)
 langchain==1.2.18
@@ -13,15 +13,14 @@ langchain-google-genai==4.2.2
 langchain-anthropic==1.4.3
 langchain-ollama==1.1.0
 google-genai==1.72.0
-google-generativeai==0.8.6
 langchain-huggingface==1.2.2
 openai==2.36.0
 langchain-openai==1.2.1
 
-# 딥러닝 및 문장 임베딩 (CPU 환경 전용)
-torch==2.11.0+cpu
-torchvision==0.26.0+cpu
-torchaudio==2.11.0+cpu
+# 딥러닝 및 문장 임베딩 (NVIDIA GPU 환경 전용)
+torch==2.11.0+cu130
+torchvision==0.26.0+cu130
+torchaudio==2.11.0+cu130
 sentence-transformers==5.4.1
 transformers==5.8.0
 accelerate==1.13.0
@@ -49,3 +48,4 @@ python-dotenv==1.2.2
 rank-bm25==0.2.2
 kiwipiepy==0.23.1
 scikit-learn==1.8.0
+redis==8.0.0

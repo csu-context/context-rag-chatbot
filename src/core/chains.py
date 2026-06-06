@@ -1,6 +1,9 @@
 import functools
 import json
 import logging
+import os
+import queue
+import threading
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -9,6 +12,7 @@ from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda
 
+from src.common.config import settings
 from src.common.constants import MetadataFields
 from src.core.cache import SemanticCache
 from src.core.nodes import _MAX_HISTORY_MESSAGES, ContextBuilderNode
@@ -20,6 +24,8 @@ from src.utils.logger import TracingLogger
 from src.utils.paths import PROCESSED_DATA_DIR
 
 logger = logging.getLogger(__name__)
+
+_STREAM_SENTINEL = object()  # 스트림 종료 표시용 큐 센티넬
 
 
 @functools.lru_cache(maxsize=128)
@@ -43,12 +49,12 @@ def invalidate_source_json_cache() -> None:
 class RAGPipeline:
     """RAG 파이프라인의 핵심 로직을 관리하는 클래스"""
 
-    def __init__(self, retriever_or_db: Any, llm: Any = None, reranker: Any = None):
+    def __init__(self, retriever_or_db: Any, llm: Any = None, reranker: Any = None, use_cache: bool = True):
         self.retriever_or_db = retriever_or_db
         self.llm = llm or LLMFactory.create_llm_with_fallback()
         self.reranker = reranker or RerankerFactory.create()
         self.tracing_logger = TracingLogger()
-        self.cache = SemanticCache()
+        self.cache = SemanticCache() if use_cache else None
 
     def _resolve_parent_documents(self, docs: list[Document]) -> list[Document]:
         """자식 청크로 검색된 문서들을 부모 청크의 원문으로 전환하며, 동일 부모 및 동일 텍스트 중복을 제거합니다."""
@@ -60,12 +66,15 @@ class RAGPipeline:
             parent_id = doc.metadata.get(MetadataFields.PARENT_ID)
             source_id = doc.metadata.get(MetadataFields.SOURCE_ID)
 
+            is_table = doc.metadata.get(MetadataFields.IS_TABLE, False)
+
             if parent_id and source_id:
-                if parent_id in seen_parents:
+                # 테이블 청크는 분할된 서브 테이블 각각이 고유 데이터를 가지므로 부모 단위 중복 필터링을 생략
+                if not is_table and parent_id in seen_parents:
                     continue  # 이미 부모 청크가 추가되었으므로 중복 자식은 생략
 
                 # IS_TABLE child는 sub-table 단위로 LLM 컨텍스트에 전달 (full table 크기 초과 방지)
-                if not doc.metadata.get(MetadataFields.IS_TABLE, False):
+                if not is_table:
                     try:
                         json_path = PROCESSED_DATA_DIR / f"{source_id}.json"
                         parents_list = _load_source_json(json_path)
@@ -77,8 +86,6 @@ class RAGPipeline:
                                     break
                     except Exception as e:
                         logger.error(f"부모 청크 로드 실패: {e}")
-                else:
-                    seen_parents.add(parent_id)
 
             # 텍스트 기반 중복 제거 (내용이 완전히 동일한 청크 필터링)
             text_hash = hash("".join(doc.page_content.split()))
@@ -196,11 +203,12 @@ class RAGPipeline:
             )
 
             full_answer = ""
+            last_chunk = None
             try:
-                for chunk in self.llm.stream(prompt_val):
-                    content = self._extract_answer(chunk)
+                for content in self._stream_with_keepalive(prompt_val):
                     full_answer += content
                     yield content
+                last_chunk = self._last_stream_chunk
             except Exception as exc:
                 logger.error(
                     "스트리밍 중 LLM 오류 — 모델: %s, 출력된 토큰: %d자, 예외: %s",
@@ -211,8 +219,63 @@ class RAGPipeline:
                 )
                 raise
 
+            from src.models.base import BaseLLM, LLMResponse
+
+            usage = BaseLLM.extract_usage(last_chunk) if last_chunk else {}
+            token_usage_dict = {}
+            if usage:
+                temp_resp = LLMResponse(content="", usage=usage, model_name=model_id)
+                token_usage_dict = {
+                    "input_tokens": usage.get("input_tokens", 0),
+                    "output_tokens": usage.get("output_tokens", 0),
+                    "total_tokens": usage.get("total_tokens", 0),
+                    "cost_usd": temp_resp.cost,
+                }
+            session.data["token_usage"] = token_usage_dict
+
             step.update({"answer_length": len(full_answer)})
             session.data["final_answer"] = full_answer
+
+    def _stream_with_keepalive(self, prompt_val: Any, keepalive_interval: int = 20) -> Iterator[str]:
+        """LLM 토큰을 스트리밍하되, 토큰 사이 유휴가 keepalive_interval(기본 20초)을 넘으면
+        빈 청크를 발사하여 Proxy 유휴 타임아웃에 의한 연결 단절을 방지한다.
+
+        동기 stream 루프는 next()에서 블로킹되어 토큰 사이 유휴 동안 코드가 진입하지 못한다.
+        청크 생산을 별도 스레드로 분리하고 소비자는 timeout 폴링하여 유휴 구간에도 keepalive를 발사한다.
+        """
+        self._last_stream_chunk = None
+        chunk_q: queue.Queue = queue.Queue()
+        producer_exc: list[BaseException] = []
+        stop = threading.Event()
+
+        def _produce() -> None:
+            try:
+                for chunk in self.llm.stream(prompt_val):
+                    if stop.is_set():
+                        break
+                    chunk_q.put(chunk)
+            except BaseException as exc:  # 소비자 측에서 재발생
+                producer_exc.append(exc)
+            finally:
+                chunk_q.put(_STREAM_SENTINEL)
+
+        producer = threading.Thread(target=_produce, name="llm-stream-producer", daemon=True)
+        producer.start()
+        try:
+            while True:
+                try:
+                    item = chunk_q.get(timeout=keepalive_interval)
+                except queue.Empty:
+                    yield ""  # 유휴 keepalive: 빈 청크로 Proxy 유휴 타임아웃 방지
+                    continue
+                if item is _STREAM_SENTINEL:
+                    break
+                self._last_stream_chunk = item
+                yield self._extract_answer(item)
+            if producer_exc:
+                raise producer_exc[0]
+        finally:
+            stop.set()  # 소비자 조기 종료(클라이언트 단절) 시 생산자 스레드 정리
 
     @staticmethod
     def _extract_answer(answer_obj: Any) -> str:
@@ -223,14 +286,14 @@ class RAGPipeline:
     def stream(self, input_dict: dict[str, Any]) -> Iterator[dict[str, Any]]:
         """전체 RAG 파이프라인을 스트리밍 모드로 실행합니다."""
         query = input_dict.get("question", "")
-        retrieval_k = input_dict.get("k", 20)
+        retrieval_k = input_dict.get("k", settings.RETRIEVAL_K)
         final_k = input_dict.get("final_k", 5)
         history = input_dict.get("history", [])
 
         with self.tracing_logger.start_session(query=query) as session:
             # 1. Semantic Cache Check
             yield {"stage": "cache", "status": "running"}
-            cached_result = self.cache.get(query)
+            cached_result = self.cache.get(query) if self.cache else None
             if cached_result:
                 session.data["cache_hit"] = True
                 yield {"stage": "cache", "status": "hit"}
@@ -264,7 +327,7 @@ class RAGPipeline:
             for token in self._stream_generation(query, final_docs, history, session):
                 full_answer += token
                 yield {"stage": "generation", "status": "streaming", "output": token}
-            yield {"stage": "generation", "status": "complete"}
+            yield {"stage": "generation", "status": "complete", "token_usage": session.data.get("token_usage", {})}
 
             # 5. Final Formatting (Citation) & Caching
             yield {"stage": "citation", "status": "running"}
@@ -280,14 +343,20 @@ class RAGPipeline:
                 for doc in final_docs
             ]
 
-            self.cache.add(query, full_answer, docs_for_cache)
+            if self.cache:
+                self.cache.add(query, full_answer, docs_for_cache)
 
             yield {"stage": "citation", "status": "complete", "output": citations_str, "source_documents": final_docs}
 
 
-def get_rag_chain(retriever_or_db):
-    """
-    RAG 파이프라인 체인을 생성합니다. LangChain Runnable 인터페이스를 준수합니다.
-    """
-    pipeline = RAGPipeline(retriever_or_db)
+def get_rag_chain(retriever_or_db, llm: Any = None, use_cache: bool = True):
+    """RAG 파이프라인 체인을 생성합니다. LangChain Runnable 인터페이스를 준수합니다."""
+    from src.common.config import settings
+
+    # LANGSMITH_TRACING=True 시 LangSmith 자동 트레이싱 활성화
+    if settings.LANGSMITH_TRACING:
+        os.environ.setdefault("LANGSMITH_TRACING", "true")
+        logger.info("LangSmith 트레이싱 활성화됨 (LANGSMITH_TRACING=True)")
+
+    pipeline = RAGPipeline(retriever_or_db, llm=llm, use_cache=use_cache)
     return RunnableLambda(pipeline.stream)

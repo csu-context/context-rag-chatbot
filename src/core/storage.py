@@ -1,8 +1,11 @@
+import functools
 import json
 import logging
 import pickle
 from pathlib import Path
 from typing import Any
+
+from src.common.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +40,20 @@ class StorageManager:
         path = self.get_cache_path(source_id)
         with open(path, "wb") as f:
             pickle.dump(data, f)
+        self._evict_cache_if_needed()
+
+    def _evict_cache_if_needed(self) -> None:
+        """MAX_PICKLE_CACHE_FILES 초과 시 오래된 캐시 자동 삭제."""
+        cache_files = sorted(self.cache_dir.glob("*_parsed.pkl"), key=lambda p: p.stat().st_mtime)
+        over = len(cache_files) - settings.MAX_PICKLE_CACHE_FILES
+        if over <= 0:
+            return
+        for old_file in cache_files[:over]:
+            try:
+                old_file.unlink()
+                logger.info(f"Pickle 캐시 Eviction: {old_file.name}")
+            except Exception as e:
+                logger.warning(f"캐시 삭제 실패 {old_file.name}: {e}")
 
     def save_processed_data(self, source_id: str, data: Any) -> Path:
         """최종 청크 가공 데이터를 JSON 형식의 물리 파일로 영속화합니다."""
@@ -62,8 +79,31 @@ class StorageManager:
         """가공 파일 디렉토리 하위의 모든 JSON 파일 목록을 스캔합니다."""
         return list(self.processed_dir.glob("*.json"))
 
+    @staticmethod
+    @functools.lru_cache(maxsize=128)
+    def _load_cached_json(file_path: Path) -> Any | None:
+        """내부용: 경로 기반 LRU 캐시 JSON 로더"""
+        try:
+            if file_path.exists():
+                with open(file_path, encoding="utf-8") as f:
+                    return json.load(f)
+            return None
+        except Exception as e:
+            logger.error(f"JSON 파일 로드 실패: {file_path} - {e}")
+            return None
+
+    def load_processed_file_cached(self, source_id: str) -> Any | None:
+        """가공 JSON 파일을 LRU 캐시를 적용하여 역직렬화합니다."""
+        file_path = self.get_processed_path(source_id)
+        return self._load_cached_json(file_path)
+
+    @classmethod
+    def invalidate_json_cache(cls) -> None:
+        """인덱싱 등으로 파일이 갱신된 경우 JSON LRU 캐시를 무효화합니다."""
+        cls._load_cached_json.cache_clear()
+
     def load_processed_file(self, file_path: Path) -> Any:
-        """특정 JSON 데이터 파일을 역직렬화하여 읽습니다."""
+        """특정 JSON 데이터 파일을 역직렬화하여 읽습니다 (비캐시 버전)."""
         with open(file_path, encoding="utf-8") as f:
             return json.load(f)
 

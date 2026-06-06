@@ -5,6 +5,7 @@ import time
 import streamlit as st
 
 from src.common.config import settings
+from src.common.constants import SupportedFormats
 from src.controllers.sync_controller import SyncController
 from src.pipeline import PipelineOrchestrator
 from src.utils.health_check import repair_integrity, run_full_diagnostics
@@ -18,29 +19,59 @@ def reset_admin_active():
     st.session_state.admin_active = False
 
 
+def _render_sync_progress(initialize_rag_system_callback):
+    """백그라운드 동기화 진행률 폴링 프래그먼트."""
+
+    @st.fragment(run_every="1s")
+    def _progress_fragment():
+        job = st.session_state.get("_current_sync_job")
+        if not job:
+            return
+
+        snap = job.snapshot()
+
+        if snap["running"]:
+            if snap["total"] > 0:
+                st.progress(
+                    snap["percent"] / 100,
+                    text=f"[{snap['current']}/{snap['total']}] {snap['file_name']} ({snap['percent']}%)",
+                )
+            else:
+                st.progress(0, text="동기화 준비 중...")
+
+            if st.button("작업 취소", key="cancel_sync_btn"):
+                job.request_cancel()
+            return
+
+        # 완료 / 취소 / 오류
+        st.session_state._current_sync_job = None
+        if snap["completed"]:
+            if initialize_rag_system_callback:
+                initialize_rag_system_callback()
+            st.success("동기화가 완료되었습니다.")
+        elif snap["cancelled"]:
+            st.warning("동기화가 취소되었습니다.")
+        elif snap["error"]:
+            st.error(f"동기화 오류: {snap['error']}")
+
+        time.sleep(0.5)
+        st.session_state.admin_active = False
+        st.rerun()
+
+    _progress_fragment()
+
+
 @st.dialog("데이터 관리 시스템", width="large", on_dismiss=reset_admin_active)
 def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
+    # 백그라운드 동기화 실행 중이면 진행률 표시
+    current_job = st.session_state.get("_current_sync_job")
+    if current_job and current_job.running:
+        st.subheader("동기화 진행 중...")
+        st.info("파일을 처리하는 동안 다른 작업이 가능합니다.")
+        _render_sync_progress(initialize_rag_system_callback)
+        return
+
     st.markdown("지식 베이스(RAW_DATA) 관리 및 데이터베이스 동기화를 수행합니다.")
-
-    # 상단 옵션 영역
-    col_opt1, col_opt2 = st.columns([1, 1])
-    with col_opt1:
-        auto_sync = st.checkbox(
-            "파일 업로드/삭제 후 자동 동기화 실행",
-            value=True,
-            help="체크 시 별도의 Sync 버튼 클릭 없이 즉시 DB에 반영합니다.",
-        )
-    with col_opt2:
-        default_parser_idx = 0 if settings.PARSER_TYPE.lower() == "manual" else 1
-        parser_type = st.radio(
-            "적용 파서 선택",
-            options=["manual", "docling"],
-            index=default_parser_idx,
-            horizontal=True,
-            help="동기화 파이프라인에서 사용할 PDF 파서 전략을 지정합니다.",
-        )
-
-    st.divider()
 
     # 상단 영역: 업로드 및 동기화
     col1, col2 = st.columns([1, 1])
@@ -48,41 +79,89 @@ def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
     with col1:
         st.subheader("신규 문서 업로드")
         uploaded_files = st.file_uploader(
-            "파일 선택 (PDF, MD)",
+            "파일 선택 (PDF, MD, HWP, HWPX)",
             accept_multiple_files=True,
-            type=["pdf", "md", "markdown"],
+            type=[ext.lstrip(".") for ext in SupportedFormats.EXTENSIONS],
             key="dialog_uploader",
             label_visibility="collapsed",
         )
-        if st.button("업로드 실행", key="admin_upload_btn", use_container_width=True):
-            if uploaded_files:
-                with st.spinner("저장 중..."):
-                    for uploaded_file in uploaded_files:
-                        file_path = RAW_DATA_DIR / uploaded_file.name
-                        with open(file_path, "wb") as f:
-                            f.write(uploaded_file.getbuffer())
-                    st.success(f"{len(uploaded_files)}개 파일 업로드 완료")
-
-                    if auto_sync:
-                        SyncController.trigger_sync(
-                            parser_type=parser_type,
-                            force=False,
-                            clear_cache_callback=initialize_rag_system_callback,
-                        )
-                    else:
-                        st.session_state.should_rerun_app = True  # Set flag for rerun
-            else:
-                st.warning("선택된 파일이 없습니다.")
+        st.write("")  # 위젯 간격 조절
+        auto_sync = st.checkbox(
+            "업로드 완료 후 자동 동기화(Sync) 실행",
+            value=True,
+            help="체크 시 업로드 직후 즉시 파이프라인을 가동하여 DB에 반영합니다.",
+        )
 
     with col2:
         st.subheader("수동 동기화")
         st.info("자동 동기화를 껐거나, 강제 업데이트가 필요한 경우 사용하세요.")
+        default_parser_idx = 0 if settings.PARSER_TYPE.lower() == "manual" else 1
+        parser_type = st.radio(
+            "파이프라인 적용 파서 선택",
+            options=["manual", "docling"],
+            index=default_parser_idx,
+            format_func=lambda x: "기본(빠름)" if x == "manual" else "표 인식 강화(느림)",
+            horizontal=True,
+            help="동기화 시 사용할 PDF 파서 전략을 지정합니다.",
+        )
+
+    col_btn1, col_btn2 = st.columns([1, 1])
+    with col_btn1:
+        if st.button("업로드 실행", key="admin_upload_btn", use_container_width=True):
+            if uploaded_files:
+                # AxiosError 400 방지 — 빈 파일·중복·경로 문제 사전 검증
+                valid_files = [f for f in uploaded_files if f.name and f.size and f.size > 0]
+                invalid = [f.name for f in uploaded_files if not (f.name and f.size and f.size > 0)]
+                if invalid:
+                    st.warning(f"유효하지 않은 파일 제외됨: {invalid}")
+                if not valid_files:
+                    st.error("업로드 가능한 파일이 없습니다.")
+                else:
+                    with st.spinner("저장 중..."):
+                        saved = []
+                        for uploaded_file in valid_files:
+                            try:
+                                from pathlib import PurePosixPath
+
+                                raw_name = uploaded_file.name or ""
+                                # 경로 구성요소 제거 (path traversal 방지)
+                                basename = PurePosixPath(raw_name).name
+                                if not basename or basename in (".", ".."):
+                                    st.error(f"잘못된 파일명: {raw_name}")
+                                    continue
+                                safe_name = normalize_to_nfc(basename)
+                                file_path = RAW_DATA_DIR / safe_name
+                                # 방어적 경로 검증
+                                if not file_path.resolve().is_relative_to(RAW_DATA_DIR.resolve()):
+                                    st.error(f"잘못된 파일 경로: {raw_name}")
+                                    continue
+                                with open(file_path, "wb") as f:
+                                    f.write(uploaded_file.getbuffer())
+                                saved.append(safe_name)
+                            except Exception as e:
+                                st.error(f"저장 실패: {uploaded_file.name} — {e}")
+                    if saved:
+                        st.success(f"{len(saved)}개 파일 업로드 완료")
+                        if auto_sync:
+                            SyncController.trigger_sync_background(
+                                parser_type=parser_type,
+                                force=False,
+                                clear_cache_callback=initialize_rag_system_callback,
+                            )
+                            st.rerun()
+                        else:
+                            st.session_state.should_rerun_app = True
+            else:
+                st.warning("선택된 파일이 없습니다.")
+
+    with col_btn2:
         if st.button("데이터 파이프라인 가동 (Sync)", key="dialog_sync_btn", use_container_width=True):
-            SyncController.trigger_sync(
+            SyncController.trigger_sync_background(
                 parser_type=parser_type,
                 force=False,
                 clear_cache_callback=initialize_rag_system_callback,
             )
+            st.rerun()
 
     st.divider()
 
@@ -101,14 +180,14 @@ def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
 
     current_files = []
     # 하위 디렉토리까지 포함하여 재귀적으로 스캔
-    for ext in ["*.pdf", "*.md", "*.markdown"]:
-        current_files.extend(list(RAW_DATA_DIR.glob(f"**/{ext}")))
+    for ext in SupportedFormats.EXTENSIONS:
+        current_files.extend(list(RAW_DATA_DIR.glob(f"**/*{ext}")))
 
     if not current_files:
         st.info("현재 등록된 문서가 없습니다.")
     else:
         orchestrator = PipelineOrchestrator()
-        manifest = orchestrator._load_manifest()
+        manifest = orchestrator.manifest_manager.load_manifest()
         manifest_files = manifest.get("files", {})
 
         h_col1, h_col2, h_col3, h_col4, h_col5, h_col6, h_col7, h_col8 = st.columns(
@@ -148,9 +227,10 @@ def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
                 if chunks:
                     parser_name = chunks[0].get("metadata", {}).get("parser_type", parser_type)
 
-            parser_options = ["manual", "docling"]
+            is_pdf = f.suffix.lower() == ".pdf"
+            ext = f.suffix.lower().lstrip(".")
 
-            # 청크 개수가 0개이면 미동기화, 0보다 크면 동기화 완료 배지 표시
+            # 동기화 상태 배지 및 display_parser 계산 (파일 형식 무관)
             pending = st.session_state.get("parser_change_pending") or {}
             if chunk_count == 0:
                 r_col4.markdown(
@@ -167,31 +247,61 @@ def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
                 )
                 display_parser = pending.get(f.name, parser_name)
 
-            try:
-                selected_idx = parser_options.index(display_parser.lower())
-            except ValueError:
-                selected_idx = 0
+            # PDF만 파서 선택 가능, 나머지는 고정 파서 텍스트 표시
+            if is_pdf:
+                parser_options = ["manual", "docling"]
 
-            selected_parser = r_col5.selectbox(
-                "파서 선택",
-                options=parser_options,
-                index=selected_idx,
-                key=f"parser_select_{i}_{display_parser}",
-                label_visibility="collapsed",
-                disabled=False,
-            )
+                try:
+                    selected_idx = parser_options.index((display_parser or "manual").lower())
+                except ValueError:
+                    selected_idx = 0
 
-            if selected_parser != parser_name:
-                if f.name not in pending or pending[f.name] != selected_parser:
-                    if st.session_state.parser_change_pending is None:
-                        st.session_state.parser_change_pending = {}
-                    st.session_state.parser_change_pending[f.name] = selected_parser
+                selected_parser = r_col5.selectbox(
+                    "파서 선택",
+                    options=parser_options,
+                    index=selected_idx,
+                    format_func=lambda x: "기본" if x == "manual" else "표 인식 강화",
+                    key=f"parser_select_{i}_{display_parser}",
+                    label_visibility="collapsed",
+                    disabled=False,
+                )
+
+                if selected_parser != parser_name:
+                    if f.name not in pending or pending[f.name] != selected_parser:
+                        if st.session_state.parser_change_pending is None:
+                            st.session_state.parser_change_pending = {}
+                        st.session_state.parser_change_pending[f.name] = selected_parser
+                        st.rerun()
+                elif f.name in pending:
+                    st.session_state.parser_change_pending.pop(f.name, None)
+                    if not st.session_state.parser_change_pending:
+                        st.session_state.parser_change_pending = None
                     st.rerun()
-            elif f.name in pending:
-                st.session_state.parser_change_pending.pop(f.name, None)
-                if not st.session_state.parser_change_pending:
-                    st.session_state.parser_change_pending = None
-                st.rerun()
+            else:
+                # MD, HWP, HWPX 등 고정 파서 사용 파일
+                fixed_parser_label = {
+                    "md": "markdown",
+                    "markdown": "markdown",
+                    "hwp": "hwp",
+                    "hwpx": "hwp",
+                }.get(ext, ext)
+                selected_parser = fixed_parser_label
+                display_label = (
+                    "마크다운"
+                    if fixed_parser_label == "markdown"
+                    else "한글 (HWP)"
+                    if fixed_parser_label == "hwp"
+                    else fixed_parser_label
+                )
+                r_col5.selectbox(
+                    "파서 선택",
+                    options=[fixed_parser_label],
+                    index=0,
+                    format_func=lambda x, dl=display_label: dl,
+                    key=f"parser_select_disabled_{i}",
+                    label_visibility="collapsed",
+                    disabled=True,
+                )
 
             if r_col6.button(f"{chunk_count} 🔍", key=f"view_chunks_{i}", help="청크 상세 내용 보기"):
                 st.session_state.dialog_chunks_file_to_show = f.name
@@ -217,14 +327,13 @@ def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
                 f.unlink()
                 st.toast(f"파일 삭제됨: {f.name}")
                 if auto_sync:
-                    SyncController.trigger_sync(
+                    SyncController.trigger_sync_background(
                         parser_type=parser_type,
                         force=False,
                         clear_cache_callback=initialize_rag_system_callback,
                     )
-                else:
-                    time.sleep(0.5)
-                    st.rerun()
+                time.sleep(0.5)
+                st.rerun()
 
     pending = st.session_state.get("parser_change_pending")
     if pending:
@@ -239,7 +348,13 @@ def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
             old_parser = "manual"
             if file_chunks:
                 old_parser = file_chunks[0].get("metadata", {}).get("parser_type", "manual")
-            change_details.append(f"- {file_name}: {old_parser} -> {new_parser}")
+            old_display = (
+                "기본" if old_parser == "manual" else "표 인식 강화" if old_parser == "docling" else old_parser
+            )
+            new_display = (
+                "기본" if new_parser == "manual" else "표 인식 강화" if new_parser == "docling" else new_parser
+            )
+            change_details.append(f"- {file_name}: {old_display} -> {new_display}")
 
         st.markdown("\n".join(change_details))
 

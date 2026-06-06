@@ -1,4 +1,6 @@
 import math
+import threading
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -12,17 +14,12 @@ def _sigmoid(x: float) -> float:
 
 
 def test_reranker_cpu_fallback_on_gpu_error():
-    # 싱글톤 인스턴스 리셋
     CrossEncoderReranker.reset_instance()
 
-    # 디바이스를 cuda로 강제 설정하여 CUDA 에러 상황 모방
     reranker = CrossEncoderReranker.get_instance(device="cuda")
     assert reranker.device == "cuda"
 
-    # Mock model
     mock_model = MagicMock()
-
-    # 첫 번째 predict 호출 시 CUDA RuntimeError 발생, 두 번째 predict는 정상 처리
     call_count = 0
 
     def mock_predict(pairs, batch_size=None):
@@ -34,20 +31,73 @@ def test_reranker_cpu_fallback_on_gpu_error():
 
     mock_model.predict = mock_predict
 
-    # _load_model이 mock_model을 리턴하도록 패치
     with patch.object(reranker, "_load_model", return_value=mock_model):
         docs = [
             Document(page_content="첫 번째 문서", metadata={"chunk_id": "1"}),
             Document(page_content="두 번째 문서", metadata={"chunk_id": "2"}),
         ]
 
-        # rerank 실행
         result = reranker.rerank(query="질문", documents=docs, top_k=2, threshold=0.1)
 
-        # 1. 디바이스가 cpu로 바뀌었는지 검증
         assert reranker.device == "cpu"
-        # 2. predict가 총 2번 호출되었는지 검증 (1차 실패, 2차 CPU 폴백 성공)
         assert call_count == 2
-        # 3. 결과 문서가 올바르게 재정렬되었는지 검증 (sigmoid 정규화 적용 후 값)
         assert len(result.documents) == 2
         assert result.scores[0] == pytest.approx(_sigmoid(0.8))
+        # 서킷브레이커 - GPU 장애 시각이 기록되어야 함
+        assert CrossEncoderReranker._gpu_failure_time is not None
+
+
+def test_circuit_breaker_gpu_recovery():
+    """GPU 복구 인터벌 경과 후 GPU 재시도 검증."""
+    CrossEncoderReranker.reset_instance()
+
+    reranker = CrossEncoderReranker.get_instance(device="cuda")
+    reranker.device = "cpu"
+    reranker._original_device = "cuda"
+    # 복구 인터벌보다 오래 된 장애 시각 주입
+    CrossEncoderReranker._gpu_failure_time = time.time() - 400
+
+    mock_model = MagicMock()
+    mock_model.predict.return_value = [0.9, 0.7]
+
+    with patch.object(reranker, "_load_model", return_value=mock_model):
+        docs = [
+            Document(page_content="문서1", metadata={}),
+            Document(page_content="문서2", metadata={}),
+        ]
+        reranker.rerank(query="질문", documents=docs, top_k=2, threshold=0.0)
+
+        # 복구 시도 후 GPU 장치로 전환되었어야 함
+        assert reranker.device == "cuda"
+        # 장애 기록 초기화
+        assert CrossEncoderReranker._gpu_failure_time is None
+
+
+def test_rerank_with_timeout_returns_fallback_on_timeout():
+    """타임아웃 시 원본 문서 즉시 반환 검증."""
+    CrossEncoderReranker.reset_instance()
+
+    reranker = CrossEncoderReranker.get_instance(device="cpu")
+
+    # 공유 executor 워커를 테스트 종료 시 즉시 해제 → 다음 테스트로 누수 방지
+    release = threading.Event()
+
+    def slow_rerank(*args, **kwargs):
+        release.wait(timeout=30)
+        return MagicMock()
+
+    docs = [Document(page_content=f"문서{i}", metadata={}) for i in range(3)]
+
+    try:
+        with (
+            patch.object(reranker, "rerank", side_effect=slow_rerank),
+            patch("src.core.reranker.settings") as mock_settings,
+        ):
+            mock_settings.RERANKER_TIMEOUT_SEC = 1
+            mock_settings.RERANKER_THRESHOLD = 0.5
+            result = reranker.rerank_with_timeout("질문", docs, top_k=3)
+    finally:
+        release.set()
+
+    assert len(result.documents) <= 3
+    assert all(s == 0.0 for s in result.scores)

@@ -3,6 +3,11 @@ import os
 import threading
 import time
 from abc import ABC, abstractmethod
+from concurrent.futures import (
+    Future,
+    ThreadPoolExecutor,
+    TimeoutError as FuturesTimeoutError,
+)
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -12,6 +17,12 @@ from langchain_core.documents import Document
 
 from src.common.config import settings
 from src.utils.paths import CROSS_ENCODER_CACHE_DIR
+
+# 리랭킹 타임아웃용 공유 스레드풀 (호출마다 새로 만들면 스레드 누적)
+_rerank_executor = ThreadPoolExecutor(max_workers=1)
+# 직전 rerank가 타임아웃 후에도 워커에서 계속 실행 중인지 표시.
+# set 상태면 새 작업을 큐에 쌓지 않고 즉시 원본 반환 (단일 워커 큐 누적 방지)
+_rerank_busy = threading.Event()
 
 # sentence_transformers는 선택적 의존성이므로, 필요할 때만 import 시도
 try:
@@ -55,23 +66,43 @@ class BaseReranker(ABC):
         pass
 
     def rerank_with_timeout(self, query: str, documents: list[Document], **kwargs: Any) -> RerankResult:
+        """타임아웃 기반 리랭킹. 초과 시 원본 반환.
+
+        Note: Python 스레드는 중단 불가 — 타임아웃 시 caller만 해제되고
+        워커 스레드는 완료될 때까지 계속 실행됩니다.
+        """
         target_top_k = kwargs.get("top_k") or self.top_k
         kwargs["top_k"] = target_top_k
-
+        timeout_sec = settings.RERANKER_TIMEOUT_SEC
         start_time = time.time()
-        try:
-            return self.rerank(query, documents, **kwargs)
-        except Exception as e:
-            elapsed = time.time() - start_time
-            logger.warning(f"Reranking failed in {self.name}: {e}. Returning original documents.")
-            # 실패 시 원본 문서에서 top_k만큼 잘라서 반환
+
+        def _fallback() -> RerankResult:
             return RerankResult(
                 documents=documents[:target_top_k],
                 scores=[0.0] * min(len(documents), target_top_k),
                 model_name=self.name,
                 filtered_count=max(0, len(documents) - target_top_k),
-                elapsed_time_sec=elapsed,
+                elapsed_time_sec=time.time() - start_time,
             )
+
+        # busy 가드: 직전 작업이 타임아웃 후에도 워커에서 실행 중이면
+        # 새 작업을 큐에 쌓지 않고 즉시 원본 반환
+        if _rerank_busy.is_set():
+            logger.warning(f"Reranker busy (이전 작업 진행 중) in {self.name}. Returning original documents.")
+            return _fallback()
+
+        _rerank_busy.set()
+        future: Future = _rerank_executor.submit(self.rerank, query, documents, **kwargs)
+        future.add_done_callback(lambda _f: _rerank_busy.clear())
+
+        try:
+            return future.result(timeout=timeout_sec)
+        except FuturesTimeoutError:
+            logger.warning(f"Reranking timed out after {timeout_sec}s in {self.name}. Returning original documents.")
+        except Exception as e:
+            logger.warning(f"Reranking failed in {self.name}: {e}. Returning original documents.")
+
+        return _fallback()
 
 
 class CrossEncoderReranker(BaseReranker):
@@ -80,6 +111,8 @@ class CrossEncoderReranker(BaseReranker):
     _instance: Optional["CrossEncoderReranker"] = None
     _model: CrossEncoder | None = None
     _singleton_lock = threading.Lock()
+    _gpu_failure_time: float | None = None  # 서킷브레이커 GPU 장애 기록
+    _eager_loading: bool = False  # 중복 eager load 스레드 방지
 
     def __init__(
         self,
@@ -91,6 +124,7 @@ class CrossEncoderReranker(BaseReranker):
         super().__init__(name="Local CrossEncoder", top_k=top_k, threshold=threshold)
         self.model_name = model_name or settings.RERANKER_MODEL_NAME
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self._original_device = self.device  # 서킷브레이커 복구 기준
 
     @classmethod
     def get_instance(
@@ -116,6 +150,31 @@ class CrossEncoderReranker(BaseReranker):
         """테스트용 싱글톤 리셋"""
         with cls._singleton_lock:
             cls._instance = None
+            cls._gpu_failure_time = None
+            cls._eager_loading = False
+        _rerank_busy.clear()  # 테스트 격리 — busy 플래그 초기화
+
+    @classmethod
+    def eager_load_background(cls) -> threading.Thread | None:
+        """앱 시작 시 백그라운드 Eager Loading. 중복 스레드 방지."""
+        with cls._singleton_lock:
+            if cls._eager_loading or cls._model is not None:
+                return None
+            cls._eager_loading = True
+
+        def _load():
+            try:
+                instance = cls.get_instance()
+                instance._load_model()
+                logger.info("[CrossEncoderReranker] 백그라운드 Eager Loading 완료")
+            except Exception as e:
+                logger.warning(f"[CrossEncoderReranker] 백그라운드 Eager Loading 실패: {e}")
+            finally:
+                cls._eager_loading = False
+
+        t = threading.Thread(target=_load, daemon=True, name="reranker-eager-load")
+        t.start()
+        return t
 
     def _load_model(self) -> CrossEncoder:
         if self._model is not None:
@@ -127,17 +186,24 @@ class CrossEncoderReranker(BaseReranker):
             if self._model is not None:
                 return self._model
             try:
+                import warnings
+
                 automodel_args = (
                     {"torch_dtype": torch.float16}
                     if settings.RERANKER_USE_FP16 and self.device in ("cuda", "mps")
                     else {}
                 )
-                self._model = CrossEncoder(
-                    self.model_name,
-                    device=self.device,
-                    cache_dir=str(CROSS_ENCODER_CACHE_DIR),
-                    automodel_args=automodel_args,
-                )
+                # sentence-transformers/transformers 버전업 시 Deprecation Warning 억제
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("ignore", category=FutureWarning, module="sentence_transformers")
+                    warnings.filterwarnings("ignore", category=DeprecationWarning, module="transformers")
+                    self._model = CrossEncoder(
+                        self.model_name,
+                        device=self.device,
+                        cache_dir=str(CROSS_ENCODER_CACHE_DIR),
+                        automodel_args=automodel_args,
+                        local_files_only=not settings.ALLOW_EXTERNAL_API,
+                    )
             except Exception as e:
                 logger.error(f"Failed to load CrossEncoder: {e}")
                 raise
@@ -148,6 +214,22 @@ class CrossEncoderReranker(BaseReranker):
         return scores_pred.tolist() if hasattr(scores_pred, "tolist") else list(scores_pred)
 
     def _predict_with_cpu_fallback(self, pairs: list) -> list:
+        # GPU 복구 판단·장치 전환·모델 초기화를 lock 내에서 원자적으로 수행
+        recovery_interval = settings.RERANKER_GPU_RECOVERY_INTERVAL_SEC
+        with self._singleton_lock:
+            if (
+                self.device == "cpu"
+                and self._original_device != "cpu"
+                and CrossEncoderReranker._gpu_failure_time is not None
+                and time.time() - CrossEncoderReranker._gpu_failure_time >= recovery_interval
+            ):
+                logger.info(
+                    f"[{self.name}] GPU 복구 시도 (마지막 장애 후 {recovery_interval}초 경과). "
+                    f"장치 {self._original_device}로 전환."
+                )
+                self.device = self._original_device
+                self._model = None  # 강제 재로드 (lock 내부, 안전)
+
         try:
             model = self._load_model()
             try:
@@ -155,13 +237,25 @@ class CrossEncoderReranker(BaseReranker):
             finally:
                 if self.device == "cuda" and torch.cuda.is_available():
                     torch.cuda.empty_cache()
+
+            # GPU 성공: 서킷브레이커 초기화 (lock 내 원자적 클리어)
+            with self._singleton_lock:
+                if CrossEncoderReranker._gpu_failure_time is not None and self.device != "cpu":
+                    logger.info(f"[{self.name}] GPU 모드 복구 성공.")
+                    CrossEncoderReranker._gpu_failure_time = None
+
             return self._to_list(scores_pred)
+
         except RuntimeError as e:
             err_msg = str(e).lower()
             if self.device != "cpu" and any(x in err_msg for x in ["cuda", "mps", "device", "out of memory", "oom"]):
-                logger.warning(f"[{self.name}] GPU/MPS error detected: {e}. Falling back to CPU mode...")
-                self.device = "cpu"
                 with self._singleton_lock:
+                    CrossEncoderReranker._gpu_failure_time = time.time()  # 장애 시각 원자적 기록
+                    logger.warning(
+                        f"[{self.name}] GPU/MPS 오류: {e}. CPU 폴백 전환, "
+                        f"{recovery_interval}초 후 GPU 복구 재시도 예정."
+                    )
+                    self.device = "cpu"
                     self._model = None
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()

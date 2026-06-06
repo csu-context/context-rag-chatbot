@@ -1,64 +1,225 @@
 import asyncio
+import inspect
 import json
 import logging
+import math
 import os
+import platform
+import subprocess
 import time
 import warnings
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
+import instructor
+import pandas as pd
+import psutil
+from anthropic import AsyncAnthropic
 from dotenv import load_dotenv
-from langchain_huggingface import HuggingFaceEmbeddings
-from ragas import EvaluationDataset
-from ragas.embeddings import LangchainEmbeddingsWrapper
-from ragas.evaluation import EvaluationResult, evaluate  # type: ignore
-from ragas.llms import LangchainLLMWrapper
-
-# Metrics 임포트 (Pylance 경고 차단)
-from ragas.metrics import (  # type: ignore
+from ragas import SingleTurnSample
+from ragas.embeddings import HuggingFaceEmbeddings as RagasHFEmbeddings
+from ragas.llms import InstructorLLM
+from ragas.metrics.collections import (
     AnswerRelevancy,
     ContextPrecision,
     ContextRecall,
     Faithfulness,
 )
-from ragas.run_config import RunConfig
 
+from src.common.config import settings
+from src.core.retriever import RetrieverFactory
 from src.models.factory import LLMFactory
 from src.utils.logger import setup_global_logging
-from src.utils.paths import EVAL_DATA_DIR, EVAL_LOGS_DIR
-from src.vector_db.chroma_manager import ChromaDBManager
+from src.utils.paths import EVAL_DATA_DIR, EVAL_LOGS_DIR, PROCESSED_DATA_DIR
 
-# 평가 관련 기본 설정 상수
-DEFAULT_EVAL_MODEL = "claude-haiku-4-5-20251001"
-DEFAULT_MAX_WORKERS = 2
-DEFAULT_EVAL_TIMEOUT = 180
 DEFAULT_GOLDEN_SET_PATH = EVAL_DATA_DIR / "synthetic_dataset_50.json"
+SECTION_LINE = "─" * 49
 
-# 라이브러리 내부의 DeprecationWarning 및 런타임 경고 완전 차단
-warnings.filterwarnings("ignore")
+# 외부 라이브러리(ragas, langchain, huggingface, anthropic 등)의 Deprecation/Future 경고만 모듈 단위로 차단.
+# 전역 차단(filterwarnings("ignore"))은 자체 코드의 경고까지 가리므로 사용하지 않는다.
+_NOISY_MODULES = (
+    "ragas",
+    "langchain",
+    "langchain_huggingface",
+    "huggingface_hub",
+    "transformers",
+    "sentence_transformers",
+    "anthropic",
+    "instructor",
+)
+for _noisy_module in _NOISY_MODULES:
+    warnings.filterwarnings("ignore", category=DeprecationWarning, module=_noisy_module)
+    warnings.filterwarnings("ignore", category=FutureWarning, module=_noisy_module)
 
 # 로깅 설정
 setup_global_logging()
 logger = logging.getLogger(__name__)
 
-load_dotenv(override=True)
+load_dotenv(override=False)
 
 
-async def run_rag_inference(test_data: list[dict[str, Any]]) -> tuple[EvaluationDataset, str]:
-    """RAG 추론 수행 및 Ragas EvaluationDataset 생성 (시스템 표준 체인 사용)"""
+@dataclass
+class InferenceResult:
+    samples: list[SingleTurnSample]
+    latencies: list[float]
+    resources: list[dict[str, float]]
+    model_name: str
+
+
+def _get_cpu_name() -> str:
+    try:
+        if platform.system() == "Linux":
+            with open("/proc/cpuinfo", encoding="utf-8") as f:
+                for line in f:
+                    if line.startswith("model name"):
+                        return line.split(":", 1)[1].strip()
+        if platform.system() == "Windows":
+            out = subprocess.check_output(
+                ["powershell", "-Command", "(Get-CimInstance -ClassName Win32_Processor).Name"],
+                text=True,
+                timeout=5,
+            )
+            return out.strip()
+    except Exception:
+        pass
+    return platform.processor() or platform.machine()
+
+
+def _get_system_info() -> dict[str, Any]:
+    mem = psutil.virtual_memory()
+    info: dict[str, Any] = {
+        "os": f"{platform.system()} {platform.release()}",
+        "python": platform.python_version(),
+        "cpu": _get_cpu_name(),
+        "cpu_cores": psutil.cpu_count(logical=False),
+        "cpu_threads": psutil.cpu_count(logical=True),
+        "ram_total_gb": round(mem.total / 1024 / 1024 / 1024, 1),
+    }
+    try:
+        out = subprocess.check_output(
+            ["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"],
+            text=True,
+            timeout=3,
+        )
+        name, total = out.strip().splitlines()[0].split(",")
+        info["gpu"] = name.strip()
+        info["gpu_vram_total_mb"] = float(total.strip())
+    except Exception:
+        info["gpu"] = None
+        info["gpu_vram_total_mb"] = None
+    return info
+
+
+def _get_inference_settings() -> dict[str, Any]:
+    """생성 LLM의 추론(생성) 파라미터를 기록용으로 수집한다.
+
+    지표가 어떤 설정으로 산출됐는지 요약(eval_summary)만으로 역추적하기 위함이다.
+    ollama 백엔드일 때만 ollama 전용 파라미터를 포함하고, 그 외(gemini/claude)는
+    공통 항목(temperature)만 기록해 의미 없는 키가 끼지 않게 한다.
+    """
+    info: dict[str, Any] = {"temperature": settings.TEMPERATURE}
+    if settings.MODEL_TYPE == "ollama":
+        info |= {
+            "num_predict": settings.OLLAMA_NUM_PREDICT,
+            "num_ctx": settings.OLLAMA_NUM_CTX,
+            "repeat_penalty": settings.OLLAMA_REPEAT_PENALTY,
+            "keep_alive": settings.OLLAMA_KEEP_ALIVE,
+            "think": settings.OLLAMA_THINK,
+        }
+    return info
+
+
+def _get_indexed_documents() -> list[str]:
+    try:
+        paths = sorted([f for f in PROCESSED_DATA_DIR.glob("*.json") if f.name != "manifest.json"])
+        docs = []
+        for path in paths:
+            with open(path, encoding="utf-8") as f:
+                for line in f:
+                    if '"relative_path"' in line:
+                        value = line.split('"relative_path"', 1)[1]
+                        value = value.split('"', 2)
+                        if len(value) >= 3:
+                            docs.append(value[1])
+                        break
+        return sorted(set(docs))
+    except Exception:
+        return []
+
+
+def _get_vram_mb() -> float | None:
+    try:
+        out = subprocess.check_output(
+            ["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits"],
+            text=True,
+            timeout=3,
+        )
+        return float(out.strip().splitlines()[0])
+    except Exception:
+        return None
+
+
+def _get_resource_snapshot() -> dict[str, float]:
+    mem = psutil.virtual_memory()
+    snapshot: dict[str, float] = {
+        "cpu_percent": psutil.cpu_percent(interval=None),
+        "ram_mb": round(mem.used / 1024 / 1024, 1),
+    }
+    vram = _get_vram_mb()
+    if vram is not None:
+        snapshot["vram_mb"] = vram
+    return snapshot
+
+
+def _average_resources(df: pd.DataFrame) -> dict[str, float]:
+    """샘플별 자원 스냅샷(cpu/ram/vram)에서 평균을 집계한다.
+
+    GPU 미탑재 등으로 수집되지 않은 항목(예: vram_mb 열 부재)은 건너뛴다.
+    """
+    columns = {"cpu_percent": "avg_cpu_percent", "ram_mb": "avg_ram_mb", "vram_mb": "avg_vram_mb"}
+    averages: dict[str, float] = {}
+    for col, out_key in columns.items():
+        if col in df.columns and not df[col].isna().all():
+            averages[out_key] = round(float(df[col].mean()), 1)
+    return averages
+
+
+async def run_rag_inference(test_data: list[dict[str, Any]]) -> InferenceResult:
+    """RAG 추론 수행 및 SingleTurnSample 리스트 생성 (시스템 표준 체인 사용)"""
     from src.core.chains import get_rag_chain
 
-    db_manager = ChromaDBManager()
-    # 시스템 표준 RAG 체인 초기화
-    rag_chain = get_rag_chain(db_manager)
+    retriever = RetrieverFactory.create_retriever()
+    logger.info(SECTION_LINE)
+    logger.info("파이프라인 설정")
+    logger.info(
+        f"  Retriever : {settings.RETRIEVER_TYPE:<8} "
+        f"(BM25 w={settings.HYBRID_WEIGHT_BM25} / Vector w={settings.HYBRID_WEIGHT_VECTOR} / k={settings.RETRIEVAL_K})"
+    )
+    logger.info(
+        f"  Reranker  : {settings.RERANKER_TYPE:<8} "
+        f"({settings.RERANKER_MODEL_NAME} / top_k={settings.RERANKER_MAX_DOCS})"
+    )
+    logger.info(f"  LLM       : {settings.MODEL_TYPE:<8} ({settings.MODEL_NAME})")
+    logger.info(SECTION_LINE)
 
-    # 모델 정보 획득 (로깅용)
     temp_llm = LLMFactory.create_llm()
     model_name = str(temp_llm.model_name)
 
-    samples = []
-    logger.info(f"{len(test_data)}개 샘플 추론 시작 (모델: {model_name})")
+    if hasattr(temp_llm, "warmup"):
+        temp_llm.warmup()
+
+    chroma_target = getattr(retriever, "chroma", retriever)
+    if hasattr(chroma_target, "embedder"):
+        _ = chroma_target.embedder
+
+    rag_chain = get_rag_chain(retriever, llm=temp_llm.get_model(), use_cache=False)
+
+    samples: list[SingleTurnSample] = []
+    latencies: list[float] = []
+    resources: list[dict[str, float]] = []
+    logger.info(f"[추론] {len(test_data)}개 샘플 시작 (모델: {model_name})")
 
     for i, row in enumerate(test_data):
         question = row["question"]
@@ -69,7 +230,6 @@ async def run_rag_inference(test_data: list[dict[str, Any]]) -> tuple[Evaluation
             full_response = ""
             source_docs = []
 
-            # 스트리밍 파이프라인 소비
             for step in rag_chain.stream({"question": question}):
                 stage = step.get("stage")
                 status = step.get("status")
@@ -79,29 +239,152 @@ async def run_rag_inference(test_data: list[dict[str, Any]]) -> tuple[Evaluation
                 elif stage == "citation" and status == "complete":
                     source_docs = step.get("source_documents", [])
 
-            # Ragas 평가를 위해 검색된 문서들의 텍스트 추출 (이중 검색 제거)
             contexts = [doc.page_content for doc in source_docs]
-
-            # 답변 본문 사용
             answer = full_response.strip()
-
             latency = time.time() - start_time
 
             logger.info(f"[{i + 1}/{len(test_data)}] 성공 ({latency:.2f}s)")
 
             samples.append(
-                {
-                    "user_input": question,
-                    "response": answer,
-                    "retrieved_contexts": contexts,
-                    "reference": ground_truth,
-                    "latency_sec": latency,
-                }
+                SingleTurnSample(
+                    user_input=question,
+                    response=answer,
+                    retrieved_contexts=contexts,
+                    reference=ground_truth,
+                )
             )
+            latencies.append(latency)
+            resources.append(_get_resource_snapshot())
         except Exception as e:
             logger.error(f"오류 발생 ({question[:20]}...): {e}")
 
-    return EvaluationDataset.from_list(samples), model_name
+    return InferenceResult(samples=samples, latencies=latencies, resources=resources, model_name=model_name)
+
+
+async def _score_and_save(result: InferenceResult, missing_docs: list[str] | None = None) -> None:
+    """메트릭 초기화, 샘플별 스코어링, 결과 저장"""
+    logger.info(SECTION_LINE)
+    logger.info("평가 판사 설정")
+    logger.info(f"  Judge LLM : {settings.EVAL_JUDGE_TYPE:<8} ({settings.EVAL_JUDGE_MODEL})")
+    logger.info(f"  Embedding : {settings.EMBEDDING_MODEL_NAME}")
+    logger.info(SECTION_LINE)
+
+    instructor_client = instructor.from_anthropic(AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY))
+    ragas_llm = InstructorLLM(
+        client=instructor_client,
+        model=settings.EVAL_JUDGE_MODEL,
+        provider="anthropic",
+        temperature=0,
+        max_tokens=8192,
+    )
+    ragas_llm.model_args.pop("top_p", None)
+    ragas_embeddings = RagasHFEmbeddings(model=settings.EMBEDDING_MODEL_NAME)
+
+    metrics = [
+        Faithfulness(llm=ragas_llm),
+        AnswerRelevancy(llm=ragas_llm, embeddings=ragas_embeddings),
+        ContextPrecision(llm=ragas_llm),
+        ContextRecall(llm=ragas_llm),
+    ]
+
+    sem = asyncio.Semaphore(settings.EVAL_MAX_WORKERS)
+    metric_params = {m.name: set(inspect.signature(m.ascore).parameters) for m in metrics}
+
+    async def _ascore(metric: Any, sample: SingleTurnSample) -> float:
+        all_kwargs = {
+            "user_input": sample.user_input or "",
+            "response": sample.response or "",
+            "retrieved_contexts": sample.retrieved_contexts or [],
+            "reference": sample.reference or "",
+        }
+        kwargs = {k: v for k, v in all_kwargs.items() if k in metric_params[metric.name]}
+        async with sem:
+            result_obj = await metric.ascore(**kwargs)
+        return float(result_obj.value)
+
+    logger.info(f"[스코어링] {len(result.samples)}개 샘플 시작")
+
+    scored_rows: list[dict[str, Any]] = []
+    for i, (sample, latency, resource) in enumerate(
+        zip(result.samples, result.latencies, result.resources, strict=False)
+    ):
+        try:
+            scores = await asyncio.gather(*[_ascore(m, sample) for m in metrics])
+            row: dict[str, Any] = {m.name: s for m, s in zip(metrics, scores, strict=False)}
+        except Exception as e:
+            logger.error(f"샘플 {i + 1} 스코어링 실패: {e}")
+            row = {m.name: float("nan") for m in metrics}
+        row["latency_sec"] = latency
+        row.update(resource)
+        scored_rows.append(row)
+
+        if (i + 1) % 10 == 0 or (i + 1) == len(result.samples):
+            interim_df = pd.DataFrame(scored_rows)
+            interim_scores = " / ".join(
+                f"{name}: {interim_df[name].mean():.4f}"
+                for name in [m.name for m in metrics]
+                if name in interim_df.columns
+            )
+            avg_latency = interim_df["latency_sec"].mean()
+            logger.info(f"[{i + 1}/{len(result.samples)}] 중간 점수 — {interim_scores} / latency: {avg_latency:.2f}s")
+
+    df = pd.DataFrame(scored_rows)
+    metric_names = [m.name for m in metrics]
+    avg_scores: dict[str, float] = {
+        name: float(df[name].mean()) for name in metric_names if name in df.columns and not math.isnan(df[name].mean())
+    }
+
+    eval_dir = EVAL_LOGS_DIR
+    eval_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    avg_latency = float(df["latency_sec"].mean()) if "latency_sec" in df.columns else 0.0
+    summary_data: dict[str, Any] = {
+        "timestamp": str(timestamp),
+        "data": {
+            "indexed_documents": _get_indexed_documents(),
+            "missing_documents": missing_docs or [],
+        },
+        "pipeline": {
+            "llm": f"{settings.MODEL_TYPE}/{result.model_name}",
+            "retriever": (
+                f"{settings.RETRIEVER_TYPE} (BM25 w={settings.HYBRID_WEIGHT_BM25}"
+                f" / Vector w={settings.HYBRID_WEIGHT_VECTOR} / k={settings.RETRIEVAL_K})"
+            ),
+            "reranker": (
+                f"{settings.RERANKER_TYPE}/{settings.RERANKER_MODEL_NAME} (top_k={settings.RERANKER_MAX_DOCS})"
+            ),
+            "inference": _get_inference_settings(),
+        },
+        "judge": {
+            "llm": f"{settings.EVAL_JUDGE_TYPE}/{settings.EVAL_JUDGE_MODEL}",
+            "embedding": settings.EMBEDDING_MODEL_NAME,
+            "max_workers": settings.EVAL_MAX_WORKERS,
+        },
+        "results": {
+            **avg_scores,
+            "avg_latency_sec": avg_latency,
+            **_average_resources(df),
+            "total_samples": len(df),
+        },
+        "system": _get_system_info(),
+    }
+
+    summary_path = eval_dir / f"eval_summary_{timestamp}.json"
+    with open(summary_path, "w", encoding="utf-8") as f:
+        json.dump(summary_data, f, ensure_ascii=False, indent=4)
+
+    details_path = eval_dir / f"eval_details_{timestamp}.csv"
+    df.to_csv(details_path, index=False, encoding="utf-8-sig")
+
+    logger.info(SECTION_LINE)
+    logger.info("평가 결과")
+    for m, s in avg_scores.items():
+        logger.info(f"  {m:<24}: {s:.4f}")
+    logger.info(f"  {'avg_latency':<24}: {avg_latency:.2f}s")
+    logger.info(SECTION_LINE)
+    logger.info(f"요약 저장: {summary_path}")
+    logger.info(f"상세 저장: {details_path}")
 
 
 async def main():
@@ -113,101 +396,26 @@ async def main():
     with open(golden_path, encoding="utf-8") as f:
         data = json.load(f)
 
-    # 신규 생성된 50개 샘플 전체를 평가하기 위해 기본값 수정
-    max_samples = int(os.getenv("EVAL_MAX_SAMPLES", 50))
-    test_data = data[:max_samples]
+    missing_docs: list[str] = []
+    dataset_source_ids = {row["source_id"] for row in data if "source_id" in row}
+    if dataset_source_ids:
+        indexed_ids = {f.stem for f in PROCESSED_DATA_DIR.glob("*.json") if f.name != "manifest.json"}
+        missing_ids = dataset_source_ids - indexed_ids
+        if missing_ids:
+            missing_docs = sorted({row["source"] for row in data if row.get("source_id") in missing_ids})
+            logger.warning(
+                f"데이터셋-인덱스 불일치 감지. 누락된 문서: {missing_docs} "
+                f"(source_id: {sorted(missing_ids)}) — 평가를 계속 진행합니다."
+            )
 
-    # 1. RAG 추론 수행
-    dataset, model_name = await run_rag_inference(test_data)
+    result = await run_rag_inference(data[: settings.EVAL_MAX_SAMPLES])
 
-    if len(dataset) == 0:
+    if not result.samples:
         logger.error("유효한 추론 결과가 없습니다.")
         return
 
-    # 2. 평가 판사 및 임베딩 설정
-    eval_model_type = os.getenv("EVAL_JUDGE_TYPE", "claude")
-    eval_model_name = os.getenv("EVAL_JUDGE_MODEL", DEFAULT_EVAL_MODEL)
-
-    logger.info(f"평가 판사 설정 (Type: {eval_model_type}, Model: {eval_model_name})")
-
-    # LLMFactory를 통해 평가 판사 인스턴스 생성
-    eval_llm_inst = LLMFactory.create_llm(model_type=eval_model_type, model_name=eval_model_name, temperature=0)
-    ragas_llm = LangchainLLMWrapper(eval_llm_inst.get_model())
-
-    # 임베딩 모델 설정
-    embed_model_name = os.getenv("EVAL_EMBED_MODEL", "BAAI/bge-m3")
-    lc_embeddings = HuggingFaceEmbeddings(model_name=embed_model_name)
-    ragas_embeddings = LangchainEmbeddingsWrapper(lc_embeddings)
-
-    # 지표 리스트 (클래스 인스턴스화)
-    metrics = [
-        Faithfulness(),
-        AnswerRelevancy(),
-        ContextPrecision(),
-        ContextRecall(),
-    ]
-
-    logger.info(f"RAGAS 지표 계산 시작 (평가 모델: {eval_model_name})")
-
     try:
-        # 3. 평가 실행
-        results = evaluate(
-            dataset=dataset,
-            metrics=metrics,
-            llm=ragas_llm,
-            embeddings=ragas_embeddings,
-            run_config=RunConfig(
-                max_workers=int(os.getenv("EVAL_MAX_WORKERS", DEFAULT_MAX_WORKERS)),
-                timeout=int(os.getenv("EVAL_TIMEOUT", DEFAULT_EVAL_TIMEOUT)),
-            ),
-        )
-
-        # 4. 결과 집계
-        eval_results = cast(EvaluationResult, results)
-        df = eval_results.to_pandas()
-        numeric_df = df.select_dtypes(include=["number"])
-
-        # scores 처리: 모든 키와 값을 기본 타입으로 강제 변환
-        avg_scores: dict[str, float] = {}
-        raw_scores = getattr(eval_results, "scores", {})
-
-        if isinstance(raw_scores, dict):
-            for k, v in raw_scores.items():
-                avg_scores[str(k)] = float(v)
-        else:
-            # Fallback: pandas DataFrame 평균값 사용
-            mean_vals = numeric_df.mean().to_dict()
-            for k, v in mean_vals.items():
-                k_str = str(k)
-                if k_str != "latency_sec":
-                    avg_scores[k_str] = float(v)
-
-        eval_dir = EVAL_LOGS_DIR
-        eval_dir.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-        summary_data: dict[str, Any] = {
-            "scores": avg_scores,
-            "avg_latency_sec": float(numeric_df["latency_sec"].mean()) if "latency_sec" in numeric_df.columns else 0.0,
-            "total_samples": len(df),
-            "model_name": str(model_name),
-            "timestamp": str(timestamp),
-        }
-
-        summary_path = eval_dir / f"eval_summary_{timestamp}.json"
-        with open(summary_path, "w", encoding="utf-8") as f:
-            json.dump(summary_data, f, ensure_ascii=False, indent=4)
-
-        # 상세 결과(개별 샘플 점수 및 사유) CSV 저장 추가
-        details_path = eval_dir / f"eval_details_{timestamp}.csv"
-        df.to_csv(details_path, index=False, encoding="utf-8-sig")
-
-        logger.info(f"평가 완료. 요약 저장: {summary_path}")
-        logger.info(f"상세 내역 저장: {details_path}")
-        logger.info(f"평균 응답 속도: {summary_data['avg_latency_sec']:.2f}s")
-        for m, s in avg_scores.items():
-            logger.info(f"   - {m}: {s:.4f}")
-
+        await _score_and_save(result, missing_docs=missing_docs)
     except Exception as e:
         logger.error(f"평가 실패: {e}")
 

@@ -52,3 +52,9 @@ class LLMPricing:
         "claude-haiku-4-5": {"input": 1.0, "output": 5.0},
         "gemini-2.0-flash": {"input": 0.1, "output": 0.4},
     }
+
+
+class SupportedFormats:
+    """지원하는 원본 파일의 확장자 목록"""
+
+    EXTENSIONS: Final[list[str]] = [".pdf", ".md", ".markdown", ".hwp", ".hwpx"]

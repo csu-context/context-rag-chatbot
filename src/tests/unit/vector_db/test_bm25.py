@@ -40,14 +40,41 @@ def test_bm25_manager_synonyms_and_tokenizer(tmp_path):
     syn_file = tmp_path / "synonyms.json"
     syn_file.write_text(json.dumps({"AI": "인공지능", "chatbot": "챗봇"}), encoding="utf-8")
 
-    with patch("src.vector_db.bm25_manager.SYNONYMS_FILE", syn_file):
+    with patch("src.vector_db.bm25_tokenizer.SYNONYMS_FILE", syn_file):
         manager = BM25Manager(data_dir=tmp_path, cache_dir=tmp_path / "cache")
         # _apply_synonyms
-        assert manager._apply_synonyms("AI chatbot 개발") == "인공지능 챗봇 개발"
+        assert manager.tokenizer._apply_synonyms("AI chatbot 개발") == "인공지능 챗봇 개발"
         # Tokenizer
-        tokens = manager._tokenizer("AI chatbot 개발에 대하여")
+        tokens = manager.tokenizer.tokenize("AI chatbot 개발에 대하여")
         assert "인공" in tokens
         assert "지능" in tokens
+
+
+def test_apply_synonyms_no_self_overlap_corruption(tmp_path):
+    # k가 v의 접두 부분문자열인 항목은 치환 폭주를 막기 위해 건너뛴다.
+    syn_file = tmp_path / "synonyms.json"
+    syn_file.write_text(
+        json.dumps({"조선대": "조선대학교", "조대": "조선대학교"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    with patch("src.vector_db.bm25_tokenizer.SYNONYMS_FILE", syn_file):
+        manager = BM25Manager(data_dir=tmp_path, cache_dir=tmp_path / "cache")
+        apply = manager.tokenizer._apply_synonyms
+        # '조선대'(접두 중첩) 항목은 제외 → '조선대학교학교' 오염 없음
+        assert apply("조선대학교 규정") == "조선대학교 규정"
+        # '조대'(중첩 없음) 약어 확장은 정상 동작
+        assert apply("조대 규정") == "조선대학교 규정"
+
+
+def test_apply_synonyms_preserves_unmapped_source_terms(tmp_path):
+    # 동의어 사전에 없는 출처 고유어(학칙, 전공)는 원형 보존되어야 한다.
+    syn_file = tmp_path / "synonyms.json"
+    syn_file.write_text(json.dumps({"조대": "조선대학교"}, ensure_ascii=False), encoding="utf-8")
+    with patch("src.vector_db.bm25_tokenizer.SYNONYMS_FILE", syn_file):
+        manager = BM25Manager(data_dir=tmp_path, cache_dir=tmp_path / "cache")
+        apply = manager.tokenizer._apply_synonyms
+        assert apply("학칙 제1조") == "학칙 제1조"
+        assert apply("전공자 등록") == "전공자 등록"
 
 
 def test_bm25_manager_indexing_and_retrieve(tmp_path):

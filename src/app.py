@@ -1,20 +1,27 @@
 import os
+import sys
 
-# Python 3.13 + macOS 멀티스레드 환경의 segfault 방지를 위한 설정
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
-os.environ["OMP_NUM_THREADS"] = "1"
-os.environ["MKL_NUM_THREADS"] = "1"
-os.environ["OPENBLAS_NUM_THREADS"] = "1"
-os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
-os.environ["NUMEXPR_NUM_THREADS"] = "1"
-os.environ["RAYON_NUM_THREADS"] = "1"
+# macOS/Windows 전용 segfault 방지 — Linux 운영서버에는 적용 안 함
+# Linux에서 스레드 수 1 고정 시 CPU Starvation/OOM 유발 가능
+if sys.platform != "linux":
+    os.environ["TOKENIZERS_PARALLELISM"] = "false"
+    os.environ["OMP_NUM_THREADS"] = "1"
+    os.environ["MKL_NUM_THREADS"] = "1"
+    os.environ["OPENBLAS_NUM_THREADS"] = "1"
+    os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+    os.environ["NUMEXPR_NUM_THREADS"] = "1"
+    os.environ["RAYON_NUM_THREADS"] = "1"
+else:
+    os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
-
+import json
 import logging
+import threading
 import time
 from pathlib import Path
 
 import streamlit as st
+import streamlit.components.v1 as components
 from dotenv import load_dotenv
 
 from src.common.config import settings
@@ -37,6 +44,54 @@ setup_global_logging()
 logging.getLogger("asyncio").setLevel(logging.CRITICAL)
 perf_logger = PerformanceLogger()  # 전용 로거 인스턴스 생성
 logger = logging.getLogger(__name__)
+
+
+# --- 커스텀 Material Icon 복사 버튼 렌더러 ---
+def render_custom_copy_button(text_to_copy: str, key_suffix: str):
+    safe_text = json.dumps(text_to_copy)
+    html_code = f"""
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet" />
+    <style>
+        .copy-btn {{
+            background: transparent;
+            border: none;
+            cursor: pointer;
+            color: #555;
+            padding: 4px;
+            border-radius: 4px;
+            transition: background 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }}
+        .copy-btn:hover {{
+            background: #f0f0f0;
+        }}
+        .material-symbols-outlined {{
+            font-size: 20px;
+        }}
+    </style>
+    <button class="copy-btn" onclick="copyText()" title="답변 복사하기">
+        <span class="material-symbols-outlined" id="icon-{key_suffix}">content_copy</span>
+    </button>
+    <script>
+        function copyText() {{
+            const text = {safe_text};
+            navigator.clipboard.writeText(text).then(function() {{
+                const icon = document.getElementById('icon-{key_suffix}');
+                icon.innerText = 'check';
+                icon.style.color = '#4CAF50';
+                setTimeout(function() {{
+                    icon.innerText = 'content_copy';
+                    icon.style.color = '#555';
+                }}, 2000);
+            }}).catch(function(err) {{
+                console.error('Copy Failed', err);
+            }});
+        }}
+    </script>
+    """
+    components.html(html_code, height=35, width=35)
 
 
 def get_doc_field(doc, field, default=None):
@@ -74,6 +129,19 @@ ensure_directories()
 # --- 2. 세션 상태 초기화 (중앙 이관 호출) ---
 init_session_state()
 
+# Redis 세션 복원 — REDIS_URL 설정 시 이전 대화 기록 복구
+# 로드밸런서로 다른 인스턴스로 라우팅되어도 대화 연속성 유지
+if settings.REDIS_URL and "redis_session_loaded" not in st.session_state:
+    st.session_state.redis_session_loaded = True
+    _session_id = st.query_params.get("sid", "") or id(st.session_state)
+    st.session_state._redis_session_id = str(_session_id)
+    from src.utils.redis_session import RedisSessionStore
+
+    saved_msgs = RedisSessionStore.load_messages(st.session_state._redis_session_id)
+    if saved_msgs:
+        st.session_state.messages = saved_msgs
+        logger.info(f"Redis에서 세션 복원 ({len(saved_msgs)}개 메시지)")
+
 
 def reset_doc_dialog():
     st.session_state.dialog_doc_to_show = None
@@ -96,15 +164,21 @@ def show_document_dialog(doc: dict):
         st.rerun()
 
 
-# --- 3. RAG 시스템 초기화 (캐싱 및 팩토리 패턴 도입) ---
+# --- 3. RAG 시스템 초기화 ---
+# Stateless 개선 — DB/Retriever/RAG chain 모두 전역 캐시(세션 간 공유)
+# SemanticCache 데이터는 ChromaDB에 저장되므로 인스턴스 공유해도 충돌 없음
 @st.cache_resource
 def initialize_rag_system():
     retriever_type = os.getenv("RETRIEVER_TYPE", "vector").lower()
     from src.vector_db.chroma_manager import ChromaDBManager
 
     db_manager = ChromaDBManager()
-    # RetrieverFactory를 사용한 리트리버 동적 생성
     retriever = RetrieverFactory.create_retriever(retriever_type=retriever_type, chroma_manager=db_manager)
+    # 임베더 eager load (첫 질문 지연 제거)
+    # hybrid: retriever.chroma 가 ChromaDBManager / vector: retriever 자체가 ChromaDBManager
+    chroma_mgr = getattr(retriever, "chroma", None) or retriever
+    if hasattr(chroma_mgr, "embedding_fn"):
+        _ = chroma_mgr.embedding_fn.embedder
     rag_chain = get_rag_chain(retriever)
     return db_manager, rag_chain
 
@@ -115,6 +189,20 @@ except Exception as e:
     st.error(f"시스템 초기화 오류: {e}")
     st.stop()
 
+# Metrics 엔드포인트 백그라운드 시작 (최초 1회)
+if "metrics_server_started" not in st.session_state:
+    st.session_state.metrics_server_started = True
+    from src.utils.metrics_server import MetricsServer
+
+    MetricsServer.start()
+
+# 리랭커 Eager Loading (백그라운드 스레드, 최초 1회만)
+if not st.session_state.get("reranker_eager_load_started"):
+    st.session_state.reranker_eager_load_started = True
+    if settings.RERANKER_TYPE.lower() == "local":
+        from src.core.reranker import CrossEncoderReranker
+
+        CrossEncoderReranker.eager_load_background()
 
 # --- 모델 다운로드 및 준비 상태 사전 체크 ---
 model_ready = True
@@ -123,12 +211,17 @@ is_ollama = settings.MODEL_TYPE == "ollama"
 if is_ollama:
     try:
         llm_instance = LLMFactory.create_llm()
-        if not llm_instance.is_model_available():
+
+        if hasattr(llm_instance, "is_model_available") and not llm_instance.is_model_available():
             model_ready = False
+        elif "llm_warmup_done" not in st.session_state:
+            st.session_state.llm_warmup_done = True
+
+            if hasattr(llm_instance, "warmup"):
+                threading.Thread(target=llm_instance.warmup, daemon=True, name="ollama-warmup").start()
     except Exception as e:
         model_ready = False
         logger.error(f"로컬 LLM 상태 진단 중 오류: {e}")
-
 
 # CSS 추가 (style.css에서 동적 주입)
 css_file_path = Path(__file__).parent / "ui" / "style.css"
@@ -136,7 +229,6 @@ if css_file_path.exists():
     with open(css_file_path, encoding="utf-8") as f:
         custom_css = f.read()
     st.markdown(f"<style>{custom_css}</style>", unsafe_allow_html=True)
-
 
 # --- 4. 사이드바 (Sidebar) 구성 ---
 with st.sidebar:
@@ -173,22 +265,34 @@ with st.sidebar:
     # 4. 기타 설정
     st.toggle("상세 추론 과정 보기", key="show_expert_mode", disabled=st.session_state.is_generating)
 
+    # API 토큰 사용량 및 실시간 과금 추적
+    session_tokens = st.session_state.get("session_tokens", {"input": 0, "output": 0, "cost_usd": 0.0})
+    if session_tokens["input"] > 0 or session_tokens["output"] > 0:
+        st.divider()
+        st.subheader("세션 토큰 사용량")
+        st.write(f"입력: **{session_tokens['input']:,}** / 출력: **{session_tokens['output']:,}** 토큰")
+        st.write(f"추정 비용: **${session_tokens['cost_usd']:.4f}** USD")
+
     st.divider()
     st.subheader("실시간 자원 모니터링")
     stats = get_system_stats()
 
-    st.write("CPU 사용량")
-    st.progress(int(stats["cpu"]), text=f"{stats['cpu']:.1f}%")
+    # @st.fragment(run_every) 로 실제 실시간 반영
+    @st.fragment(run_every="5s")
+    def _resource_monitor():
+        stats = get_system_stats()
+        st.write("CPU 사용량")
+        st.progress(int(stats["cpu"]), text=f"{stats['cpu']:.1f}%")
+        st.write("RAM 사용량")
+        st.progress(int(stats["memory"]), text=f"{stats['memory']:.1f}%")
+        if stats["gpu_vram"] is not None:
+            st.write("GPU VRAM 사용량")
+            st.progress(int(stats["gpu_vram"]), text=f"{stats['gpu_vram']:.1f}%")
+        else:
+            st.write("GPU VRAM 사용량")
+            st.info("현재 환경에서 GPU를 사용할 수 없습니다.")
 
-    st.write("RAM 사용량")
-    st.progress(int(stats["memory"]), text=f"{stats['memory']:.1f}%")
-
-    if stats["gpu_vram"] is not None:
-        st.write("GPU VRAM 사용량")
-        st.progress(int(stats["gpu_vram"]), text=f"{stats['gpu_vram']:.1f}%")
-    else:
-        st.write("GPU VRAM 사용량")
-        st.info("현재 환경에서 GPU를 사용할 수 없습니다.")
+    _resource_monitor()
 
 # --- 5. 다이얼로그 활성화 제어 (모듈화 이관 호출) ---
 if st.session_state.get("admin_active", False):
@@ -280,7 +384,6 @@ if is_ollama and not model_ready:
     except Exception as e:
         st.error(f"로컬 LLM 상태 진단 중 오류가 발생했습니다: {e}")
 
-
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
@@ -292,6 +395,7 @@ for msg_idx, msg in enumerate(st.session_state.messages):
         if msg["role"] == "assistant" and msg.get("latency") is not None:
             st.caption(f"답변 소요 시간: {msg['latency']:.2f}초")
 
+        # --- [순서 1] 인용 출처(citations) 렌더링 (오탐 방지 버그 수정 로직 포함) ---
         if msg.get("citations"):
             for i, doc in enumerate(msg["citations"]):
                 if not isinstance(doc, dict):
@@ -299,9 +403,13 @@ for msg_idx, msg in enumerate(st.session_state.messages):
                 metadata = doc.get("metadata", {})
                 source = metadata.get(MetadataFields.SRC_NAME, "알 수 없음")
                 page = metadata.get(MetadataFields.PG_NUM, "-")
-                score = metadata.get("rerank_score", doc.get("score", 0.0))
-                display_score = max(0.0, (score - 0.5) * 2)
-                is_low_confidence = score < 0.5
+
+                # rerank_score 없을 때 RRF/기본값 0.0으로 무조건 경고 발생하는 오탐 방지
+                score = metadata.get("rerank_score")
+                has_rerank_score = score is not None
+                score = score if has_rerank_score else doc.get("score", 0.0)
+                display_score = max(0.0, (score - 0.5) * 2) if has_rerank_score else 1.0
+                is_low_confidence = has_rerank_score and score < 0.5
 
                 button_label = f"📄 {source} (p.{page}) - 신뢰도: {display_score:.2f}"
                 if is_low_confidence:
@@ -309,10 +417,14 @@ for msg_idx, msg in enumerate(st.session_state.messages):
 
                 if st.button(button_label, key=f"cite_{msg_idx}_{i}", disabled=st.session_state.is_generating):
                     st.session_state.dialog_doc_to_show = doc
-                    st.session_state.should_rerun_app = True  # Set flag instead of direct rerun
+                    st.session_state.should_rerun_app = True
 
                 if is_low_confidence:
                     st.caption("⚠️ 신뢰도가 낮아 환각 발생 가능성이 있습니다. 원문을 직접 확인하세요.")
+
+        # --- [순서 2] 커스텀 Material Icon 복사 버튼 (출처 밑으로 렌더링) ---
+        if msg["role"] == "assistant":
+            render_custom_copy_button(text_to_copy=msg["content"], key_suffix=str(msg_idx))
 
 if st.session_state.dialog_doc_to_show:
     show_document_dialog(st.session_state.dialog_doc_to_show)
@@ -350,7 +462,6 @@ if prompt := st.chat_input(
         }
     )
     st.rerun()
-
 
 # active generation UI (컨트롤러로 비즈니스 논리 이관 호출)
 if st.session_state.is_generating:

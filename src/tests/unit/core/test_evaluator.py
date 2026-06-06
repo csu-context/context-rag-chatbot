@@ -1,27 +1,28 @@
 from unittest.mock import MagicMock, patch
 
+import pandas as pd
 import pytest
-from ragas import EvaluationDataset
+from ragas import SingleTurnSample
 
-from src.eval.evaluator import run_rag_inference
+from src.eval.evaluator import (
+    InferenceResult,
+    _average_resources,
+    _get_inference_settings,
+    run_rag_inference,
+)
 
 
 @pytest.fixture
-def mock_db_manager():
-    with patch("src.eval.evaluator.ChromaDBManager") as mock:
-        manager_inst = mock.return_value
-        manager_inst.search.return_value = [
-            {"content": "A info", "metadata": {"src_name": "doc1", "pg_num": 1}},
-        ]
-        yield manager_inst
+def mock_retriever_factory():
+    with patch("src.eval.evaluator.RetrieverFactory") as mock:
+        mock.create_retriever.return_value = MagicMock()
+        yield mock
 
 
 @pytest.fixture
 def mock_rag_chain():
-    # run_rag_inference 내부에서 import되는 get_rag_chain을 모킹
     with patch("src.core.chains.get_rag_chain") as mock:
         chain_inst = MagicMock()
-        # 체인은 이제 generator를 반환하는 stream 메서드를 사용함
         chain_inst.stream.return_value = [
             {"stage": "generation", "status": "streaming", "output": "Test answer"},
             {
@@ -43,29 +44,41 @@ def mock_llm_factory():
         yield mock
 
 
+@pytest.fixture
+def mock_resource_snapshot():
+    with patch("src.eval.evaluator._get_resource_snapshot") as mock:
+        mock.return_value = {"cpu_percent": 10.0, "ram_mb": 1024.0}
+        yield mock
+
+
 @pytest.mark.asyncio
-async def test_run_rag_inference(mock_db_manager, mock_rag_chain, mock_llm_factory):
+async def test_run_rag_inference(mock_retriever_factory, mock_rag_chain, mock_llm_factory, mock_resource_snapshot):
     test_data = [
         {"question": "What is A?", "ground_truth": "A is alpha"},
     ]
 
-    dataset, model_name = await run_rag_inference(test_data)
+    result = await run_rag_inference(test_data)
 
-    assert isinstance(dataset, EvaluationDataset)
-    assert len(dataset) == 1
-    assert model_name == "test-model"
+    assert isinstance(result, InferenceResult)
+    assert len(result.samples) == 1
+    assert result.model_name == "test-model"
 
-    # Ragas v0.4.x EvaluationDataset은 samples 리스트를 가짐
-    sample = dataset[0]
+    sample = result.samples[0]
+    assert isinstance(sample, SingleTurnSample)
     assert sample.user_input == "What is A?"
-    assert sample.response == "Test answer"  # 출처 제거 확인
+    assert sample.response == "Test answer"
     assert "A info" in sample.retrieved_contexts
     assert sample.reference == "A is alpha"
 
+    assert len(result.latencies) == 1
+    assert len(result.resources) == 1
+    assert "cpu_percent" in result.resources[0]
+
 
 @pytest.mark.asyncio
-async def test_run_rag_inference_error_handling(mock_db_manager, mock_rag_chain, mock_llm_factory):
-    # 체인 실행 시 에러 발생 시뮬레이션
+async def test_run_rag_inference_error_handling(
+    mock_retriever_factory, mock_rag_chain, mock_llm_factory, mock_resource_snapshot
+):
     def mock_stream_error(*args, **kwargs):
         raise Exception("Chain error")
         yield {}
@@ -74,7 +87,60 @@ async def test_run_rag_inference_error_handling(mock_db_manager, mock_rag_chain,
 
     test_data = [{"question": "Error?", "ground_truth": "None"}]
 
-    dataset, _ = await run_rag_inference(test_data)
+    result = await run_rag_inference(test_data)
 
-    # 에러 발생 시 해당 샘플은 제외되어야 함
-    assert len(dataset) == 0
+    assert len(result.samples) == 0
+
+
+def test_inference_settings_ollama_includes_ollama_params(monkeypatch):
+    """ollama 백엔드면 공통(temperature) + ollama 전용 추론 파라미터를 모두 기록한다."""
+    monkeypatch.setattr("src.eval.evaluator.settings.MODEL_TYPE", "ollama")
+    monkeypatch.setattr("src.eval.evaluator.settings.OLLAMA_NUM_PREDICT", 2048)
+    monkeypatch.setattr("src.eval.evaluator.settings.OLLAMA_REPEAT_PENALTY", 1.1)
+
+    info = _get_inference_settings()
+
+    assert "temperature" in info
+    assert info["num_predict"] == 2048
+    assert info["repeat_penalty"] == 1.1
+    assert {"num_ctx", "keep_alive", "think"} <= info.keys()
+
+
+def test_inference_settings_non_ollama_only_common(monkeypatch):
+    """비-ollama(gemini/claude) 백엔드면 ollama 전용 키 없이 공통 항목만 기록한다."""
+    monkeypatch.setattr("src.eval.evaluator.settings.MODEL_TYPE", "claude")
+
+    info = _get_inference_settings()
+
+    assert "temperature" in info
+    assert "num_predict" not in info
+    assert all(not k.startswith(("num_", "repeat_", "keep_", "think")) for k in info)
+
+
+def test_average_resources_includes_vram_when_present():
+    """vram_mb 열이 있으면 cpu/ram/vram 평균을 모두 집계한다."""
+    df = pd.DataFrame(
+        [
+            {"cpu_percent": 10.0, "ram_mb": 1000.0, "vram_mb": 500.0},
+            {"cpu_percent": 20.0, "ram_mb": 2000.0, "vram_mb": 1500.0},
+        ]
+    )
+
+    avg = _average_resources(df)
+
+    assert avg == {"avg_cpu_percent": 15.0, "avg_ram_mb": 1500.0, "avg_vram_mb": 1000.0}
+
+
+def test_average_resources_omits_vram_when_absent():
+    """GPU 미탑재로 vram_mb 열이 없으면 cpu/ram만 집계하고 vram은 생략한다."""
+    df = pd.DataFrame(
+        [
+            {"cpu_percent": 10.0, "ram_mb": 1000.0},
+            {"cpu_percent": 30.0, "ram_mb": 3000.0},
+        ]
+    )
+
+    avg = _average_resources(df)
+
+    assert avg == {"avg_cpu_percent": 20.0, "avg_ram_mb": 2000.0}
+    assert "avg_vram_mb" not in avg
