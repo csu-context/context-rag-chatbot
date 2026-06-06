@@ -34,7 +34,7 @@ def test_restore_chromadb_success(mock_dirs):
     backup_dir, vector_db_dir = mock_dirs
     backup_file = _create_backup(backup_dir, vector_db_dir.parent)
 
-    with patch("src.utils.backup_manager.diagnose_db", return_value=True):
+    with patch("src.vector_db.backup_manager.diagnose_db", return_value=True):
         success = restore_chromadb(
             backup_file=backup_file.name,
             vector_db_dir=vector_db_dir,
@@ -64,7 +64,7 @@ def test_diagnose_db_success(mock_dirs):
     _, vector_db_dir = mock_dirs
 
     # Mock sqlite3.connect to return a mock connection and cursor
-    with patch("sqlite3.connect") as mock_connect:
+    with patch("sqlite3.connect") as mock_connect, patch("src.vector_db.backup_manager.chromadb.PersistentClient"):
         mock_conn = mock_connect.return_value
         mock_cursor = mock_conn.cursor.return_value
         mock_cursor.fetchone.return_value = ("ok",)
