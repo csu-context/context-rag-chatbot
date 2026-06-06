@@ -77,8 +77,14 @@ class TestRAGPipelineMemory:
         history = [{"role": "user", "content": "질문"}]
         input_data = {"question": "후속 질문", "k": 1, "final_k": 1, "history": history}
 
-        mock_retriever.search.return_value = []
-        mock_reranker.rerank_with_timeout.return_value = MagicMock(documents=[], scores=[])
+        doc = Document(page_content="검색 문서", metadata={"chunk_id": "doc_1", "score": 0.8})
+        mock_retriever.search.return_value = [{"content": "검색 문서", "metadata": {"chunk_id": "doc_1"}, "score": 0.8}]
+        mock_retriever.get_relevant_documents.return_value = [doc]
+        mock_rerank_res = MagicMock()
+        mock_rerank_res.documents = [doc]
+        mock_rerank_res.scores = [0.8]
+        mock_rerank_res.reranker_skipped = False
+        mock_reranker.rerank_with_timeout.return_value = mock_rerank_res
         mock_llm.stream.return_value = ["답변"]
 
         list(pipeline.stream(input_data))

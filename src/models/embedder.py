@@ -30,12 +30,8 @@ class BGEEmbedder:
             cls._instance = None
 
     def __init__(self, model_name="BAAI/bge-m3"):
-        if torch.cuda.is_available():
-            self.device = "cuda"
-        elif torch.backends.mps.is_available():
-            self.device = "mps"
-        else:
-            self.device = "cpu"
+        from src.utils.device import get_torch_device
+        self.device = get_torch_device()
 
         if not settings.ALLOW_EXTERNAL_API:
             if model_name != "BAAI/bge-m3":

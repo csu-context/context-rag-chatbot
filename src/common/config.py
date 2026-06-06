@@ -59,7 +59,7 @@ class Settings(BaseSettings):
     RETRIEVER_EXECUTOR_MAX_WORKERS: int = Field(default=8)
     RERANKER_MAX_DOCS: int = Field(default=5)
     RERANKER_BATCH_SIZE: int = Field(default=5)
-    RERANKER_THRESHOLD: float = Field(default=0.5)
+    RERANKER_THRESHOLD: float = Field(default=0.60)
     RERANKER_TIMEOUT_SEC: int = Field(default=5)
     RERANKER_GPU_RECOVERY_INTERVAL_SEC: int = Field(default=300)
     MAX_INGESTION_WORKERS: int = Field(default=4)
@@ -117,6 +117,8 @@ class Settings(BaseSettings):
             "목",
         ]
     )
+    RERANKER_SIMILARITY_THRESHOLD: float = Field(default=0.60)
+    RETRIEVER_FALLBACK_THRESHOLD: float = Field(default=0.1)
 
     # 5. 평가(Evaluation) 관련 설정
     EVAL_MAX_SAMPLES: int = 50

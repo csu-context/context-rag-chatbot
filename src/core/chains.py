@@ -46,6 +46,7 @@ def invalidate_source_json_cache() -> None:
     _load_source_json.cache_clear()
 
 
+
 class RAGPipeline:
     """RAG 파이프라인의 핵심 로직을 관리하는 클래스"""
 
@@ -138,34 +139,69 @@ class RAGPipeline:
 
     def _do_reranking(
         self, query: str, docs: list[Document], final_k: int, session: Any
-    ) -> tuple[list[Document], list[float]]:
+    ) -> tuple[list[Document], list[float], bool]:
+        """(final_docs, scores, reranker_skipped) 튜플 반환.
+
+        reranker_skipped=True 이면 리랭커 타임아웃/오류로 검색 결과를 그대로 통과시킨 것이며,
+        이 경우 downstream에서 rerank_score를 메타데이터에 설정하지 않아야 한다.
+        """
         with session.trace_step("reranking") as step:
             if docs:
                 pre_rerank_ids = [d.metadata.get(MetadataFields.CHUNK_ID) or "unknown" for d in docs]
                 pre_rerank_scores = [d.metadata.get("score", 0.0) for d in docs]
 
                 rerank_result = self.reranker.rerank_with_timeout(query, docs, top_k=final_k)
-                final_docs = rerank_result.documents
-                scores = rerank_result.scores
+                raw_docs = rerank_result.documents
+                raw_scores = rerank_result.scores
+                skipped = rerank_result.reranker_skipped
+
+                final_docs = []
+                scores = []
+                if skipped:
+                    # 리랭커 타임아웃/오류: 초벌 검색 점수 기준 비상 임계값 필터링 수행 (대안 A)
+                    logger.warning("리랭커가 건너뛰어졌습니다. 초벌 검색 점수 기준으로 비상 필터링을 적용합니다.")
+                    for d in raw_docs:
+                        s = d.metadata.get("score", 0.0)
+                        if s >= settings.RETRIEVER_FALLBACK_THRESHOLD:
+                            final_docs.append(d)
+                            scores.append(s)
+                else:
+                    # 리랭커 정상 실행: 리랭커 점수 기반 필터링 가드레일 적용
+                    for d, s in zip(raw_docs, raw_scores, strict=True):
+                        if s >= settings.RERANKER_SIMILARITY_THRESHOLD:
+                            final_docs.append(d)
+                            scores.append(s)
+
                 post_rerank_ids = [d.metadata.get(MetadataFields.CHUNK_ID) or "unknown" for d in final_docs]
             else:
                 final_docs, scores, pre_rerank_ids, post_rerank_ids, pre_rerank_scores = [], [], [], [], []
                 rerank_result = None
+                skipped = False
 
             step.update(
                 {
                     "output_count": len(final_docs),
                     "model": str(rerank_result.model_name) if rerank_result else "none",
+                    "reranker_skipped": skipped,
                     "scores": [f"{s:.4f}" for s in scores],
                     "rank_change": {"before": pre_rerank_ids, "after": post_rerank_ids},
                     "pre_rerank_scores": pre_rerank_scores,
                 }
             )
-            return final_docs, scores
+            return final_docs, scores, skipped
 
     def _stream_generation(
         self, query: str, final_docs: list[Document], history: list[dict[str, Any]], session: Any
     ) -> Iterator[str]:
+        # 컨텍스트가 완전히 비어있는 경우, LLM 호출 없이 바로 거절 메시지 출력하여 환각 원천 차단
+        if not final_docs:
+            with session.trace_step("generation") as step:
+                msg = "제공된 문서에서 관련 내용을 찾을 수 없습니다."
+                step.update({"answer_length": len(msg)})
+                session.data["final_answer"] = msg
+                yield msg
+            return
+
         with session.trace_step("generation") as step:
             system_prompt = get_system_prompt()
             trimmed_docs = ContextBuilderNode.trim_docs_to_token_limit(final_docs, system_prompt, history)
@@ -316,9 +352,10 @@ class RAGPipeline:
 
             # 3. Reranking
             yield {"stage": "reranking", "status": "running"}
-            final_docs, scores = self._do_reranking(query, docs, final_k, session)
-            for doc, score in zip(final_docs, scores, strict=False):
-                doc.metadata["rerank_score"] = score
+            final_docs, scores, reranker_skipped = self._do_reranking(query, docs, final_k, session)
+            if not reranker_skipped:
+                for doc, score in zip(final_docs, scores, strict=True):
+                    doc.metadata["rerank_score"] = score
             yield {"stage": "reranking", "status": "complete", "output": final_docs}
 
             # 4. Generation
@@ -343,10 +380,12 @@ class RAGPipeline:
                 for doc in final_docs
             ]
 
-            if self.cache:
+            if self.cache and not reranker_skipped:
                 self.cache.add(query, full_answer, docs_for_cache)
 
-            yield {"stage": "citation", "status": "complete", "output": citations_str, "source_documents": final_docs}
+            # 리랭커가 스킵되었더라도 비상 필터를 통과한 문서가 있다면 출처에 표기함
+            verified_docs = final_docs
+            yield {"stage": "citation", "status": "complete", "output": citations_str, "source_documents": verified_docs}
 
 
 def get_rag_chain(retriever_or_db, llm: Any = None, use_cache: bool = True):

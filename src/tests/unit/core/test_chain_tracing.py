@@ -26,14 +26,16 @@ async def test_rerank_rank_change_logging(tmp_path):
 
             # Mock Reranker to swap order
             with patch("src.core.reranker.CrossEncoderReranker.get_instance") as mock_get_reranker:
+                mock_rerank_res = MagicMock()
+                mock_rerank_res.documents = [
+                    Document(page_content="doc2", metadata={"chunk_id": "id2"}),
+                    Document(page_content="doc1", metadata={"chunk_id": "id1"}),
+                ]
+                mock_rerank_res.scores = [0.95, 0.85]
+                mock_rerank_res.reranker_skipped = False
+                mock_rerank_res.model_name = "Local CrossEncoder"
                 mock_reranker = MagicMock()
-                mock_reranker.rerank_with_timeout.return_value = MagicMock(
-                    documents=[
-                        Document(page_content="doc2", metadata={"chunk_id": "id2"}),
-                        Document(page_content="doc1", metadata={"chunk_id": "id1"}),
-                    ],
-                    scores=[0.95, 0.85],
-                )
+                mock_reranker.rerank_with_timeout.return_value = mock_rerank_res
                 mock_get_reranker.return_value = mock_reranker
 
                 # Mock LLM
