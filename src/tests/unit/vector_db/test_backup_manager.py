@@ -138,13 +138,14 @@ def test_restore_rejects_hash_mismatch(mock_dirs):
 
 
 def test_diagnose_db_success(mock_vector_db_dir):
-    with patch("sqlite3.connect") as mock_sqlite_connect, patch("chromadb.PersistentClient") as mock_chroma_client:
-        # Mock for sqlite check
+    with patch("sqlite3.connect") as mock_sqlite_connect, \
+         patch("src.vector_db.backup_manager.chromadb.PersistentClient") as mock_chroma_client, \
+         patch("src.vector_db.backup_manager.embedding_functions.SentenceTransformerEmbeddingFunction"):
+        
         mock_sqlite_conn = mock_sqlite_connect.return_value
         mock_sqlite_cursor = mock_sqlite_conn.cursor.return_value
         mock_sqlite_cursor.fetchone.return_value = ("ok",)
 
-        # Mock for chromadb check
         mock_chroma = mock_chroma_client.return_value
         mock_collection = mock_chroma.get_or_create_collection.return_value
         mock_collection.query.return_value = {"ids": [["test_id"]]}
@@ -169,10 +170,13 @@ def test_diagnose_db_fails_on_sqlite_integrity(mock_vector_db_dir):
 
 
 def test_diagnose_db_fails_on_chroma_query(mock_vector_db_dir):
-    with patch("sqlite3.connect"), patch("chromadb.PersistentClient") as mock_chroma_client:
+    with patch("sqlite3.connect"), \
+         patch("src.vector_db.backup_manager.chromadb.PersistentClient") as mock_chroma_client, \
+         patch("src.vector_db.backup_manager.embedding_functions.SentenceTransformerEmbeddingFunction"):
+        
         mock_chroma = mock_chroma_client.return_value
         mock_collection = mock_chroma.get_or_create_collection.return_value
-        mock_collection.query.return_value = {}  # Simulate query failure
+        mock_collection.query.return_value = {}
 
         success = diagnose_db(vector_db_dir=mock_vector_db_dir)
         assert success is False
