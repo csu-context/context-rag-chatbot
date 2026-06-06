@@ -1,15 +1,8 @@
-# ruff: noqa: E402, I001
 import argparse
 import sys
-from pathlib import Path
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-if str(BASE_DIR) not in sys.path:
-    sys.path.append(str(BASE_DIR))
-
-from src.utils.backup_manager import diagnose_db as diagnose_db, restore_chromadb
 from src.utils.logger import setup_global_logging
-
+from src.vector_db.backup_manager import restore_chromadb
 
 if __name__ == "__main__":
     setup_global_logging()

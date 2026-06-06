@@ -3,18 +3,17 @@ import logging
 import platform
 import shutil
 import sqlite3
-import sys
 import tarfile
 import time
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
-BASE_DIR = Path(__file__).resolve().parent.parent.parent
-if str(BASE_DIR) not in sys.path:
-    sys.path.append(str(BASE_DIR))
+import chromadb
+from chromadb.utils import embedding_functions
 
-from src.utils.paths import BACKUP_DIR, VECTOR_DB_DIR, ensure_directories  # noqa: E402
+from src.common.config import settings
+from src.utils.paths import BACKUP_DIR, VECTOR_DB_DIR, ensure_directories
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +156,7 @@ def rotate_backups(limit: int, backup_dir: Path = BACKUP_DIR) -> None:
 
 
 def diagnose_db(vector_db_dir: Path = VECTOR_DB_DIR) -> bool:
+    # 1. SQLite 파일 무결성 검사
     sqlite_file = vector_db_dir / "chroma.sqlite3"
     if not sqlite_file.exists():
         logger.error("Diagnostics failed: DB file not found: %s", sqlite_file)
@@ -169,15 +169,40 @@ def diagnose_db(vector_db_dir: Path = VECTOR_DB_DIR) -> bool:
         result = cursor.fetchone()
         conn.close()
 
-        if result and result[0] == "ok":
-            logger.info("DB Diagnostics passed: Integrity check OK.")
-            return True
-        else:
+        if not (result and result[0] == "ok"):
             logger.error("DB Diagnostics failed: Integrity check returned: %s", result)
             return False
+        logger.info("DB Diagnostics passed: Integrity check OK.")
     except sqlite3.Error as e:
         logger.error("DB Diagnostics failed: SQLite error: %s", e)
         return False
+
+    # 2. ChromaDB 클라이언트 실제 쿼리 검증
+    try:
+        # 시스템 설정의 임베딩 모델 사용
+        embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
+            model_name=settings.EMBEDDING_MODEL_NAME,
+            device="cpu",  # 진단용이므로 가볍게 CPU 사용
+        )
+        client = chromadb.PersistentClient(
+            path=str(vector_db_dir), settings=chromadb.Settings(anonymized_telemetry=False)
+        )
+        collection = client.get_or_create_collection(
+            name="diagnostic_collection", embedding_function=embedding_function
+        )
+        collection.add(ids=["test_id"], documents=["test document"])
+        results = collection.query(query_texts=["test"], n_results=1)
+        client.delete_collection(name="diagnostic_collection")
+
+        if not results or not results.get("ids"):
+            logger.error("DB Diagnostics failed: ChromaDB query returned no results.")
+            return False
+        logger.info("DB Diagnostics passed: ChromaDB query OK.")
+    except Exception as e:
+        logger.error("DB Diagnostics failed: ChromaDB client error: %s", e)
+        return False
+
+    return True
 
 
 def _find_backup(backup_file: str | None, backup_dir: Path) -> Path | None:

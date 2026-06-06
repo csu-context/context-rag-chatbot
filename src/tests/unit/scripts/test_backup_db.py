@@ -3,7 +3,7 @@ import time
 
 import pytest
 
-from src.utils.backup_manager import HASH_SUFFIX, backup_chromadb, rotate_backups
+from src.vector_db.backup_manager import HASH_SUFFIX, backup_chromadb, rotate_backups
 
 
 @pytest.fixture
@@ -58,7 +58,7 @@ def test_rotate_backups_removes_archives_and_hashes(mock_backup_dir):
 
 def test_backup_proceeds_even_on_timeout(mock_vector_db_dir, mock_backup_dir, monkeypatch):
     # The new logic waits for stability, but proceeds anyway with a warning if it times out.
-    from src.utils import backup_manager
+    from src.vector_db import backup_manager
 
     # Make _get_db_mtime always return a new time to simulate constant changes
     def mock_get_db_mtime(*args, **kwargs):

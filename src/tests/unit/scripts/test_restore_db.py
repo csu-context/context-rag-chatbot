@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 import pytest
 
-from src.utils.backup_manager import _generate_hash_sidecar, diagnose_db, restore_chromadb
+from src.vector_db.backup_manager import _generate_hash_sidecar, diagnose_db, restore_chromadb
 
 
 @pytest.fixture
