@@ -1,6 +1,5 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-import pytest
 import streamlit as st
 
 from src.ui.session import init_session_state
