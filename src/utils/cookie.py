@@ -21,9 +21,10 @@ def get_cookie_session_id() -> str | None:
 
 
 def set_cookie_session_id(session_id: str) -> None:
-    """Streamlit HTML/JS 컴포넌트 주입을 통해 브라우저 쿠키에 고유 세션 ID를 생성/갱신합니다.
+    """Streamlit 공식 st.html(unsafe_allow_javascript=True) API를 사용하여 브라우저 쿠키에 고유 세션 ID를 기록합니다.
 
-    브라우저의 iframe 타사 쿠키 제약 정책을 우회하기 위해 parent window 및 직접 주입 방식을 결합해 적용합니다.
+    st.components.v1.html은 1.56.0부터 공식적으로 deprecated 지정되었으므로, iframe 격리 없이
+    메인 페이지 DOM에 직접 스크립트를 주입하여 쿠키를 설정할 수 있도록 st.html 방식으로 리팩토링하여 적용합니다.
     """
     try:
         cookie_value = f"{COOKIE_NAME}={session_id}; path=/; max-age={COOKIE_MAX_AGE_SEC}; SameSite={COOKIE_SAME_SITE}"
@@ -32,15 +33,14 @@ def set_cookie_session_id(session_id: str) -> None:
         <script>
         (function() {{
             try {{
-                if (window.parent && window.parent.document) {{
-                    window.parent.document.cookie = "{cookie_value}";
-                }}
+                // st.html은 iframe 외부 메인 문서에 직접 삽입되어 parent window 없이
+                // document.cookie에 직접 기록이 가능합니다.
+                document.cookie = "{cookie_value}";
             }} catch (e) {{}}
-            document.cookie = "{cookie_value}";
         }})();
         </script>
         """
-        st.components.v1.html(js_script, height=0)
-        logger.debug("브라우저 쿠키에 세션 ID 설정 완료")
+        st.html(js_script, unsafe_allow_javascript=True)
+        logger.debug("브라우저 쿠키에 세션 ID 설정 완료 (st.html 적용)")
     except Exception as e:
         logger.warning(f"쿠키 저장 주입 실패: {e}")

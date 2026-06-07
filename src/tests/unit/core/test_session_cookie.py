@@ -26,13 +26,14 @@ class TestSessionCookie:
             assert get_cookie_session_id() is None
 
     def test_set_cookie_session_id(self):
-        """set_cookie_session_id 호출 시 st.components.v1.html이 올바른 JS 주입을 실행하는지 검증"""
-        with patch("streamlit.components.v1.html") as mock_html:
+        """set_cookie_session_id 호출 시 st.html이 올바른 JS 주입을 실행하는지 검증"""
+        with patch("streamlit.html") as mock_html:
             set_cookie_session_id("new-uuid-5678")
             mock_html.assert_called_once()
-            args, _ = mock_html.call_args
+            args, kwargs = mock_html.call_args
             assert "st_session_id=new-uuid-5678" in args[0]
-            assert "window.parent.document.cookie" in args[0]
+            assert "document.cookie" in args[0]
+            assert kwargs.get("unsafe_allow_javascript") is True
 
     def test_init_session_state_uuid(self):
         """init_session_state 실행 시 session_uuid가 없는 경우 새로 생성하는지 검증"""
