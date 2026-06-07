@@ -1,5 +1,6 @@
 import os
 import sys
+import uuid
 
 # macOS/Windows 전용 segfault 방지 — Linux 운영서버에는 적용 안 함
 # Linux에서 스레드 수 1 고정 시 CPU Starvation/OOM 유발 가능
@@ -142,6 +143,9 @@ if settings.REDIS_URL and "redis_session_loaded" not in st.session_state:
     # 2. 식별 불가능한 경우 새로 발급한 session_uuid 사용 및 브라우저 쿠키 동기화
     if not _session_id:
         _session_id = st.session_state.get("session_uuid")
+        if not _session_id:  # 방어 가드
+            _session_id = str(uuid.uuid4())
+            st.session_state.session_uuid = _session_id
         set_cookie_session_id(str(_session_id))
     else:
         # 기존 세션 ID가 확인되었으므로, 현재 session_state 변수에도 덮어쓰기하여 일관성 유지
