@@ -35,14 +35,20 @@ class ContextBuilderNode:
         """문서 내 프롬프트 인젝션 유발 패턴을 이스케이프합니다."""
         return _INJECTION_PATTERN.sub(lambda m: f"[{m.group(0)}]", text)
 
+    @staticmethod
+    def escape_xml(text: str) -> str:
+        """XML 구조 탈출 방지 — 문서 내 & < > 를 HTML 엔티티로 이스케이프합니다."""
+        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
     @classmethod
     def format_docs(cls, docs: list[Document]) -> str:
-        """프롬프트 주입 방어 XML 샌드박싱 적용 컨텍스트 포맷팅"""
+        """프롬프트 주입 방어 + XML 태그 이스케이핑 적용 컨텍스트 포맷팅"""
         formatted = []
         for i, doc in enumerate(docs, start=1):
             source = doc.metadata.get(MetadataFields.SRC_NAME) or "알 수 없는 파일"
             page = doc.metadata.get(MetadataFields.PG_NUM) or "-"
-            safe_content = cls.escape_injection(doc.page_content)
+            # 인젝션 패턴 -> XML 태그 순으로 이스케이핑하여 샌드박스 탈출 차단
+            safe_content = cls.escape_xml(cls.escape_injection(doc.page_content))
             entry = f'<document index="{i}">\n내용: {safe_content}\n출처: [{source}, p.{page}]\n</document>'
             formatted.append(entry)
         return "\n\n".join(formatted)
