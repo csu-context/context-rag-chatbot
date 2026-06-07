@@ -1,6 +1,5 @@
 import logging
 import os
-import sys
 from pathlib import Path
 
 # 로깅 설정
@@ -9,10 +8,6 @@ logger = logging.getLogger(__name__)
 # 1. BASE_DIR 정의: src/utils/paths.py 기준으로 프로젝트 루트를 가리킴
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
-# [DevOps] 프로젝트 루트를 sys.path에 추가하여 어디서든 src 패키지 임포트 가능하게 설정
-if str(BASE_DIR) not in sys.path:
-    sys.path.append(str(BASE_DIR))
-
 # 2. 주요 디렉토리 상수화 (상대 경로 기반 resolve() 처리)
 DATA_DIR = (BASE_DIR / "data").resolve()
 RAW_DATA_DIR = (DATA_DIR / "raw").resolve()
@@ -20,6 +15,7 @@ PROCESSED_DATA_DIR = (DATA_DIR / "processed").resolve()
 EVAL_DATA_DIR = (DATA_DIR / "eval").resolve()
 
 VECTOR_DB_DIR = (BASE_DIR / "vector_db").resolve()
+BACKUP_DIR = (DATA_DIR / "backups").resolve()
 MODELS_DIR = (BASE_DIR / "models").resolve()
 LOGS_DIR = (BASE_DIR / "logs").resolve()
 EVAL_LOGS_DIR = (LOGS_DIR / "eval").resolve()
@@ -41,6 +37,7 @@ REQUIRED_DIRECTORIES = [
     RAW_DATA_DIR,
     PROCESSED_DATA_DIR,
     VECTOR_DB_DIR,
+    BACKUP_DIR,
     MODELS_DIR,
     LOGS_DIR,
     CACHE_DIR,

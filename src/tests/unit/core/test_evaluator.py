@@ -1,9 +1,15 @@
 from unittest.mock import MagicMock, patch
 
+import pandas as pd
 import pytest
 from ragas import SingleTurnSample
 
-from src.eval.evaluator import InferenceResult, _get_inference_settings, run_rag_inference
+from src.eval.evaluator import (
+    InferenceResult,
+    _average_resources,
+    _get_inference_settings,
+    run_rag_inference,
+)
 
 
 @pytest.fixture
@@ -109,3 +115,32 @@ def test_inference_settings_non_ollama_only_common(monkeypatch):
     assert "temperature" in info
     assert "num_predict" not in info
     assert all(not k.startswith(("num_", "repeat_", "keep_", "think")) for k in info)
+
+
+def test_average_resources_includes_vram_when_present():
+    """vram_mb 열이 있으면 cpu/ram/vram 평균을 모두 집계한다."""
+    df = pd.DataFrame(
+        [
+            {"cpu_percent": 10.0, "ram_mb": 1000.0, "vram_mb": 500.0},
+            {"cpu_percent": 20.0, "ram_mb": 2000.0, "vram_mb": 1500.0},
+        ]
+    )
+
+    avg = _average_resources(df)
+
+    assert avg == {"avg_cpu_percent": 15.0, "avg_ram_mb": 1500.0, "avg_vram_mb": 1000.0}
+
+
+def test_average_resources_omits_vram_when_absent():
+    """GPU 미탑재로 vram_mb 열이 없으면 cpu/ram만 집계하고 vram은 생략한다."""
+    df = pd.DataFrame(
+        [
+            {"cpu_percent": 10.0, "ram_mb": 1000.0},
+            {"cpu_percent": 30.0, "ram_mb": 3000.0},
+        ]
+    )
+
+    avg = _average_resources(df)
+
+    assert avg == {"avg_cpu_percent": 20.0, "avg_ram_mb": 2000.0}
+    assert "avg_vram_mb" not in avg
