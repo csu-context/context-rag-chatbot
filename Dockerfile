@@ -50,17 +50,24 @@ ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
-# 소스 코드 및 관련 디렉토리 구조 생성
-RUN mkdir -p data/raw data/processed vector_db logs
+# 비루트 실행 사용자 생성 (컨테이너 탈출 시 호스트 권한 획득 경로 차단)
+RUN groupadd -r appgroup && useradd -r -g appgroup -u 1000 appuser
 
-# 소스 코드 복사
-COPY src/ /app/src/
-COPY prompts/ /app/prompts/
-COPY config/ /app/config/
+# 소스 코드 및 관련 디렉토리 구조 생성 (appuser 소유)
+RUN mkdir -p data/raw data/processed vector_db logs && \
+    chown -R appuser:appgroup /app
+
+# 소스 코드 복사 (appuser 소유)
+COPY --chown=appuser:appgroup src/ /app/src/
+COPY --chown=appuser:appgroup prompts/ /app/prompts/
+COPY --chown=appuser:appgroup config/ /app/config/
 
 # 포트 설정
 EXPOSE 8501
 EXPOSE 9090
+
+# 비루트 사용자로 전환
+USER appuser
 
 # 컨테이너 실행 명령
 CMD ["streamlit", "run", "src/app.py", "--server.address=0.0.0.0"]
