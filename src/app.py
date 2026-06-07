@@ -165,8 +165,6 @@ if settings.REDIS_URL:
             logger.info(f"Redis에서 세션 복원 ({len(saved_msgs)}개 메시지)")
 
 
-
-
 def reset_doc_dialog():
     st.session_state.dialog_doc_to_show = None
 
