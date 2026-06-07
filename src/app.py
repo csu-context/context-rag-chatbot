@@ -27,7 +27,7 @@ from src.common.constants import MetadataFields
 from src.core.chains import get_rag_chain
 from src.core.retriever import RetrieverFactory
 from src.models.factory import LLMFactory
-from src.ui.copy_button import render_custom_copy_button
+from src.ui.components.copy_button import render_custom_copy_button
 from src.ui.dialogs.admin import show_admin_dialog
 from src.ui.dialogs.chunk_viewer import show_chunks_viewer_dialog
 from src.ui.session import init_session_state
@@ -233,17 +233,18 @@ with st.sidebar:
 
     # 대화 초기화 버튼 클릭 시 동작하는 로직
     if st.button("대화 초기화", type="primary", use_container_width=True, disabled=st.session_state.is_generating):
-        # 로컬 세션의 대화 상태 초기화
         st.session_state.messages = []
         st.session_state.docs = []
         st.session_state.final_docs = []
 
-        # Redis 연결이 활성화되어 있고 현재 세션 ID가 존재하는 경우 원격 DB 데이터 삭제
         if settings.REDIS_URL and hasattr(st.session_state, "_redis_session_id"):
             from src.utils.redis_session import RedisSessionStore
 
             RedisSessionStore.delete_session(st.session_state._redis_session_id)
             logger.info("Redis 대화 세션 정보가 정상적으로 삭제되었습니다.")
+
+        # 상태 변경 직후 즉각적인 화면 리프레시 강제 실행
+        st.rerun()
 
         # 화면 갱신을 통한 상태 동기화
         st.session_state.should_rerun_app = True
