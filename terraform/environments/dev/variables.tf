@@ -21,3 +21,16 @@ variable "key_name" {
   type        = string
   default     = "rag-chatbot-key"
 }
+
+# 방화벽 강화 (#133): 접근 IP 제한
+variable "allowed_cidr_blocks" {
+  description = "앱 UI 접속 허용 CIDR (예: [\"YOUR_IP/32\"]). 비어있으면 외부 접근 불가."
+  type        = list(string)
+  default     = []
+}
+
+variable "allowed_ssh_cidr_blocks" {
+  description = "SSH 허용 CIDR — 운영자 IP만 등록"
+  type        = list(string)
+  default     = []
+}
