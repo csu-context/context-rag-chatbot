@@ -40,7 +40,5 @@ jobs:
           tags: |
             ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY || 'rag-chatbot-app' }}:latest
             ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY || 'rag-chatbot-app' }}:${{ github.sha }}
-          build-args: |
-            DEVICE_TYPE=gpu
           cache-from: type=gha
           cache-to: type=gha,mode=max

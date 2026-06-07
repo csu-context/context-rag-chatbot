@@ -29,7 +29,7 @@ class Settings(BaseSettings):
 
     # 1. LLM 및 모델 설정
     MODEL_TYPE: Literal["gemini", "claude", "ollama"] = Field(default="ollama")
-    MODEL_NAME: str = Field(default="llama3.2:1b")
+    MODEL_NAME: str = Field(default="gemma4:e2b")
     EMBEDDING_MODEL_NAME: str = Field(default="BAAI/bge-m3")
     TEMPERATURE: float = Field(default=0.1)
 
@@ -138,8 +138,8 @@ class Settings(BaseSettings):
 
     # 8. Ollama 추론 제어
     OLLAMA_KEEP_ALIVE: int | str = Field(default=-1)
-    OLLAMA_NUM_PREDICT: int = Field(default=8192)
-    OLLAMA_REPEAT_PENALTY: float = Field(default=1.0)
+    OLLAMA_NUM_PREDICT: int = Field(default=2048)
+    OLLAMA_REPEAT_PENALTY: float = Field(default=1.1)
     OLLAMA_NUM_CTX: int = Field(default=8192)
     OLLAMA_THINK: bool = Field(default=False)
 

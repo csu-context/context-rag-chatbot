@@ -1,9 +1,15 @@
 from unittest.mock import MagicMock, patch
 
+import pandas as pd
 import pytest
 from ragas import SingleTurnSample
 
-from src.eval.evaluator import InferenceResult, run_rag_inference
+from src.eval.evaluator import (
+    InferenceResult,
+    _average_resources,
+    _get_inference_settings,
+    run_rag_inference,
+)
 
 
 @pytest.fixture
@@ -84,3 +90,57 @@ async def test_run_rag_inference_error_handling(
     result = await run_rag_inference(test_data)
 
     assert len(result.samples) == 0
+
+
+def test_inference_settings_ollama_includes_ollama_params(monkeypatch):
+    """ollama 백엔드면 공통(temperature) + ollama 전용 추론 파라미터를 모두 기록한다."""
+    monkeypatch.setattr("src.eval.evaluator.settings.MODEL_TYPE", "ollama")
+    monkeypatch.setattr("src.eval.evaluator.settings.OLLAMA_NUM_PREDICT", 2048)
+    monkeypatch.setattr("src.eval.evaluator.settings.OLLAMA_REPEAT_PENALTY", 1.1)
+
+    info = _get_inference_settings()
+
+    assert "temperature" in info
+    assert info["num_predict"] == 2048
+    assert info["repeat_penalty"] == 1.1
+    assert {"num_ctx", "keep_alive", "think"} <= info.keys()
+
+
+def test_inference_settings_non_ollama_only_common(monkeypatch):
+    """비-ollama(gemini/claude) 백엔드면 ollama 전용 키 없이 공통 항목만 기록한다."""
+    monkeypatch.setattr("src.eval.evaluator.settings.MODEL_TYPE", "claude")
+
+    info = _get_inference_settings()
+
+    assert "temperature" in info
+    assert "num_predict" not in info
+    assert all(not k.startswith(("num_", "repeat_", "keep_", "think")) for k in info)
+
+
+def test_average_resources_includes_vram_when_present():
+    """vram_mb 열이 있으면 cpu/ram/vram 평균을 모두 집계한다."""
+    df = pd.DataFrame(
+        [
+            {"cpu_percent": 10.0, "ram_mb": 1000.0, "vram_mb": 500.0},
+            {"cpu_percent": 20.0, "ram_mb": 2000.0, "vram_mb": 1500.0},
+        ]
+    )
+
+    avg = _average_resources(df)
+
+    assert avg == {"avg_cpu_percent": 15.0, "avg_ram_mb": 1500.0, "avg_vram_mb": 1000.0}
+
+
+def test_average_resources_omits_vram_when_absent():
+    """GPU 미탑재로 vram_mb 열이 없으면 cpu/ram만 집계하고 vram은 생략한다."""
+    df = pd.DataFrame(
+        [
+            {"cpu_percent": 10.0, "ram_mb": 1000.0},
+            {"cpu_percent": 30.0, "ram_mb": 3000.0},
+        ]
+    )
+
+    avg = _average_resources(df)
+
+    assert avg == {"avg_cpu_percent": 20.0, "avg_ram_mb": 2000.0}
+    assert "avg_vram_mb" not in avg

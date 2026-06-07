@@ -112,6 +112,25 @@ def _get_system_info() -> dict[str, Any]:
     return info
 
 
+def _get_inference_settings() -> dict[str, Any]:
+    """생성 LLM의 추론(생성) 파라미터를 기록용으로 수집한다.
+
+    지표가 어떤 설정으로 산출됐는지 요약(eval_summary)만으로 역추적하기 위함이다.
+    ollama 백엔드일 때만 ollama 전용 파라미터를 포함하고, 그 외(gemini/claude)는
+    공통 항목(temperature)만 기록해 의미 없는 키가 끼지 않게 한다.
+    """
+    info: dict[str, Any] = {"temperature": settings.TEMPERATURE}
+    if settings.MODEL_TYPE == "ollama":
+        info |= {
+            "num_predict": settings.OLLAMA_NUM_PREDICT,
+            "num_ctx": settings.OLLAMA_NUM_CTX,
+            "repeat_penalty": settings.OLLAMA_REPEAT_PENALTY,
+            "keep_alive": settings.OLLAMA_KEEP_ALIVE,
+            "think": settings.OLLAMA_THINK,
+        }
+    return info
+
+
 def _get_indexed_documents() -> list[str]:
     try:
         paths = sorted([f for f in PROCESSED_DATA_DIR.glob("*.json") if f.name != "manifest.json"])
@@ -152,6 +171,19 @@ def _get_resource_snapshot() -> dict[str, float]:
     if vram is not None:
         snapshot["vram_mb"] = vram
     return snapshot
+
+
+def _average_resources(df: pd.DataFrame) -> dict[str, float]:
+    """샘플별 자원 스냅샷(cpu/ram/vram)에서 평균을 집계한다.
+
+    GPU 미탑재 등으로 수집되지 않은 항목(예: vram_mb 열 부재)은 건너뛴다.
+    """
+    columns = {"cpu_percent": "avg_cpu_percent", "ram_mb": "avg_ram_mb", "vram_mb": "avg_vram_mb"}
+    averages: dict[str, float] = {}
+    for col, out_key in columns.items():
+        if col in df.columns and not df[col].isna().all():
+            averages[out_key] = round(float(df[col].mean()), 1)
+    return averages
 
 
 async def run_rag_inference(test_data: list[dict[str, Any]]) -> InferenceResult:
@@ -243,6 +275,7 @@ async def _score_and_save(result: InferenceResult, missing_docs: list[str] | Non
         model=settings.EVAL_JUDGE_MODEL,
         provider="anthropic",
         temperature=0,
+        max_tokens=8192,
     )
     ragas_llm.model_args.pop("top_p", None)
     ragas_embeddings = RagasHFEmbeddings(model=settings.EMBEDDING_MODEL_NAME)
@@ -255,7 +288,7 @@ async def _score_and_save(result: InferenceResult, missing_docs: list[str] | Non
     ]
 
     sem = asyncio.Semaphore(settings.EVAL_MAX_WORKERS)
-    metric_params = {m: set(inspect.signature(m.ascore).parameters) for m in metrics}
+    metric_params = {m.name: set(inspect.signature(m.ascore).parameters) for m in metrics}
 
     async def _ascore(metric: Any, sample: SingleTurnSample) -> float:
         all_kwargs = {
@@ -264,7 +297,7 @@ async def _score_and_save(result: InferenceResult, missing_docs: list[str] | Non
             "retrieved_contexts": sample.retrieved_contexts or [],
             "reference": sample.reference or "",
         }
-        kwargs = {k: v for k, v in all_kwargs.items() if k in metric_params[metric]}
+        kwargs = {k: v for k, v in all_kwargs.items() if k in metric_params[metric.name]}
         async with sem:
             result_obj = await metric.ascore(**kwargs)
         return float(result_obj.value)
@@ -321,6 +354,7 @@ async def _score_and_save(result: InferenceResult, missing_docs: list[str] | Non
             "reranker": (
                 f"{settings.RERANKER_TYPE}/{settings.RERANKER_MODEL_NAME} (top_k={settings.RERANKER_MAX_DOCS})"
             ),
+            "inference": _get_inference_settings(),
         },
         "judge": {
             "llm": f"{settings.EVAL_JUDGE_TYPE}/{settings.EVAL_JUDGE_MODEL}",
@@ -330,6 +364,7 @@ async def _score_and_save(result: InferenceResult, missing_docs: list[str] | Non
         "results": {
             **avg_scores,
             "avg_latency_sec": avg_latency,
+            **_average_resources(df),
             "total_samples": len(df),
         },
         "system": _get_system_info(),
