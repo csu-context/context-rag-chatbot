@@ -265,6 +265,15 @@ with st.sidebar:
     # 4. 기타 설정
     st.toggle("상세 추론 과정 보기", key="show_expert_mode", disabled=st.session_state.is_generating)
 
+    # 시맨틱 캐시 런타임 토글: 전역 settings에 즉시 반영해 재기동 없이 on/off (#157).
+    # settings는 프로세스 전역 단일 객체 — 내부 관리자 운영 도구 전제이므로 세션 간 공유를 수용한다.
+    settings.SEMANTIC_CACHE_ENABLED = st.toggle(
+        "시맨틱 캐시 활성화",
+        value=settings.SEMANTIC_CACHE_ENABLED,
+        disabled=st.session_state.is_generating,
+        help="질의 유사도 기반 캐시. 미세한 질의 차이를 못 가르는 오탐 위험이 있어 기본 비활성입니다.",
+    )
+
     # API 토큰 사용량 및 실시간 과금 추적
     session_tokens = st.session_state.get("session_tokens", {"input": 0, "output": 0, "cost_usd": 0.0})
     if session_tokens["input"] > 0 or session_tokens["output"] > 0:

@@ -44,9 +44,25 @@ class PipelineOrchestrator:
             self.ingestion_pipeline = IngestionPipeline(self.strategy, storage_manager=self.storage_manager)
             self.manifest_manager = ManifestManager(self.parser_type)
             self.tracing_logger = TracingLogger()
-            self.cache = SemanticCache()
+            # 시맨틱 캐시는 런타임 토글을 위해 lazy 생성한다(_get_cache). 오케스트레이터도 싱글톤이라
+            # 생성자에서 굳히면 재기동해야 반영된다. 기본 OFF면 미생성(idle 0). (#157)
+            self._cache = None
+            self._cache_lock = threading.Lock()
             self._initialized = True
             logger.info("PipelineOrchestrator 초기화 완료.")
+
+    def _get_cache(self) -> SemanticCache | None:
+        """런타임 시점에 전역 토글을 확인해 캐시를 반환한다(켜진 경우에만 최초 1회 lazy 생성 후 메모이즈).
+
+        켜진 상태로 색인이 일어나면 stale 캐시를 flush해야 하므로 이 접근자를 거쳐 캐시를 확보한다.
+        """
+        if not settings.SEMANTIC_CACHE_ENABLED:
+            return None
+        if self._cache is None:
+            with self._cache_lock:
+                if self._cache is None:  # 동시 최초 진입 시 이중 생성 방지
+                    self._cache = SemanticCache()
+        return self._cache
 
     def _get_parser_strategy(self) -> ParserStrategy:
         """설정된 파서 타입에 따라 전략을 반환하며 가용성을 검증합니다."""
@@ -133,10 +149,11 @@ class PipelineOrchestrator:
     ):
         has_changes = bool(files_to_process or source_ids_to_delete or relative_paths_to_delete)
 
-        if has_changes:
+        cache = self._get_cache()
+        if has_changes and cache:
             with session.trace_step("cache_flush"):
                 logger.info("데이터 변경이 감지되어 시맨틱 캐시를 초기화합니다.")
-                self.cache.flush()
+                cache.flush()
 
         if source_ids_to_delete or relative_paths_to_delete:
             self._cleanup_db(session, source_ids_to_delete, relative_paths_to_delete)
