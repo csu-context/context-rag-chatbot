@@ -113,6 +113,9 @@ class RAGPipeline:
                             metadata={
                                 **res.get("metadata", {}),
                                 "score": res.get("score") or res.get("_rrf_score", 0),
+                                "vector_score": res.get("score"),
+                                "bm25_score": res.get("_bm25_score"),
+                                "rrf_score": res.get("_rrf_score"),
                             },
                         )
                     )
@@ -121,7 +124,7 @@ class RAGPipeline:
         # 기존 ChromaDBManager 호환성 유지
         search_results = self.retriever_or_db.search(query_text=query, k=k)
         docs = [
-            Document(page_content=res["content"], metadata={**res["metadata"], "score": res["score"]})
+            Document(page_content=res["content"], metadata={**res["metadata"], "score": res["score"], "vector_score": res["score"]})
             for res in search_results
         ]
         return self._resolve_parent_documents(docs)
@@ -161,10 +164,19 @@ class RAGPipeline:
                     # 리랭커 타임아웃/오류: 초벌 검색 점수 기준 비상 임계값 필터링 수행 (대안 A)
                     logger.warning("리랭커가 건너뛰어졌습니다. 초벌 검색 점수 기준으로 비상 필터링을 적용합니다.")
                     for d in raw_docs:
-                        s = d.metadata.get("score", 0.0)
-                        if s >= settings.RETRIEVER_FALLBACK_THRESHOLD:
+                        v_score = d.metadata.get("vector_score")
+                        if v_score is None and "rrf_score" not in d.metadata:
+                            v_score = d.metadata.get("score")
+
+                        if v_score is not None:
+                            # 벡터 유사도 또는 단일 점수가 존재하는 경우 기준 필터링 수행
+                            if v_score >= settings.RETRIEVER_FALLBACK_THRESHOLD:
+                                final_docs.append(d)
+                                scores.append(v_score)
+                        else:
+                            # rrf_score는 있지만 vector_score는 없는 경우 (BM25 단독 매칭 등) 일단 통과시킴
                             final_docs.append(d)
-                            scores.append(s)
+                            scores.append(d.metadata.get("score", 0.0))
                 else:
                     # 리랭커 정상 실행: 리랭커 점수 기반 필터링 가드레일 적용
                     for d, s in zip(raw_docs, raw_scores, strict=True):
@@ -384,8 +396,7 @@ class RAGPipeline:
                 self.cache.add(query, full_answer, docs_for_cache)
 
             # 리랭커가 스킵되었더라도 비상 필터를 통과한 문서가 있다면 출처에 표기함
-            verified_docs = final_docs
-            yield {"stage": "citation", "status": "complete", "output": citations_str, "source_documents": verified_docs}
+            yield {"stage": "citation", "status": "complete", "output": citations_str, "source_documents": final_docs}
 
 
 def get_rag_chain(retriever_or_db, llm: Any = None, use_cache: bool = True):
