@@ -79,7 +79,10 @@ class TestRAGHallucinationGuard:
             pipeline = RAGPipeline(mock_retriever, llm=MagicMock(), reranker=mock_reranker)
 
             doc_high = Document(page_content="초벌 검색 점수 높은 문서", metadata={"chunk_id": "doc_1", "score": 0.25})
-            doc_low = Document(page_content="초벌 검색 점수 아주 낮은 무관 문서", metadata={"chunk_id": "doc_2", "score": 0.05})
+            doc_low = Document(
+                page_content="초벌 검색 점수 아주 낮은 무관 문서",
+                metadata={"chunk_id": "doc_2", "score": 0.05}
+            )
 
             mock_result = MagicMock()
             mock_result.documents = [doc_high, doc_low]

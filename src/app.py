@@ -298,7 +298,10 @@ with st.sidebar:
         "리랭커 타임아웃 활성화",
         value=settings.RERANKER_TIMEOUT_ENABLED,
         disabled=st.session_state.is_generating,
-        help="리랭커 추론 시간제한(기본 5초) 적용 여부를 설정합니다. 비활성화 시 타임아웃 없이 모델 연산 완료를 무기한 대기합니다.",
+        help=(
+            "리랭커 추론 시간제한(기본 5초) 적용 여부를 설정합니다. "
+            "비활성화 시 타임아웃 없이 모델 연산 완료를 무기한 대기합니다."
+        ),
     )
 
     # API 토큰 사용량 및 실시간 과금 추적

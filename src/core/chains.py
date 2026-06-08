@@ -138,10 +138,14 @@ class RAGPipeline:
 
         # 기존 ChromaDBManager 호환성 유지
         search_results = self.retriever_or_db.search(query_text=query, k=k)
-        docs = [
-            Document(page_content=res["content"], metadata={**res["metadata"], "score": res["score"], "vector_score": res["score"]})
-            for res in search_results
-        ]
+        docs = []
+        for res in search_results:
+            meta = {
+                **res["metadata"],
+                "score": res["score"],
+                "vector_score": res["score"]
+            }
+            docs.append(Document(page_content=res["content"], metadata=meta))
         return self._resolve_parent_documents(docs)
 
     def _do_retrieval(self, query: str, k: int, session: Any) -> list[Document]:
@@ -154,6 +158,34 @@ class RAGPipeline:
                 }
             )
             return docs
+
+    def _fallback_filter(self, query: str, raw_docs: list[Document]) -> tuple[list[Document], list[float]]:
+        """리랭커 스킵 시 초벌 검색 점수 및 BM25 토큰 오버랩 기준으로 문서를 필터링합니다."""
+        final_docs = []
+        scores = []
+        for d in raw_docs:
+            v_score = d.metadata.get("vector_score")
+            if v_score is None and "rrf_score" not in d.metadata:
+                v_score = d.metadata.get("score")
+
+            if v_score is not None:
+                if v_score >= settings.RETRIEVER_FALLBACK_THRESHOLD:
+                    final_docs.append(d)
+                    scores.append(v_score)
+            else:
+                from src.vector_db.bm25_tokenizer import BM25Tokenizer
+                tokenizer = BM25Tokenizer()
+                q_tokens = tokenizer.tokenize(query)
+                if q_tokens:
+                    content_lower = d.page_content.lower()
+                    matched = sum(1 for t in q_tokens if t.lower() in content_lower)
+                    if (matched / len(q_tokens)) >= 0.5:
+                        final_docs.append(d)
+                        scores.append(d.metadata.get("score", 0.0))
+                else:
+                    final_docs.append(d)
+                    scores.append(d.metadata.get("score", 0.0))
+        return final_docs, scores
 
     def _do_reranking(
         self, query: str, docs: list[Document], final_k: int, session: Any
@@ -171,40 +203,13 @@ class RAGPipeline:
                 rerank_result = self.reranker.rerank_with_timeout(query, docs, top_k=final_k)
                 raw_docs = rerank_result.documents
                 raw_scores = rerank_result.scores
-                skipped = rerank_result.reranker_skipped
-
                 final_docs = []
                 scores = []
-                if skipped:
-                    # 리랭커 타임아웃/오류: 초벌 검색 점수 기준 비상 임계값 필터링 수행 (대안 A)
-                    logger.warning("리랭커가 건너뛰어졌습니다. 초벌 검색 점수 기준으로 비상 필터링을 적용합니다.")
-                    for d in raw_docs:
-                        v_score = d.metadata.get("vector_score")
-                        if v_score is None and "rrf_score" not in d.metadata:
-                            v_score = d.metadata.get("score")
+                skipped = rerank_result.reranker_skipped
 
-                        if v_score is not None:
-                            # 벡터 유사도 또는 단일 점수가 존재하는 경우 기준 필터링 수행
-                            if v_score >= settings.RETRIEVER_FALLBACK_THRESHOLD:
-                                final_docs.append(d)
-                                scores.append(v_score)
-                        else:
-                            # rrf_score는 있지만 vector_score는 없는 경우 (BM25 단독 매칭 등)
-                            # 쿼리 토큰 중 실제 문서에 매칭된 비율을 계산하여 오매칭(주로 stopword/common word 단독 매칭)을 필터링합니다.
-                            # 문자가 매우 짧거나 핵심 키워드가 확실히 포함된 경우만 통과시킵니다.
-                            from src.vector_db.bm25_tokenizer import BM25Tokenizer
-                            tokenizer = BM25Tokenizer()
-                            q_tokens = tokenizer.tokenize(query)
-                            if q_tokens:
-                                content_lower = d.page_content.lower()
-                                matched_count = sum(1 for t in q_tokens if t.lower() in content_lower)
-                                overlap_ratio = matched_count / len(q_tokens)
-                                if overlap_ratio >= 0.5:
-                                    final_docs.append(d)
-                                    scores.append(d.metadata.get("score", 0.0))
-                            else:
-                                final_docs.append(d)
-                                scores.append(d.metadata.get("score", 0.0))
+                if skipped:
+                    logger.warning("리랭커가 건너뛰어졌습니다. 초벌 검색 점수 기준으로 비상 필터링을 적용합니다.")
+                    final_docs, scores = self._fallback_filter(query, raw_docs)
                 else:
                     # 리랭커 정상 실행: 리랭커 점수 기반 필터링 가드레일 적용
                     for d, s in zip(raw_docs, raw_scores, strict=True):

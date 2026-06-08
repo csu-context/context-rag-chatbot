@@ -35,8 +35,7 @@ def test_base_reranker_timeout_disabled():
 
     with patch("src.core.reranker.settings") as mock_settings:
         mock_settings.RERANKER_TIMEOUT_ENABLED = False
-        mock_settings.RERANKER_TIMEOUT_SEC = 5.0
-        
+
         mock_future = MagicMock()
         with patch("src.core.reranker._rerank_executor.submit", return_value=mock_future):
             reranker.rerank_with_timeout("query", docs)
