@@ -192,8 +192,8 @@ class RAGPipeline:
                 role = msg.get("role")
                 content = msg.get("content", "")
                 if role == "user":
-                    # 멀티턴 대화 기록 내 프롬프트 인젝션 방어
-                    messages.append(("human", ContextBuilderNode.escape_injection(content)))
+                    # 멀티턴 대화 기록 내 프롬프트 인젝션 + XML 구조 탈출 방어
+                    messages.append(("human", ContextBuilderNode.sanitize(content)))
                 elif role == "assistant":
                     messages.append(("ai", content))
 
