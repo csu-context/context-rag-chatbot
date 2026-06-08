@@ -29,6 +29,19 @@ def test_base_reranker_fallback():
     assert res.scores == [0.0, 0.0]
 
 
+def test_base_reranker_timeout_disabled():
+    reranker = DummyReranker(name="dummy", top_k=2)
+    docs = [Document(page_content="doc1")]
+
+    with patch("src.core.reranker.settings") as mock_settings:
+        mock_settings.RERANKER_TIMEOUT_ENABLED = False
+
+        mock_future = MagicMock()
+        with patch("src.core.reranker._rerank_executor.submit", return_value=mock_future):
+            reranker.rerank_with_timeout("query", docs)
+            mock_future.result.assert_called_once_with(timeout=None)
+
+
 def test_cross_encoder_reranker_singleton():
     CrossEncoderReranker.reset_instance()
     inst1 = CrossEncoderReranker.get_instance(model_name="test-model", top_k=3, threshold=0.1)
