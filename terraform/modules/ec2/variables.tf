@@ -26,11 +26,11 @@ variable "key_name" {
   default     = null
 }
 
-# 방화벽 강화 (#133): 접근 허용 IP 대역 (0.0.0.0/0 전체 개방 금지)
+# 방화벽 강화 (#133): SSH·백엔드는 IP/VPC로 제한, UI(8501)만 시연 편의로 기본 개방(프로덕션은 tfvars로 제한)
 variable "allowed_cidr_blocks" {
-  description = "Streamlit UI 접속 허용 CIDR 대역 (예: [\"1.2.3.0/24\"]). 비어있으면 외부 접근 불가."
+  description = "Streamlit UI(8501) 접속 허용 CIDR 대역. 시연 편의를 위해 기본값은 전체 허용이며, 프로덕션 배포 시 tfvars로 제한할 것. (UI 인증 게이트 도입 전까지의 임시 기본값)"
   type        = list(string)
-  default     = []
+  default     = ["0.0.0.0/0"]
 }
 
 variable "allowed_ssh_cidr_blocks" {

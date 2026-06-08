@@ -22,11 +22,11 @@ variable "key_name" {
   default     = "rag-chatbot-key"
 }
 
-# 방화벽 강화 (#133): 접근 IP 제한
+# 방화벽 강화 (#133): SSH는 운영자 IP로 제한, UI(8501)는 시연 위해 기본 개방
 variable "allowed_cidr_blocks" {
-  description = "앱 UI 접속 허용 CIDR (예: [\"YOUR_IP/32\"]). 비어있으면 외부 접근 불가."
+  description = "앱 UI(8501) 접속 허용 CIDR. 시연 편의로 기본값은 전체 허용, 프로덕션 배포 시 tfvars로 제한."
   type        = list(string)
-  default     = []
+  default     = ["0.0.0.0/0"]
 }
 
 variable "allowed_ssh_cidr_blocks" {
