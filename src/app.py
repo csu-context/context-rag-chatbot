@@ -130,6 +130,18 @@ ensure_directories()
 # --- 2. 세션 상태 초기화 (중앙 이관 호출) ---
 init_session_state()
 
+# 앱 전체 인증 게이트 — APP_PASSWORD 설정 시에만 활성 (미설정이면 게이트 없음) (#133)
+if settings.APP_PASSWORD and not st.session_state.get("app_authenticated"):
+    st.title("RAG 챗봇 접속 인증")
+    pw = st.text_input("접속 비밀번호", type="password", key="app_pw")
+    if st.button("로그인"):
+        if pw == settings.APP_PASSWORD:
+            st.session_state.app_authenticated = True
+            st.rerun()
+        else:
+            st.error("비밀번호가 올바르지 않습니다.")
+    st.stop()
+
 # Redis 세션 복원 — REDIS_URL 설정 시 이전 대화 기록 복구
 # 로드밸런서로 다른 인스턴스로 라우팅되어도 대화 연속성 유지
 if settings.REDIS_URL:

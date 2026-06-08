@@ -140,6 +140,11 @@ class Settings(BaseSettings):
     SEMANTIC_CACHE_ENABLED: bool = Field(default=False)
     SEMANTIC_CACHE_COLLECTION_NAME: str = Field(default="semantic_cache")
     SEMANTIC_CACHE_THRESHOLD: float = Field(default=0.95)
+
+    # 8. 접근 인증 (#133) — 값 설정 시에만 게이트 활성, 미설정이면 게이트 없음
+    APP_PASSWORD: str | None = Field(default=None)
+    ADMIN_PASSWORD: str | None = Field(default=None)
+
     MAX_CHAT_HISTORY_TURNS: int = Field(default=5)
 
     # 8. Ollama 추론 제어

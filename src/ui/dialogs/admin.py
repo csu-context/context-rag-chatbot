@@ -63,6 +63,18 @@ def _render_sync_progress(initialize_rag_system_callback):
 
 @st.dialog("데이터 관리 시스템", width="large", on_dismiss=reset_admin_active)
 def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
+    # 관리자 인증 — ADMIN_PASSWORD 설정 시에만 요구 (미설정이면 인증 없음) (#133)
+    if settings.ADMIN_PASSWORD and not st.session_state.get("admin_authenticated"):
+        st.subheader("관리자 인증")
+        pw = st.text_input("관리자 비밀번호", type="password", key="admin_pw_input")
+        if st.button("확인", key="admin_pw_confirm"):
+            if pw == settings.ADMIN_PASSWORD:
+                st.session_state.admin_authenticated = True
+                st.rerun()
+            else:
+                st.error("비밀번호가 틀렸습니다.")
+        return
+
     # 백그라운드 동기화 실행 중이면 진행률 표시
     current_job = st.session_state.get("_current_sync_job")
     if current_job and current_job.running:
