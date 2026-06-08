@@ -1,20 +1,42 @@
+# 방화벽 강화 (#133): SSH/UI의 0.0.0.0/0 전체 개방 제거, 백엔드 포트는 VPC 내부로 격리
 resource "aws_security_group" "app_sg" {
   name        = "${var.project_name}-app-sg"
-  description = "Allow inbound traffic for RAG Chatbot"
+  description = "Allow inbound traffic for RAG Chatbot (restricted)"
   vpc_id      = var.vpc_id
 
+  # SSH: 운영팀 IP 대역만 허용 (기본값 빈 목록이면 외부 접근 불가)
   ingress {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"] # 보안을 위해 실제 환경에서는 특정 IP로 제한 필요
+    cidr_blocks = var.allowed_ssh_cidr_blocks
+    description = "SSH from approved admin IPs only"
   }
 
+  # Streamlit UI: 허용된 사용자 IP 대역만 접근
   ingress {
     from_port   = 8501
     to_port     = 8501
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"] # 실제 운영 환경에서는 접속 허용 IP 대역 제한 권장
+    cidr_blocks = var.allowed_cidr_blocks
+    description = "Streamlit UI from approved IPs only"
+  }
+
+  # 백엔드 포트(ChromaDB 8000, Ollama 11434)는 VPC 내부 통신만 허용
+  ingress {
+    from_port   = 8000
+    to_port     = 8000
+    protocol    = "tcp"
+    cidr_blocks = [var.vpc_cidr]
+    description = "ChromaDB - VPC internal only"
+  }
+
+  ingress {
+    from_port   = 11434
+    to_port     = 11434
+    protocol    = "tcp"
+    cidr_blocks = [var.vpc_cidr]
+    description = "Ollama LLM - VPC internal only"
   }
 
   egress {
@@ -22,6 +44,7 @@ resource "aws_security_group" "app_sg" {
     to_port     = 0
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
+    description = "Allow all outbound"
   }
 
   tags = {
