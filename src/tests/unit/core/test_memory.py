@@ -25,6 +25,7 @@ class TestRAGPipelineMemory:
         with (
             patch("src.core.chains.SemanticCache") as mock_cache_class,
             patch("src.core.chains.TracingLogger") as mock_logger_class,
+            patch("src.core.chains.settings.SEMANTIC_CACHE_ENABLED", True),
         ):
             mock_cache_class.return_value = MagicMock()
             mock_logger_class.return_value = MagicMock()
@@ -71,7 +72,7 @@ class TestRAGPipelineMemory:
     def test_semantic_cache_with_history(self, pipeline, mock_retriever, mock_llm, mock_reranker):
         """대화 이력이 존재할 때도 캐시를 정상적으로 조회 및 저장하는지 검증"""
         # pipeline 피스처 내부에 모킹된 캐시 가져오기
-        mock_cache = pipeline.cache
+        mock_cache = pipeline._get_cache()
         mock_cache.get.return_value = None
 
         history = [{"role": "user", "content": "질문"}]

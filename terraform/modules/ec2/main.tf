@@ -39,6 +39,13 @@ data "aws_ami" "ubuntu_gpu" {
   }
 }
 
+# 모델명 Single Source of Truth: 레포 .env.example의 MODEL_NAME을 읽어 배포 user_data에 주입한다.
+# 하드코딩을 없애 .env.example 한 곳만 바꾸면 EC2 배포까지 동기화된다. 파일/항목이 없으면 앱 기본값으로 폴백. (#181)
+locals {
+  env_example_path = "${path.module}/../../../.env.example"
+  model_name       = try(trimspace(regex("(?m)^MODEL_NAME=(.*)$", file(local.env_example_path))[0]), "gemma4:e2b")
+}
+
 resource "aws_instance" "app" {
   ami                  = data.aws_ami.ubuntu_gpu.id
   instance_type        = var.instance_type
@@ -108,7 +115,7 @@ git checkout feature/issue-89-local-infra || echo "Branch not found, using defau
 echo "Creating .env file..."
 cat <<EOT > .env
 MODEL_TYPE=ollama
-MODEL_NAME=llama3.2:1b
+MODEL_NAME=${local.model_name}
 EMBEDDING_MODEL_NAME=BAAI/bge-m3
 OLLAMA_BASE_URL=http://ollama:11434
 CHROMA_SERVER_HOST=chromadb

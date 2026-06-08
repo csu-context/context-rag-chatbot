@@ -55,7 +55,22 @@ class RAGPipeline:
         self.llm = llm or LLMFactory.create_llm_with_fallback()
         self.reranker = reranker or RerankerFactory.create()
         self.tracing_logger = TracingLogger()
-        self.cache = SemanticCache() if use_cache else None
+        # 시맨틱 캐시는 런타임 토글을 위해 lazy 생성한다: @st.cache_resource로 파이프라인이 싱글톤 공유되므로
+        # 생성자 시점에 플래그를 굳히면 재기동해야 반영된다. 대신 _get_cache()가 호출 시점에 판별한다.
+        # 기본 OFF면 객체조차 만들지 않아 idle 비용이 0이고, use_cache=False(평가)는 영구 비활성. (#157)
+        self._use_cache = use_cache
+        self._cache: SemanticCache | None = None
+        self._cache_lock = threading.Lock()
+
+    def _get_cache(self) -> SemanticCache | None:
+        """런타임 시점에 전역 토글을 확인해 캐시를 반환한다(켜진 경우에만 최초 1회 lazy 생성 후 메모이즈)."""
+        if not (self._use_cache and settings.SEMANTIC_CACHE_ENABLED):
+            return None
+        if self._cache is None:
+            with self._cache_lock:
+                if self._cache is None:  # 동시 최초 진입 시 이중 생성 방지
+                    self._cache = SemanticCache()
+        return self._cache
 
     def _resolve_parent_documents(self, docs: list[Document]) -> list[Document]:
         """자식 청크로 검색된 문서들을 부모 청크의 원문으로 전환하며, 동일 부모 및 동일 텍스트 중복을 제거합니다."""
@@ -339,9 +354,10 @@ class RAGPipeline:
         history = input_dict.get("history", [])
 
         with self.tracing_logger.start_session(query=query) as session:
-            # 1. Semantic Cache Check
+            # 1. Semantic Cache Check — 런타임 토글을 한 번 평가해 조회/적재에 일관되게 쓴다. (#157)
+            cache = self._get_cache()
             yield {"stage": "cache", "status": "running"}
-            cached_result = self.cache.get(query) if self.cache else None
+            cached_result = cache.get(query) if cache else None
             if cached_result:
                 session.data["cache_hit"] = True
                 yield {"stage": "cache", "status": "hit"}
@@ -391,9 +407,8 @@ class RAGPipeline:
                 }
                 for doc in final_docs
             ]
-
-            if self.cache and not reranker_skipped:
-                self.cache.add(query, full_answer, docs_for_cache)
+            if cache and not reranker_skipped:
+                cache.add(query, full_answer, docs_for_cache)
 
             # 리랭커가 스킵되었더라도 비상 필터를 통과한 문서가 있다면 출처에 표기함
             yield {"stage": "citation", "status": "complete", "output": citations_str, "source_documents": final_docs}
