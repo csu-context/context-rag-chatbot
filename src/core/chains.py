@@ -158,6 +158,11 @@ class RAGPipeline:
         """리랭커 스킵 시 초벌 검색 점수 및 BM25 토큰 오버랩 기준으로 문서를 필터링합니다."""
         final_docs = []
         scores = []
+        from src.vector_db.bm25_tokenizer import BM25Tokenizer
+
+        tokenizer = BM25Tokenizer()
+        q_tokens = tokenizer.tokenize(query)
+
         for d in raw_docs:
             v_score = d.metadata.get("vector_score")
             if v_score is None and "rrf_score" not in d.metadata:
@@ -168,10 +173,6 @@ class RAGPipeline:
                     final_docs.append(d)
                     scores.append(v_score)
             else:
-                from src.vector_db.bm25_tokenizer import BM25Tokenizer
-
-                tokenizer = BM25Tokenizer()
-                q_tokens = tokenizer.tokenize(query)
                 if q_tokens:
                     content_lower = d.page_content.lower()
                     matched = sum(1 for t in q_tokens if t.lower() in content_lower)
@@ -207,9 +208,10 @@ class RAGPipeline:
                     logger.warning("리랭커가 건너뛰어졌습니다. 초벌 검색 점수 기준으로 비상 필터링을 적용합니다.")
                     final_docs, scores = self._fallback_filter(query, raw_docs)
                 else:
-                    # 리랭커 정상 실행: 리랭커 점수 기반 필터링 가드레일 적용
+                    # 리랭커 정상 실행: 리랭커에서 이미 필터링하여 반환한 결과물(scored_docs)을 수신합니다.
+                    # settings.RERANKER_THRESHOLD 단일 스레숄드를 기준으로 정합성 유지를 위해 필터링합니다.
                     for d, s in zip(raw_docs, raw_scores, strict=True):
-                        if s >= settings.RERANKER_SIMILARITY_THRESHOLD:
+                        if s >= settings.RERANKER_THRESHOLD:
                             final_docs.append(d)
                             scores.append(s)
 

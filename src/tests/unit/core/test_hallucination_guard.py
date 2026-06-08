@@ -18,10 +18,10 @@ def mock_reranker():
 
 class TestRAGHallucinationGuard:
     def test_reranker_threshold_filtering(self, mock_retriever, mock_reranker):
-        """점수가 RERANKER_SIMILARITY_THRESHOLD 미만인 문서들이 올바르게 걸러지는지 검증합니다."""
+        """점수가 RERANKER_THRESHOLD 미만인 문서들이 올바르게 걸러지는지 검증합니다."""
         # 1. RAG 파이프라인 생성 (임계값 0.4 설정)
         with patch("src.core.chains.settings") as mock_settings:
-            mock_settings.RERANKER_SIMILARITY_THRESHOLD = 0.4
+            mock_settings.RERANKER_THRESHOLD = 0.4
             pipeline = RAGPipeline(mock_retriever, llm=MagicMock(), reranker=mock_reranker)
 
             # 모킹 데이터 준비
@@ -50,7 +50,7 @@ class TestRAGHallucinationGuard:
     def test_all_filtered_empty_context(self, mock_retriever, mock_reranker):
         """모든 문서 점수가 임계값 미만이라 필터링되면, 빈 컨텍스트 리스트를 안전하게 리턴하는지 검증합니다."""
         with patch("src.core.chains.settings") as mock_settings:
-            mock_settings.RERANKER_SIMILARITY_THRESHOLD = 0.4
+            mock_settings.RERANKER_THRESHOLD = 0.4
             pipeline = RAGPipeline(mock_retriever, llm=MagicMock(), reranker=mock_reranker)
 
             doc_low_1 = Document(page_content="무관 문서 1", metadata={"chunk_id": "doc_1"})

@@ -117,7 +117,6 @@ class Settings(BaseSettings):
             "목",
         ]
     )
-    RERANKER_SIMILARITY_THRESHOLD: float = Field(default=0.60)
     RETRIEVER_FALLBACK_THRESHOLD: float = Field(default=0.53)
     RERANKER_TIMEOUT_ENABLED: bool = Field(default=True)
 
