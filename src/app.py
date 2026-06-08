@@ -34,6 +34,7 @@ from src.ui.dialogs.admin import show_admin_dialog
 from src.ui.dialogs.chunk_viewer import show_chunks_viewer_dialog
 from src.ui.session import init_session_state
 from src.ui.stream_responder import StreamResponder
+from src.utils.auth import verify_password
 from src.utils.logger import PerformanceLogger, setup_global_logging
 from src.utils.monitoring import get_system_stats
 from src.utils.paths import ensure_directories
@@ -130,12 +131,12 @@ ensure_directories()
 # --- 2. 세션 상태 초기화 (중앙 이관 호출) ---
 init_session_state()
 
-# 앱 전체 인증 게이트 — APP_PASSWORD 설정 시에만 활성 (미설정이면 게이트 없음) (#133)
-if settings.APP_PASSWORD and not st.session_state.get("app_authenticated"):
+# 앱 전체 인증 게이트 — APP_PASSWORD_HASH(bcrypt) 설정 시에만 활성 (미설정이면 게이트 없음) (#133)
+if settings.APP_PASSWORD_HASH and not st.session_state.get("app_authenticated"):
     st.title("RAG 챗봇 접속 인증")
     pw = st.text_input("접속 비밀번호", type="password", key="app_pw")
     if st.button("로그인"):
-        if pw == settings.APP_PASSWORD:
+        if verify_password(pw, settings.APP_PASSWORD_HASH):
             st.session_state.app_authenticated = True
             st.rerun()
         else:

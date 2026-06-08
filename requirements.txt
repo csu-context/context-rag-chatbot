@@ -58,3 +58,6 @@ pytest-cov==7.1.0
 ruff==0.15.10
 redis==8.0.0
 
+# 인증 (비밀번호 bcrypt 해시)
+bcrypt==5.0.0
+

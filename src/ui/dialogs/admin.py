@@ -8,6 +8,7 @@ from src.common.config import settings
 from src.common.constants import SupportedFormats
 from src.controllers.sync_controller import SyncController
 from src.pipeline import PipelineOrchestrator
+from src.utils.auth import verify_password
 from src.utils.health_check import repair_integrity, run_full_diagnostics
 from src.utils.paths import RAW_DATA_DIR
 from src.utils.unicode import normalize_to_nfc
@@ -63,12 +64,12 @@ def _render_sync_progress(initialize_rag_system_callback):
 
 @st.dialog("데이터 관리 시스템", width="large", on_dismiss=reset_admin_active)
 def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
-    # 관리자 인증 — ADMIN_PASSWORD 설정 시에만 요구 (미설정이면 인증 없음) (#133)
-    if settings.ADMIN_PASSWORD and not st.session_state.get("admin_authenticated"):
+    # 관리자 인증 — ADMIN_PASSWORD_HASH(bcrypt) 설정 시에만 요구 (미설정이면 인증 없음) (#133)
+    if settings.ADMIN_PASSWORD_HASH and not st.session_state.get("admin_authenticated"):
         st.subheader("관리자 인증")
         pw = st.text_input("관리자 비밀번호", type="password", key="admin_pw_input")
         if st.button("확인", key="admin_pw_confirm"):
-            if pw == settings.ADMIN_PASSWORD:
+            if verify_password(pw, settings.ADMIN_PASSWORD_HASH):
                 st.session_state.admin_authenticated = True
                 st.rerun()
             else:
