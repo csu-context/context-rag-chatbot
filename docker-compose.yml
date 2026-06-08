@@ -64,7 +64,48 @@ services:
       - PERSIST_DIRECTORY=/data
     networks:
       - rag-network
+    # ChromaDB 리소스 한도
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+          cpus: "1.0"
+    restart: unless-stopped
+    # ChromaDB healthcheck — app 기동 순서 보장
+    # chromadb/chroma 이미지에는 python/curl/wget이 없고(최소 이미지) v1 API도 제거됨 →
+    # bash /dev/tcp로 8000 포트 TCP 연결만 확인한다(서버 바인딩=수신 준비, API 버전 무관).
+    healthcheck:
+      test: ["CMD", "bash", "-c", "cat < /dev/null > /dev/tcp/localhost/8000"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # Redis 세션 스토어 — 수평 확장 시 대화 연속성 유지
+  redis:
+    image: redis:7-alpine
+    container_name: rag-chatbot-redis
+    volumes:
+      - redis-data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - rag-network
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
 
 networks:
   rag-network:
     driver: bridge
+
+volumes:
+  redis-data:
+    driver: local

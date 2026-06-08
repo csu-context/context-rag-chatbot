@@ -1,5 +1,6 @@
 import os
 import sys
+import uuid
 
 # macOS/Windows 전용 segfault 방지 — Linux 운영서버에는 적용 안 함
 # Linux에서 스레드 수 1 고정 시 CPU Starvation/OOM 유발 가능
@@ -131,16 +132,37 @@ init_session_state()
 
 # Redis 세션 복원 — REDIS_URL 설정 시 이전 대화 기록 복구
 # 로드밸런서로 다른 인스턴스로 라우팅되어도 대화 연속성 유지
-if settings.REDIS_URL and "redis_session_loaded" not in st.session_state:
-    st.session_state.redis_session_loaded = True
-    _session_id = st.query_params.get("sid", "") or id(st.session_state)
-    st.session_state._redis_session_id = str(_session_id)
+if settings.REDIS_URL:
+    from src.utils.cookie import get_cookie_session_id, set_cookie_session_id
     from src.utils.redis_session import RedisSessionStore
 
-    saved_msgs = RedisSessionStore.load_messages(st.session_state._redis_session_id)
-    if saved_msgs:
-        st.session_state.messages = saved_msgs
-        logger.info(f"Redis에서 세션 복원 ({len(saved_msgs)}개 메시지)")
+    # 1. 쿼리 스트링 또는 브라우저 쿠키에서 기존 세션 식별 시도
+    _session_id = st.query_params.get("sid", "") or get_cookie_session_id()
+
+    # 2. 식별 불가능하고 아직 쿠키를 쓴 적이 없는 경우 새로 발급한 session_uuid 사용 및 브라우저 쿠키 동기화
+    if not _session_id:
+        _session_id = st.session_state.get("session_uuid")
+        if not _session_id:  # 방어 가드
+            _session_id = str(uuid.uuid4())
+            st.session_state.session_uuid = _session_id
+
+        # 무한 루프 방지: 한 번만 쿠키 쓰기를 지시
+        if "st_session_id_written" not in st.session_state:
+            st.session_state.st_session_id_written = True
+            set_cookie_session_id(str(_session_id))
+            st.rerun()
+    else:
+        # 기존 세션 ID가 확인되었으므로, 현재 session_state 변수에도 덮어쓰기하여 일관성 유지
+        st.session_state.session_uuid = str(_session_id)
+
+    st.session_state._redis_session_id = str(_session_id)
+
+    if "redis_session_loaded" not in st.session_state:
+        st.session_state.redis_session_loaded = True
+        saved_msgs = RedisSessionStore.load_messages(st.session_state._redis_session_id)
+        if saved_msgs:
+            st.session_state.messages = saved_msgs
+            logger.info(f"Redis에서 세션 복원 ({len(saved_msgs)}개 메시지)")
 
 
 def reset_doc_dialog():
