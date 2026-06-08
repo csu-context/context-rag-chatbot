@@ -31,6 +31,7 @@ class BGEEmbedder:
 
     def __init__(self, model_name="BAAI/bge-m3"):
         from src.utils.device import get_torch_device
+
         self.device = get_torch_device()
 
         if not settings.ALLOW_EXTERNAL_API:

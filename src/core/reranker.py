@@ -126,6 +126,7 @@ class CrossEncoderReranker(BaseReranker):
         super().__init__(name="Local CrossEncoder", top_k=top_k, threshold=threshold)
         self.model_name = model_name or settings.RERANKER_MODEL_NAME
         from src.utils.device import get_torch_device
+
         self.device = device or get_torch_device()
         self._original_device = self.device  # 서킷브레이커 복구 기준
 

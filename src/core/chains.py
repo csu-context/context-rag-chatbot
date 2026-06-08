@@ -46,7 +46,6 @@ def invalidate_source_json_cache() -> None:
     _load_source_json.cache_clear()
 
 
-
 class RAGPipeline:
     """RAG 파이프라인의 핵심 로직을 관리하는 클래스"""
 
@@ -140,11 +139,7 @@ class RAGPipeline:
         search_results = self.retriever_or_db.search(query_text=query, k=k)
         docs = []
         for res in search_results:
-            meta = {
-                **res["metadata"],
-                "score": res["score"],
-                "vector_score": res["score"]
-            }
+            meta = {**res["metadata"], "score": res["score"], "vector_score": res["score"]}
             docs.append(Document(page_content=res["content"], metadata=meta))
         return self._resolve_parent_documents(docs)
 
@@ -174,6 +169,7 @@ class RAGPipeline:
                     scores.append(v_score)
             else:
                 from src.vector_db.bm25_tokenizer import BM25Tokenizer
+
                 tokenizer = BM25Tokenizer()
                 q_tokens = tokenizer.tokenize(query)
                 if q_tokens:

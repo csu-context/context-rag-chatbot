@@ -80,8 +80,7 @@ class TestRAGHallucinationGuard:
 
             doc_high = Document(page_content="초벌 검색 점수 높은 문서", metadata={"chunk_id": "doc_1", "score": 0.25})
             doc_low = Document(
-                page_content="초벌 검색 점수 아주 낮은 무관 문서",
-                metadata={"chunk_id": "doc_2", "score": 0.05}
+                page_content="초벌 검색 점수 아주 낮은 무관 문서", metadata={"chunk_id": "doc_2", "score": 0.05}
             )
 
             mock_result = MagicMock()
@@ -110,12 +109,12 @@ class TestRAGHallucinationGuard:
             # RRF 점수(0.01)는 임계값(0.4) 미만이지만, vector_score(0.65)는 임계값 이상인 문서
             doc_high = Document(
                 page_content="RRF는 낮으나 벡터 점수는 높은 문서",
-                metadata={"chunk_id": "doc_1", "score": 0.016, "vector_score": 0.65, "rrf_score": 0.016}
+                metadata={"chunk_id": "doc_1", "score": 0.016, "vector_score": 0.65, "rrf_score": 0.016},
             )
             # RRF 점수(0.01)도 낮고 vector_score(0.25)도 임계값 미만인 무관 문서
             doc_low = Document(
                 page_content="RRF도 낮고 벡터 점수도 낮은 문서",
-                metadata={"chunk_id": "doc_2", "score": 0.012, "vector_score": 0.25, "rrf_score": 0.012}
+                metadata={"chunk_id": "doc_2", "score": 0.012, "vector_score": 0.25, "rrf_score": 0.012},
             )
 
             mock_result = MagicMock()
