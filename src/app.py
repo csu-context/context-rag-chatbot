@@ -287,13 +287,18 @@ with st.sidebar:
     # 4. 기타 설정
     st.toggle("상세 추론 과정 보기", key="show_expert_mode", disabled=st.session_state.is_generating)
 
-    # 시맨틱 캐시 런타임 토글: 전역 settings에 즉시 반영해 재기동 없이 on/off (#157).
-    # settings는 프로세스 전역 단일 객체 — 내부 관리자 운영 도구 전제이므로 세션 간 공유를 수용한다.
     settings.SEMANTIC_CACHE_ENABLED = st.toggle(
         "시맨틱 캐시 활성화",
         value=settings.SEMANTIC_CACHE_ENABLED,
         disabled=st.session_state.is_generating,
         help="질의 유사도 기반 캐시. 미세한 질의 차이를 못 가르는 오탐 위험이 있어 기본 비활성입니다.",
+    )
+
+    settings.RERANKER_TIMEOUT_ENABLED = st.toggle(
+        "리랭커 타임아웃 활성화",
+        value=settings.RERANKER_TIMEOUT_ENABLED,
+        disabled=st.session_state.is_generating,
+        help="리랭커 추론 시간제한(기본 5초) 적용 여부를 설정합니다. 비활성화 시 타임아웃 없이 모델 연산 완료를 무기한 대기합니다.",
     )
 
     # API 토큰 사용량 및 실시간 과금 추적

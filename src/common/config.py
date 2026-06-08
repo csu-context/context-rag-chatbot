@@ -118,7 +118,8 @@ class Settings(BaseSettings):
         ]
     )
     RERANKER_SIMILARITY_THRESHOLD: float = Field(default=0.60)
-    RETRIEVER_FALLBACK_THRESHOLD: float = Field(default=0.40)
+    RETRIEVER_FALLBACK_THRESHOLD: float = Field(default=0.53)
+    RERANKER_TIMEOUT_ENABLED: bool = Field(default=True)
 
     # 5. 평가(Evaluation) 관련 설정
     EVAL_MAX_SAMPLES: int = 50

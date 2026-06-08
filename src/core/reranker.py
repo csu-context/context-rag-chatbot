@@ -74,7 +74,7 @@ class BaseReranker(ABC):
         """
         target_top_k = kwargs.get("top_k") or self.top_k
         kwargs["top_k"] = target_top_k
-        timeout_sec = settings.RERANKER_TIMEOUT_SEC
+        timeout_sec = settings.RERANKER_TIMEOUT_SEC if settings.RERANKER_TIMEOUT_ENABLED else None
         start_time = time.time()
 
         def _fallback() -> RerankResult:

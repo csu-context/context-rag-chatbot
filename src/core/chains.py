@@ -189,9 +189,22 @@ class RAGPipeline:
                                 final_docs.append(d)
                                 scores.append(v_score)
                         else:
-                            # rrf_score는 있지만 vector_score는 없는 경우 (BM25 단독 매칭 등) 일단 통과시킴
-                            final_docs.append(d)
-                            scores.append(d.metadata.get("score", 0.0))
+                            # rrf_score는 있지만 vector_score는 없는 경우 (BM25 단독 매칭 등)
+                            # 쿼리 토큰 중 실제 문서에 매칭된 비율을 계산하여 오매칭(주로 stopword/common word 단독 매칭)을 필터링합니다.
+                            # 문자가 매우 짧거나 핵심 키워드가 확실히 포함된 경우만 통과시킵니다.
+                            from src.vector_db.bm25_tokenizer import BM25Tokenizer
+                            tokenizer = BM25Tokenizer()
+                            q_tokens = tokenizer.tokenize(query)
+                            if q_tokens:
+                                content_lower = d.page_content.lower()
+                                matched_count = sum(1 for t in q_tokens if t.lower() in content_lower)
+                                overlap_ratio = matched_count / len(q_tokens)
+                                if overlap_ratio >= 0.5:
+                                    final_docs.append(d)
+                                    scores.append(d.metadata.get("score", 0.0))
+                            else:
+                                final_docs.append(d)
+                                scores.append(d.metadata.get("score", 0.0))
                 else:
                     # 리랭커 정상 실행: 리랭커 점수 기반 필터링 가드레일 적용
                     for d, s in zip(raw_docs, raw_scores, strict=True):
