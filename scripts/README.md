@@ -72,6 +72,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location 'C:\path\to
     *   **용도**: 프라이빗 레포 환경에서의 자동 배포 및 컨테이너 정상 기동 확인.
     *   **실행**: `bash scripts/deploy.sh`
     *   **환경변수**: `DEPLOY_TIMEOUT`(기본 120초), `HEALTH_RETRIES`(20회), `HEALTH_INTERVAL`(6초), `COMPOSE_FILE`(docker-compose.yml)
+*   **`init-host-dirs.sh`**: 바인드 마운트 호스트 디렉토리(`logs`, `data/processed`, `vector_db`, `.cache` 등)를 미리 만들고 `1000:1000`으로 chown 하여 비루트 컨테이너(appuser, uid 1000)의 쓰기 권한을 보장합니다.
+    *   **용도**: `docker compose up` 시 Docker가 없는 바인드 소스를 root로 자동 생성하거나, 이전 root 실행의 잔여 파일이 남아 발생하는 `PermissionError`(예: `/app/logs/performance.jsonl`) 해소. `deploy.sh`·`ec2-startup.sh`의 `up` 직전에 자동 호출됩니다.
+    *   **실행**: `bash scripts/init-host-dirs.sh` (root 소유 디렉토리가 있으면 `sudo bash scripts/init-host-dirs.sh`)
+    *   **환경변수**: `APP_UID`(기본 1000), `APP_GID`(기본 1000) — Dockerfile의 appuser uid/gid와 일치시켜야 합니다.
 
 ## 🧹 관리 원칙
 1.  **일회성 스크립트**: 특정 이슈 해결을 위한 임시 디버깅 스크립트는 작업 완료 후 삭제를 원칙으로 합니다.
