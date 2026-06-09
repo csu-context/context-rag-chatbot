@@ -18,7 +18,7 @@ def orchestrator():
         orch = PipelineOrchestrator()
         orch.ingestion_pipeline = MagicMock()
         orch.storage_manager = MagicMock()
-        orch.cache = MagicMock()
+        orch._cache = MagicMock()
         yield orch
 
 

@@ -1,20 +1,42 @@
+# 방화벽 강화 (#133): SSH/UI의 0.0.0.0/0 전체 개방 제거, 백엔드 포트는 VPC 내부로 격리
 resource "aws_security_group" "app_sg" {
   name        = "${var.project_name}-app-sg"
-  description = "Allow inbound traffic for RAG Chatbot"
+  description = "Allow inbound traffic for RAG Chatbot (restricted)"
   vpc_id      = var.vpc_id
 
+  # SSH: 운영팀 IP 대역만 허용 (기본값 빈 목록이면 외부 접근 불가)
   ingress {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"] # 보안을 위해 실제 환경에서는 특정 IP로 제한 필요
+    cidr_blocks = var.allowed_ssh_cidr_blocks
+    description = "SSH from approved admin IPs only"
   }
 
+  # Streamlit UI: 허용된 사용자 IP 대역만 접근
   ingress {
     from_port   = 8501
     to_port     = 8501
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"] # 실제 운영 환경에서는 접속 허용 IP 대역 제한 권장
+    cidr_blocks = var.allowed_cidr_blocks
+    description = "Streamlit UI from approved IPs only"
+  }
+
+  # 백엔드 포트(ChromaDB 8000, Ollama 11434)는 VPC 내부 통신만 허용
+  ingress {
+    from_port   = 8000
+    to_port     = 8000
+    protocol    = "tcp"
+    cidr_blocks = [var.vpc_cidr]
+    description = "ChromaDB - VPC internal only"
+  }
+
+  ingress {
+    from_port   = 11434
+    to_port     = 11434
+    protocol    = "tcp"
+    cidr_blocks = [var.vpc_cidr]
+    description = "Ollama LLM - VPC internal only"
   }
 
   egress {
@@ -22,6 +44,7 @@ resource "aws_security_group" "app_sg" {
     to_port     = 0
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
+    description = "Allow all outbound"
   }
 
   tags = {
@@ -37,6 +60,13 @@ data "aws_ami" "ubuntu_gpu" {
     name   = "name"
     values = ["ubuntu/images/hvm-ssd/ubuntu-focal-20.04-amd64-server-*"]
   }
+}
+
+# 모델명 Single Source of Truth: 레포 .env.example의 MODEL_NAME을 읽어 배포 user_data에 주입한다.
+# 하드코딩을 없애 .env.example 한 곳만 바꾸면 EC2 배포까지 동기화된다. 파일/항목이 없으면 앱 기본값으로 폴백. (#181)
+locals {
+  env_example_path = "${path.module}/../../../.env.example"
+  model_name       = try(trimspace(regex("(?m)^MODEL_NAME=(.*)$", file(local.env_example_path))[0]), "gemma4:e2b")
 }
 
 resource "aws_instance" "app" {
@@ -108,7 +138,7 @@ git checkout feature/issue-89-local-infra || echo "Branch not found, using defau
 echo "Creating .env file..."
 cat <<EOT > .env
 MODEL_TYPE=ollama
-MODEL_NAME=llama3.2:1b
+MODEL_NAME=${local.model_name}
 EMBEDDING_MODEL_NAME=BAAI/bge-m3
 OLLAMA_BASE_URL=http://ollama:11434
 CHROMA_SERVER_HOST=chromadb

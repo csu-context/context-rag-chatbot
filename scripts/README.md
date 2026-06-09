@@ -19,6 +19,14 @@
 *   **`demo_reranker_gpu_recovery.py`**: 리랭커의 GPU 장애 → CPU 폴백 → GPU 복구 라이프사이클을 fault injection으로 재현하고 실제 로그로 캡처합니다.
     *   **용도**: 서킷브레이커 기반 GPU 복구 동작 실증 (실 GPU 없이도 검증 가능).
     *   **실행**: `PYTHONPATH=. python scripts/demo_reranker_gpu_recovery.py [--interval 5]` (미지정 시 운영 기본값 300초)
+*   **`eval_table_golden.py`**: 원본 PDF 시각 판독 골든셋으로 현재 파서를 셀 단위 채점합니다(RAG 우회 = 파싱 신호만 직접 측정).
+    *   **용도**: 표 파싱 전략(휴리스틱/구조보존/VLM) 교체 시 셀 정확도 회귀 검증. 골든셋이 파서 비의존이라 객관 비교가 가능.
+    *   **전제**: 골든셋 JSON이 로컬 `data/eval/golden/`에 존재해야 함(원본 PDF와 동일한 로컬 데이터 정책, gitignore).
+    *   **실행**: `PYTHONIOENCODING=utf-8 python scripts/eval_table_golden.py`
+*   **`eval_table_rag.py`**: 표 골든셋 qa로 RAG end-to-end Answer Correctness를 채점합니다(검색 → reranking → 생성의 합성 결과).
+    *   **용도**: 파싱뿐 아니라 검색·생성까지 포함한 표 질의 정답률 측정. 셀 채점과의 갭 분석으로 병목(파싱 vs 검색/모델)을 분리.
+    *   **전제**: 대상 문서(학칙/학사규정) 인덱싱 완료 + 생성 LLM 접근(MODEL_TYPE/모델·키 설정).
+    *   **실행**: `PYTHONIOENCODING=utf-8 python scripts/eval_table_rag.py`
 
 ### 2. 개발 및 테스트 유틸리티
 *   **`run_pytest.py`**: 프로젝트의 전체 테스트 케이스를 실행하고 결과를 요약합니다.

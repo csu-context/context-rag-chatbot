@@ -215,7 +215,14 @@ class DoclingPDFParser:
     def _pymupdf_table_markdown(
         fitz_doc: "fitz.Document", page_num: int, idx_on_page: int, doc_type: str = "legal"
     ) -> str:
-        """셀별 ManualParser rawdict 추출로 마크다운을 재구성한다. 실패 시 빈 문자열."""
+        """셀별 rawdict 추출로 마크다운을 재구성한다. 실패 시 빈 문자열.
+
+        PyMuPDF가 감지한 행/열 구조를 그대로 따른다: 각 셀은 bbox 내 문자를 한 칸으로 합치고
+        (셀 내부 줄바꿈은 공백으로 병합), PyMuPDF가 None으로 준 병합 하단 칸은 위 값으로 전파해
+        rowspan을 복원한다. 멀티라인 셀을 논리 행으로 분할하는 휴리스틱은 두지 않는다 — '한 셀에
+        나열된 항목 리스트'와 '셀 줄바꿈'이 기하적으로 동일해(보건과학대학 5학과 1:1 == 편입표
+        8학기/이수대상자 wrap) 안전히 가를 수 없고, 분할은 타 문서 일반 표를 과분할하기 때문이다.
+        """
         try:
             page = fitz_doc[page_num - 1]
             # Docling은 reading order, PyMuPDF는 detection order로 표를 열거하므로 인덱스 직매칭은
@@ -225,13 +232,39 @@ class DoclingPDFParser:
                 return ""
             table = pymupdf_tables[idx_on_page]
             blocks = page.get_text("rawdict").get("blocks", [])
-            cells_grid = [
-                [DoclingPDFParser._extract_cell_text(blocks, cell) if cell else "" for cell in table_row.cells]
+            grid: list[list[str | None]] = [
+                [DoclingPDFParser._extract_cell_text(blocks, cell) if cell else None for cell in table_row.cells]
                 for table_row in table.rows
             ]
-            return DoclingPDFParser._cells_to_markdown(cells_grid, doc_type)
+            DoclingPDFParser._propagate_merged_cells(grid)
+            grid = DoclingPDFParser._drop_empty_columns(grid)
+            return DoclingPDFParser._cells_to_markdown(grid, doc_type)
         except Exception:
             return ""
+
+    @staticmethod
+    def _propagate_merged_cells(grid: list[list[str | None]]) -> None:
+        """병합 하단(None) 칸을 위 행의 같은 열 값으로 전파한다(rowspan 복원)."""
+        for ri in range(len(grid)):
+            for ci in range(len(grid[ri])):
+                if grid[ri][ci] is None:
+                    grid[ri][ci] = grid[ri - 1][ci] if ri > 0 else ""
+
+    @staticmethod
+    def _drop_empty_columns(grid: list[list[str | None]]) -> list[list[str | None]]:
+        """모든 행에서 빈 열(헤더 포함 전부 공백)을 제거한다.
+
+        PyMuPDF가 넓은 셀(예: '학 위')을 가짜 경계선으로 분할해 항상 비는 유령 열을 만들면
+        모든 행에 무의미한 '|  |'가 붙는다. 어느 행에도 값이 없는 열만 떨궈 출력을 정리한다.
+        일부 행만 비는 열(예: 예과 행의 3·4학년)은 다른 행에 값이 있으므로 보존된다.
+        """
+        if not grid:
+            return grid
+        n_cols = max(len(r) for r in grid)
+        keep = [ci for ci in range(n_cols) if any(ci < len(r) and str(r[ci] or "").strip() for r in grid)]
+        if not keep or len(keep) == n_cols:
+            return grid
+        return [[r[ci] if ci < len(r) else None for ci in keep] for r in grid]
 
     @staticmethod
     def _cells_to_markdown(cells: list[list[str | None]], doc_type: str = "legal") -> str:

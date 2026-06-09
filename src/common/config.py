@@ -59,7 +59,7 @@ class Settings(BaseSettings):
     RETRIEVER_EXECUTOR_MAX_WORKERS: int = Field(default=8)
     RERANKER_MAX_DOCS: int = Field(default=5)
     RERANKER_BATCH_SIZE: int = Field(default=5)
-    RERANKER_THRESHOLD: float = Field(default=0.5)
+    RERANKER_THRESHOLD: float = Field(default=0.60)
     RERANKER_TIMEOUT_SEC: int = Field(default=5)
     RERANKER_GPU_RECOVERY_INTERVAL_SEC: int = Field(default=300)
     MAX_INGESTION_WORKERS: int = Field(default=4)
@@ -117,6 +117,8 @@ class Settings(BaseSettings):
             "목",
         ]
     )
+    RETRIEVER_FALLBACK_THRESHOLD: float = Field(default=0.53)
+    RERANKER_TIMEOUT_ENABLED: bool = Field(default=True)
 
     # 5. 평가(Evaluation) 관련 설정
     EVAL_MAX_SAMPLES: int = 50
@@ -132,6 +134,10 @@ class Settings(BaseSettings):
     CI: bool = False
 
     # 7. 시맨틱 캐시 설정
+    # 기본 비활성(opt-in): 질의 유사도만으로 캐시 히트를 판정해 "2020년"과 "2021년"처럼 미세하지만
+    # 결정적인 차이를 못 가르고 과거 오답을 그대로 반환하는 False Positive 리스크가 있다. 코드는 보존하되
+    # 명시적으로 켤 때만(SEMANTIC_CACHE_ENABLED=true) 동작한다. (#157)
+    SEMANTIC_CACHE_ENABLED: bool = Field(default=False)
     SEMANTIC_CACHE_COLLECTION_NAME: str = Field(default="semantic_cache")
     SEMANTIC_CACHE_THRESHOLD: float = Field(default=0.95)
     MAX_CHAT_HISTORY_TURNS: int = Field(default=5)

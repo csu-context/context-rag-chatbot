@@ -54,7 +54,22 @@ class RAGPipeline:
         self.llm = llm or LLMFactory.create_llm_with_fallback()
         self.reranker = reranker or RerankerFactory.create()
         self.tracing_logger = TracingLogger()
-        self.cache = SemanticCache() if use_cache else None
+        # 시맨틱 캐시는 런타임 토글을 위해 lazy 생성한다: @st.cache_resource로 파이프라인이 싱글톤 공유되므로
+        # 생성자 시점에 플래그를 굳히면 재기동해야 반영된다. 대신 _get_cache()가 호출 시점에 판별한다.
+        # 기본 OFF면 객체조차 만들지 않아 idle 비용이 0이고, use_cache=False(평가)는 영구 비활성. (#157)
+        self._use_cache = use_cache
+        self._cache: SemanticCache | None = None
+        self._cache_lock = threading.Lock()
+
+    def _get_cache(self) -> SemanticCache | None:
+        """런타임 시점에 전역 토글을 확인해 캐시를 반환한다(켜진 경우에만 최초 1회 lazy 생성 후 메모이즈)."""
+        if not (self._use_cache and settings.SEMANTIC_CACHE_ENABLED):
+            return None
+        if self._cache is None:
+            with self._cache_lock:
+                if self._cache is None:  # 동시 최초 진입 시 이중 생성 방지
+                    self._cache = SemanticCache()
+        return self._cache
 
     def _resolve_parent_documents(self, docs: list[Document]) -> list[Document]:
         """자식 청크로 검색된 문서들을 부모 청크의 원문으로 전환하며, 동일 부모 및 동일 텍스트 중복을 제거합니다."""
@@ -112,6 +127,9 @@ class RAGPipeline:
                             metadata={
                                 **res.get("metadata", {}),
                                 "score": res.get("score") or res.get("_rrf_score", 0),
+                                "vector_score": res.get("score"),
+                                "bm25_score": res.get("_bm25_score"),
+                                "rrf_score": res.get("_rrf_score"),
                             },
                         )
                     )
@@ -119,10 +137,10 @@ class RAGPipeline:
 
         # 기존 ChromaDBManager 호환성 유지
         search_results = self.retriever_or_db.search(query_text=query, k=k)
-        docs = [
-            Document(page_content=res["content"], metadata={**res["metadata"], "score": res["score"]})
-            for res in search_results
-        ]
+        docs = []
+        for res in search_results:
+            meta = {**res["metadata"], "score": res["score"], "vector_score": res["score"]}
+            docs.append(Document(page_content=res["content"], metadata=meta))
         return self._resolve_parent_documents(docs)
 
     def _do_retrieval(self, query: str, k: int, session: Any) -> list[Document]:
@@ -136,36 +154,97 @@ class RAGPipeline:
             )
             return docs
 
+    def _fallback_filter(self, query: str, raw_docs: list[Document]) -> tuple[list[Document], list[float]]:
+        """리랭커 스킵 시 초벌 검색 점수 및 BM25 토큰 오버랩 기준으로 문서를 필터링합니다."""
+        final_docs = []
+        scores = []
+        from src.vector_db.bm25_tokenizer import BM25Tokenizer
+
+        tokenizer = BM25Tokenizer()
+        q_tokens = tokenizer.tokenize(query)
+
+        for d in raw_docs:
+            v_score = d.metadata.get("vector_score")
+            if v_score is None and "rrf_score" not in d.metadata:
+                v_score = d.metadata.get("score")
+
+            if v_score is not None:
+                if v_score >= settings.RETRIEVER_FALLBACK_THRESHOLD:
+                    final_docs.append(d)
+                    scores.append(v_score)
+            else:
+                if q_tokens:
+                    content_lower = d.page_content.lower()
+                    matched = sum(1 for t in q_tokens if t.lower() in content_lower)
+                    if (matched / len(q_tokens)) >= 0.5:
+                        final_docs.append(d)
+                        scores.append(d.metadata.get("score", 0.0))
+                else:
+                    final_docs.append(d)
+                    scores.append(d.metadata.get("score", 0.0))
+        return final_docs, scores
+
     def _do_reranking(
         self, query: str, docs: list[Document], final_k: int, session: Any
-    ) -> tuple[list[Document], list[float]]:
+    ) -> tuple[list[Document], list[float], bool]:
+        """(final_docs, scores, reranker_skipped) 튜플 반환.
+
+        reranker_skipped=True 이면 리랭커 타임아웃/오류로 검색 결과를 그대로 통과시킨 것이며,
+        이 경우 downstream에서 rerank_score를 메타데이터에 설정하지 않아야 한다.
+        """
         with session.trace_step("reranking") as step:
             if docs:
                 pre_rerank_ids = [d.metadata.get(MetadataFields.CHUNK_ID) or "unknown" for d in docs]
                 pre_rerank_scores = [d.metadata.get("score", 0.0) for d in docs]
 
                 rerank_result = self.reranker.rerank_with_timeout(query, docs, top_k=final_k)
-                final_docs = rerank_result.documents
-                scores = rerank_result.scores
+                raw_docs = rerank_result.documents
+                raw_scores = rerank_result.scores
+                final_docs = []
+                scores = []
+                skipped = rerank_result.reranker_skipped
+
+                if skipped:
+                    logger.warning("리랭커가 건너뛰어졌습니다. 초벌 검색 점수 기준으로 비상 필터링을 적용합니다.")
+                    final_docs, scores = self._fallback_filter(query, raw_docs)
+                else:
+                    # 리랭커 정상 실행: 리랭커에서 이미 필터링하여 반환한 결과물(scored_docs)을 수신합니다.
+                    # settings.RERANKER_THRESHOLD 단일 스레숄드를 기준으로 정합성 유지를 위해 필터링합니다.
+                    for d, s in zip(raw_docs, raw_scores, strict=True):
+                        if s >= settings.RERANKER_THRESHOLD:
+                            final_docs.append(d)
+                            scores.append(s)
+
                 post_rerank_ids = [d.metadata.get(MetadataFields.CHUNK_ID) or "unknown" for d in final_docs]
             else:
                 final_docs, scores, pre_rerank_ids, post_rerank_ids, pre_rerank_scores = [], [], [], [], []
                 rerank_result = None
+                skipped = False
 
             step.update(
                 {
                     "output_count": len(final_docs),
                     "model": str(rerank_result.model_name) if rerank_result else "none",
+                    "reranker_skipped": skipped,
                     "scores": [f"{s:.4f}" for s in scores],
                     "rank_change": {"before": pre_rerank_ids, "after": post_rerank_ids},
                     "pre_rerank_scores": pre_rerank_scores,
                 }
             )
-            return final_docs, scores
+            return final_docs, scores, skipped
 
     def _stream_generation(
         self, query: str, final_docs: list[Document], history: list[dict[str, Any]], session: Any
     ) -> Iterator[str]:
+        # 컨텍스트가 완전히 비어있는 경우, LLM 호출 없이 바로 거절 메시지 출력하여 환각 원천 차단
+        if not final_docs:
+            with session.trace_step("generation") as step:
+                msg = "제공된 문서에서 관련 내용을 찾을 수 없습니다."
+                step.update({"answer_length": len(msg)})
+                session.data["final_answer"] = msg
+                yield msg
+            return
+
         with session.trace_step("generation") as step:
             system_prompt = get_system_prompt()
             trimmed_docs = ContextBuilderNode.trim_docs_to_token_limit(final_docs, system_prompt, history)
@@ -177,7 +256,8 @@ class RAGPipeline:
                 role = msg.get("role")
                 content = msg.get("content", "")
                 if role == "user":
-                    messages.append(("human", content))
+                    # 멀티턴 대화 기록 내 프롬프트 인젝션 + XML 구조 탈출 방어
+                    messages.append(("human", ContextBuilderNode.sanitize(content)))
                 elif role == "assistant":
                     messages.append(("ai", content))
 
@@ -291,9 +371,10 @@ class RAGPipeline:
         history = input_dict.get("history", [])
 
         with self.tracing_logger.start_session(query=query) as session:
-            # 1. Semantic Cache Check
+            # 1. Semantic Cache Check — 런타임 토글을 한 번 평가해 조회/적재에 일관되게 쓴다. (#157)
+            cache = self._get_cache()
             yield {"stage": "cache", "status": "running"}
-            cached_result = self.cache.get(query) if self.cache else None
+            cached_result = cache.get(query) if cache else None
             if cached_result:
                 session.data["cache_hit"] = True
                 yield {"stage": "cache", "status": "hit"}
@@ -316,9 +397,10 @@ class RAGPipeline:
 
             # 3. Reranking
             yield {"stage": "reranking", "status": "running"}
-            final_docs, scores = self._do_reranking(query, docs, final_k, session)
-            for doc, score in zip(final_docs, scores, strict=False):
-                doc.metadata["rerank_score"] = score
+            final_docs, scores, reranker_skipped = self._do_reranking(query, docs, final_k, session)
+            if not reranker_skipped:
+                for doc, score in zip(final_docs, scores, strict=True):
+                    doc.metadata["rerank_score"] = score
             yield {"stage": "reranking", "status": "complete", "output": final_docs}
 
             # 4. Generation
@@ -342,10 +424,10 @@ class RAGPipeline:
                 }
                 for doc in final_docs
             ]
+            if cache and not reranker_skipped:
+                cache.add(query, full_answer, docs_for_cache)
 
-            if self.cache:
-                self.cache.add(query, full_answer, docs_for_cache)
-
+            # 리랭커가 스킵되었더라도 비상 필터를 통과한 문서가 있다면 출처에 표기함
             yield {"stage": "citation", "status": "complete", "output": citations_str, "source_documents": final_docs}
 
 

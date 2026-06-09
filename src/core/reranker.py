@@ -42,6 +42,7 @@ class RerankResult:
     model_name: str = "unknown"
     filtered_count: int = 0
     elapsed_time_sec: float = 0.0
+    reranker_skipped: bool = False
 
 
 class BaseReranker(ABC):
@@ -73,7 +74,7 @@ class BaseReranker(ABC):
         """
         target_top_k = kwargs.get("top_k") or self.top_k
         kwargs["top_k"] = target_top_k
-        timeout_sec = settings.RERANKER_TIMEOUT_SEC
+        timeout_sec = settings.RERANKER_TIMEOUT_SEC if settings.RERANKER_TIMEOUT_ENABLED else None
         start_time = time.time()
 
         def _fallback() -> RerankResult:
@@ -83,6 +84,7 @@ class BaseReranker(ABC):
                 model_name=self.name,
                 filtered_count=max(0, len(documents) - target_top_k),
                 elapsed_time_sec=time.time() - start_time,
+                reranker_skipped=True,
             )
 
         # busy 가드: 직전 작업이 타임아웃 후에도 워커에서 실행 중이면
@@ -123,7 +125,9 @@ class CrossEncoderReranker(BaseReranker):
     ):
         super().__init__(name="Local CrossEncoder", top_k=top_k, threshold=threshold)
         self.model_name = model_name or settings.RERANKER_MODEL_NAME
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        from src.utils.device import get_torch_device
+
+        self.device = device or get_torch_device()
         self._original_device = self.device  # 서킷브레이커 복구 기준
 
     @classmethod

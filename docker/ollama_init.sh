@@ -27,8 +27,8 @@ until ollama list > /dev/null 2>&1; do
     sleep 2
 done
 
-# .env 또는 환경 변수에서 모델명 가져오기 (기본값: gemma2:2b)
-MODEL_NAME=${MODEL_NAME:-"gemma2:2b"}
+# .env 또는 환경 변수에서 모델명 가져오기 (폴백은 앱 설정과 동일한 gemma4:e2b)
+MODEL_NAME=${MODEL_NAME:-"gemma4:e2b"}
 
 # 사용하지 않는 기존 모델 자동 삭제 (디스크 용량 최적화)
 echo "Cleaning up outdated models..."
