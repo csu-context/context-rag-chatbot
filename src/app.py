@@ -118,6 +118,29 @@ def get_doc_score(doc, default=0.0):
     return default
 
 
+# 페이지가 없는 포맷(HWP/HWPX/markdown): 페이지 번호 대신 섹션 위치로 출처를 표기한다.
+_PAGELESS_DOC_TYPES = {"hwp", "hwpx", "md", "markdown"}
+
+
+def get_source_location(metadata: dict) -> tuple[str, str] | None:
+    """출처 위치를 (종류, 값)으로 반환한다.
+
+    - PDF 등 페이지가 있는 포맷: ("page", "12")
+    - HWP/markdown 등 페이지가 없는 포맷: ("section", "제2장 학사운영")
+    - 위치 정보가 없으면 None.
+
+    markitdown 계열(HWP/markdown)은 페이지 경계가 없어 모든 청크가 pg_num=1 이므로,
+    의미 없는 "p.1" 대신 청크의 섹션 제목(헤더 경로)으로 위치를 표기한다.
+    """
+    doc_type = str(metadata.get(MetadataFields.DOC_TYPE, "")).lower()
+    if doc_type in _PAGELESS_DOC_TYPES:
+        section = str(metadata.get(MetadataFields.SEC_TITLE) or metadata.get(MetadataFields.HEADER_PATH) or "").strip()
+        if section and section not in ("기본 섹션", "UNKNOWN"):
+            return ("section", section)
+        return None
+    return ("page", str(metadata.get(MetadataFields.PG_NUM, "-")))
+
+
 # --- 1. 페이지 설정 ---
 st.set_page_config(
     page_title="기업 매뉴얼 챗봇 (관리 시스템 통합)",
@@ -172,13 +195,17 @@ def reset_doc_dialog():
 # [문서 원문 보기]
 @st.dialog("문서 원문 보기", on_dismiss=reset_doc_dialog)
 def show_document_dialog(doc: dict):
-    source = doc.get("metadata", {}).get(MetadataFields.SRC_NAME, "알 수 없음")
-    page = doc.get("metadata", {}).get(MetadataFields.PG_NUM, "-")
+    metadata = doc.get("metadata", {})
+    source = metadata.get(MetadataFields.SRC_NAME, "알 수 없음")
     score = doc.get("score", 0.0)
     content = doc.get("content", "")
 
     st.markdown(f"**출처:** {source}")
-    st.markdown(f"**페이지:** {page}")
+    loc = get_source_location(metadata)
+    if loc and loc[0] == "page":
+        st.markdown(f"**페이지:** p.{loc[1]}")
+    elif loc:
+        st.markdown(f"**위치:** {loc[1]}")
     st.markdown(f"**관련도 점수:** {score:.4f}")
     st.text_area("원문 내용", content, height=300)
     if st.button("닫기"):
@@ -441,7 +468,7 @@ for msg_idx, msg in enumerate(st.session_state.messages):
                     continue
                 metadata = doc.get("metadata", {})
                 source = metadata.get(MetadataFields.SRC_NAME, "알 수 없음")
-                page = metadata.get(MetadataFields.PG_NUM, "-")
+                loc = get_source_location(metadata)
 
                 # rerank_score 없을 때 RRF/기본값 0.0으로 무조건 경고 발생하는 오탐 방지
                 score = metadata.get("rerank_score")
@@ -450,7 +477,13 @@ for msg_idx, msg in enumerate(st.session_state.messages):
                 display_score = max(0.0, (score - 0.5) * 2) if has_rerank_score else 1.0
                 is_low_confidence = has_rerank_score and score < 0.5
 
-                button_label = f"📄 {source} (p.{page}) - 신뢰도: {display_score:.2f}"
+                if loc and loc[0] == "page":
+                    loc_text = f" (p.{loc[1]})"
+                elif loc:
+                    loc_text = f" · {loc[1]}"
+                else:
+                    loc_text = ""
+                button_label = f"📄 {source}{loc_text} - 신뢰도: {display_score:.2f}"
                 if is_low_confidence:
                     button_label += " ⚠️"
 
