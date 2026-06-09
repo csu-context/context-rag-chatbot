@@ -22,7 +22,6 @@ import time
 from pathlib import Path
 
 import streamlit as st
-import streamlit.components.v1 as components
 from dotenv import load_dotenv
 
 from src.common.config import settings
@@ -68,31 +67,38 @@ def render_custom_copy_button(text_to_copy: str, key_suffix: str):
         .copy-btn:hover {{
             background: #f0f0f0;
         }}
-        .material-symbols-outlined {{
+        .copy-btn .material-symbols-outlined {{
             font-size: 20px;
         }}
     </style>
-    <button class="copy-btn" onclick="copyText()" title="답변 복사하기">
+    <button class="copy-btn" id="copybtn-{key_suffix}" title="답변 복사하기">
         <span class="material-symbols-outlined" id="icon-{key_suffix}">content_copy</span>
     </button>
     <script>
-        function copyText() {{
+        (function() {{
+            // st.html은 메인 DOM에 인라인 주입되므로(components.html의 iframe 격리 제거),
+            // 메시지별 버튼에 고유 id로 직접 바인딩해 전역 함수 충돌(마지막 메시지만 복사)을 막는다.
+            const btn = document.getElementById('copybtn-{key_suffix}');
+            if (!btn || btn.dataset.copyBound) return;  // 재실행 시 중복 바인딩 방지
+            btn.dataset.copyBound = '1';
             const text = {safe_text};
-            navigator.clipboard.writeText(text).then(function() {{
-                const icon = document.getElementById('icon-{key_suffix}');
-                icon.innerText = 'check';
-                icon.style.color = '#4CAF50';
-                setTimeout(function() {{
-                    icon.innerText = 'content_copy';
-                    icon.style.color = '#555';
-                }}, 2000);
-            }}).catch(function(err) {{
-                console.error('Copy Failed', err);
+            btn.addEventListener('click', function() {{
+                navigator.clipboard.writeText(text).then(function() {{
+                    const icon = document.getElementById('icon-{key_suffix}');
+                    icon.innerText = 'check';
+                    icon.style.color = '#4CAF50';
+                    setTimeout(function() {{
+                        icon.innerText = 'content_copy';
+                        icon.style.color = '#555';
+                    }}, 2000);
+                }}).catch(function(err) {{
+                    console.error('Copy Failed', err);
+                }});
             }});
-        }}
+        }})();
     </script>
     """
-    components.html(html_code, height=35, width=35)
+    st.html(html_code, unsafe_allow_javascript=True)
 
 
 def get_doc_field(doc, field, default=None):
