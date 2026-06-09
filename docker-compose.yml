@@ -22,12 +22,16 @@ services:
       - CHROMA_SERVER_PORT=8000
       - OLLAMA_BASE_URL=http://ollama:11434
       - HF_HOME=/app/models
+      # Redis 세션 스토어 — 미설정 시 새로고침마다 대화가 초기화됨(쿠키+Redis 복원 비활성).
+      # .env에 REDIS_URL이 있으면 우선(예: 외부 ElastiCache), 없으면 compose의 redis 서비스로 폴백.
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
     ports:
       - "8501:8501"
-    # ChromaDB 및 Ollama 서버가 준비될 때까지 대기
+    # ChromaDB · Ollama · Redis 서버가 준비될 때까지 대기
     depends_on:
       - chromadb
       - ollama
+      - redis
     # 호스트 Native Ollama 연동을 위한 호스트 게이트웨이 매핑
     extra_hosts:
       - "host.docker.internal:host-gateway"
