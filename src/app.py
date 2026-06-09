@@ -46,11 +46,10 @@ perf_logger = PerformanceLogger()  # 전용 로거 인스턴스 생성
 logger = logging.getLogger(__name__)
 
 
-# --- 커스텀 Material Icon 복사 버튼 렌더러 ---
+# --- 커스텀 SVG 복사 버튼 렌더러 ---
 def render_custom_copy_button(text_to_copy: str, key_suffix: str):
     safe_text = json.dumps(text_to_copy)
     html_code = f"""
-    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet" />
     <style>
         .copy-btn {{
             background: transparent;
@@ -67,29 +66,45 @@ def render_custom_copy_button(text_to_copy: str, key_suffix: str):
         .copy-btn:hover {{
             background: #f0f0f0;
         }}
-        .copy-btn .material-symbols-outlined {{
-            font-size: 20px;
+        .copy-btn svg {{
+            width: 20px;
+            height: 20px;
+            display: block;
         }}
     </style>
     <button class="copy-btn" id="copybtn-{key_suffix}" title="답변 복사하기">
-        <span class="material-symbols-outlined" id="icon-{key_suffix}">content_copy</span>
+        <span id="ic-copy-{key_suffix}" style="display:flex">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" stroke-linejoin="round">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+            </svg>
+        </span>
+        <span id="ic-check-{key_suffix}" style="display:none; color:#4CAF50">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+        </span>
     </button>
     <script>
         (function() {{
             // st.html은 메인 DOM에 인라인 주입되므로(components.html의 iframe 격리 제거),
             // 메시지별 버튼에 고유 id로 직접 바인딩해 전역 함수 충돌(마지막 메시지만 복사)을 막는다.
+            // 아이콘은 인라인 SVG로 렌더링한다(외부 폰트 CDN 의존 제거 — 오프라인/폐쇄망에서도 표시됨).
             const btn = document.getElementById('copybtn-{key_suffix}');
             if (!btn || btn.dataset.copyBound) return;  // 재실행 시 중복 바인딩 방지
             btn.dataset.copyBound = '1';
             const text = {safe_text};
+            const icCopy = document.getElementById('ic-copy-{key_suffix}');
+            const icCheck = document.getElementById('ic-check-{key_suffix}');
             btn.addEventListener('click', function() {{
                 navigator.clipboard.writeText(text).then(function() {{
-                    const icon = document.getElementById('icon-{key_suffix}');
-                    icon.innerText = 'check';
-                    icon.style.color = '#4CAF50';
+                    icCopy.style.display = 'none';
+                    icCheck.style.display = 'flex';
                     setTimeout(function() {{
-                        icon.innerText = 'content_copy';
-                        icon.style.color = '#555';
+                        icCopy.style.display = 'flex';
+                        icCheck.style.display = 'none';
                     }}, 2000);
                 }}).catch(function(err) {{
                     console.error('Copy Failed', err);
