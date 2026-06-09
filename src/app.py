@@ -443,12 +443,22 @@ for msg_idx, msg in enumerate(st.session_state.messages):
                 source = metadata.get(MetadataFields.SRC_NAME, "알 수 없음")
                 page = metadata.get(MetadataFields.PG_NUM, "-")
 
-                # rerank_score 없을 때 RRF/기본값 0.0으로 무조건 경고 발생하는 오탐 방지
+                # 신뢰도 표시: 리랭커 점수를 합격선(RERANKER_THRESHOLD) 기준으로 재매핑한다.
+                # 합격선 통과 = 0.5, 만점 = 1.0 으로 선형 앵커링하여, 필터를 통과한 관련 청크가
+                # 부당하게 낮은 신뢰도(예: raw 0.535 -> 기존 공식 0.07)로 표시되던 문제를 해소한다.
+                # threshold 값을 바꿔도 표시가 자동 정합된다. (기존 (score-0.5)*2 는 피벗 0.5 를
+                # 하드코딩해 실제 RERANKER_THRESHOLD 와 어긋났음)
+                # rerank_score 부재(폴백/스킵) 시엔 오탐 방지를 위해 신뢰도 1.0·무경고를 유지한다.
                 score = metadata.get("rerank_score")
                 has_rerank_score = score is not None
                 score = score if has_rerank_score else doc.get("score", 0.0)
-                display_score = max(0.0, (score - 0.5) * 2) if has_rerank_score else 1.0
-                is_low_confidence = has_rerank_score and score < 0.5
+                threshold = settings.RERANKER_THRESHOLD
+                if has_rerank_score:
+                    span = max(1e-6, 1.0 - threshold)
+                    display_score = min(1.0, max(0.0, 0.5 + 0.5 * (score - threshold) / span))
+                else:
+                    display_score = 1.0
+                is_low_confidence = has_rerank_score and score < threshold
 
                 button_label = f"📄 {source} (p.{page}) - 신뢰도: {display_score:.2f}"
                 if is_low_confidence:
