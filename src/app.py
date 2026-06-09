@@ -133,26 +133,21 @@ init_session_state()
 # Redis 세션 복원 — REDIS_URL 설정 시 이전 대화 기록 복구
 # 로드밸런서로 다른 인스턴스로 라우팅되어도 대화 연속성 유지
 if settings.REDIS_URL:
-    from src.utils.cookie import get_cookie_session_id, set_cookie_session_id
     from src.utils.redis_session import RedisSessionStore
 
-    # 1. 쿼리 스트링 또는 브라우저 쿠키에서 기존 세션 식별 시도
-    _session_id = st.query_params.get("sid", "") or get_cookie_session_id()
+    # 세션 식별을 URL query param(sid)으로 고정한다. 새로고침해도 URL이 유지되므로
+    # 동일 세션을 안정적으로 복원할 수 있다.
+    # (기존 쿠키 주입 방식은 set_cookie 직후 st.rerun() 레이스 + st.context.cookies
+    #  읽기 타이밍 의존으로 새로고침 복원이 불안정했음 → query param 으로 대체)
+    _session_id = st.query_params.get("sid", "")
 
-    # 2. 식별 불가능하고 아직 쿠키를 쓴 적이 없는 경우 새로 발급한 session_uuid 사용 및 브라우저 쿠키 동기화
     if not _session_id:
-        _session_id = st.session_state.get("session_uuid")
-        if not _session_id:  # 방어 가드
-            _session_id = str(uuid.uuid4())
-            st.session_state.session_uuid = _session_id
-
-        # 무한 루프 방지: 한 번만 쿠키 쓰기를 지시
-        if "st_session_id_written" not in st.session_state:
-            st.session_state.st_session_id_written = True
-            set_cookie_session_id(str(_session_id))
-            st.rerun()
+        # 신규 세션: session_uuid 를 발급/재사용하고 URL 에 고정한다(다음 런/새로고침부터 sid 로 식별).
+        _session_id = st.session_state.get("session_uuid") or str(uuid.uuid4())
+        st.session_state.session_uuid = _session_id
+        st.query_params["sid"] = _session_id
     else:
-        # 기존 세션 ID가 확인되었으므로, 현재 session_state 변수에도 덮어쓰기하여 일관성 유지
+        # 기존 세션 ID 확인 — session_state 에도 반영하여 일관성 유지
         st.session_state.session_uuid = str(_session_id)
 
     st.session_state._redis_session_id = str(_session_id)
