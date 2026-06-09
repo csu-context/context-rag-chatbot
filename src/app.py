@@ -237,13 +237,14 @@ with st.sidebar:
         st.session_state.docs = []
         st.session_state.final_docs = []
 
+        logger.info("대화 내용이 로컬 메모리에서 성공적으로 초기화되었습니다.")
+
         if settings.REDIS_URL and hasattr(st.session_state, "_redis_session_id"):
             from src.utils.redis_session import RedisSessionStore
 
             RedisSessionStore.delete_session(st.session_state._redis_session_id)
             logger.info("Redis 대화 세션 정보가 정상적으로 삭제되었습니다.")
 
-        # 상태 변경 직후 즉각적인 화면 리프레시 강제 실행
         st.rerun()
 
         # 화면 갱신을 통한 상태 동기화
