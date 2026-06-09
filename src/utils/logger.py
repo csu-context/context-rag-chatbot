@@ -61,21 +61,26 @@ class PerformanceLogger:
             return cls._instance
 
     def _setup(self):
-        LOGS_DIR.mkdir(parents=True, exist_ok=True)
-        self.log_file = LOGS_DIR / "performance.jsonl"
-
         from logging.handlers import RotatingFileHandler
 
+        self.log_file = LOGS_DIR / "performance.jsonl"
         self.perf_logger = logging.getLogger("performance_logger")
         self.perf_logger.setLevel(logging.INFO)
         self.perf_logger.propagate = False
 
         if not self.perf_logger.handlers:
-            handler = RotatingFileHandler(
-                self.log_file, maxBytes=_PERF_LOG_MAX_BYTES, backupCount=_PERF_LOG_BACKUP_COUNT, encoding="utf-8"
-            )
-            handler.setFormatter(logging.Formatter("%(message)s"))
-            self.perf_logger.addHandler(handler)
+            try:
+                LOGS_DIR.mkdir(parents=True, exist_ok=True)
+                handler = RotatingFileHandler(
+                    self.log_file, maxBytes=_PERF_LOG_MAX_BYTES, backupCount=_PERF_LOG_BACKUP_COUNT, encoding="utf-8"
+                )
+                handler.setFormatter(logging.Formatter("%(message)s"))
+                self.perf_logger.addHandler(handler)
+            except OSError as e:
+                # 성능 로그 파일을 쓸 수 없어도(권한 등) 앱 기동/동작을 막지 않는다(no-op 핸들러로 폴백).
+                self.log_file = None
+                self.perf_logger.addHandler(logging.NullHandler())
+                logging.getLogger(__name__).warning(f"성능 로깅 비활성화 — 파일 기록 불가(원인: {e}).")
 
     def log(self, **kwargs):
         """성능 로그를 JSONL 형식으로 파일에 기록합니다."""
@@ -217,21 +222,34 @@ class TracingLogger:
 
 
 def setup_global_logging():
-    """시스템 기본 로깅 설정 (app.log 용)"""
+    """시스템 기본 로깅 설정 (app.log 용).
+
+    파일 로깅(로그 디렉토리/파일)을 쓸 수 없는 경우(권한 등)에도 앱 기동을 죽이지 않고
+    콘솔 로깅으로 graceful-degrade 한다. (init-host-dirs.sh 가 권한을 선제 처리하지만 방어선)
+    """
     from logging.handlers import RotatingFileHandler
 
-    # 디렉토리가 없으면 생성
-    LOGS_DIR.mkdir(parents=True, exist_ok=True)
-    log_file = LOGS_DIR / "app.log"
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    file_logging_error: Exception | None = None
+    try:
+        # 디렉토리가 없으면 생성
+        LOGS_DIR.mkdir(parents=True, exist_ok=True)
+        log_file = LOGS_DIR / "app.log"
+        handlers.append(RotatingFileHandler(log_file, maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8"))
+    except OSError as e:
+        # 로그 디렉토리/파일에 쓸 수 없어도(권한 등) 콘솔 로깅으로 계속 진행해 기동 중단을 막는다.
+        file_logging_error = e
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(levelname)s - %(message)s",
-        handlers=[
-            logging.StreamHandler(),
-            RotatingFileHandler(log_file, maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8"),
-        ],
+        handlers=handlers,
         force=True,
     )
+    if file_logging_error is not None:
+        logging.getLogger(__name__).warning(
+            f"파일 로깅 비활성화 — 콘솔 전용으로 진행합니다(원인: {file_logging_error})."
+        )
     # 노이즈 제거
     for name in ["httpx", "google", "langchain"]:
         logging.getLogger(name).setLevel(logging.WARNING)
