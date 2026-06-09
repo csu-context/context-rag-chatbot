@@ -61,6 +61,9 @@ RUN mkdir -p data/raw data/processed vector_db logs && \
 COPY --chown=appuser:appgroup src/ /app/src/
 COPY --chown=appuser:appgroup prompts/ /app/prompts/
 COPY --chown=appuser:appgroup config/ /app/config/
+# Streamlit 설정(.streamlit/config.toml) 복사 — 미포함 시 컨테이너가 기본값으로만 동작하여
+# 업로드/WebSocket 방어 설정이 무효화됨(프로덕션 이미지에서도 적용되도록 보장)
+COPY --chown=appuser:appgroup .streamlit/ /app/.streamlit/
 
 # 포트 설정
 EXPOSE 8501

@@ -12,6 +12,7 @@ services:
       - ./models:/app/models
       - ./logs:/app/logs
       - ./.cache:/app/.cache
+      - ./.streamlit:/app/.streamlit
       - ./.env:/app/.env
     # .env 파일 로드
     env_file:
