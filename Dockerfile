@@ -57,6 +57,11 @@ RUN groupadd -r appgroup && useradd -r -g appgroup -u 1000 appuser
 RUN mkdir -p data/raw data/processed vector_db logs && \
     chown -R appuser:appgroup /app
 
+# rapidocr(docling OCR 엔진)는 런타임에 OCR 모델(.onnx)을 자기 패키지 디렉토리에
+# 다운로드한다. venv는 root 소유라 비루트(appuser)가 쓰지 못해 PermissionError 발생 →
+# 해당 패키지 디렉토리만 appuser 소유로 넘겨 런타임 모델 다운로드를 허용한다.
+RUN chown -R appuser:appgroup /opt/venv/lib/python3.13/site-packages/rapidocr
+
 # 소스 코드 복사 (appuser 소유)
 COPY --chown=appuser:appgroup src/ /app/src/
 COPY --chown=appuser:appgroup prompts/ /app/prompts/
