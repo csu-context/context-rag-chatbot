@@ -265,7 +265,23 @@ with st.sidebar:
 
     st.divider()
     st.subheader("실시간 자원 모니터링")
-    stats = get_system_stats()
+
+    # @st.fragment(run_every) 로 실제 실시간 반영
+    @st.fragment(run_every="5s")
+    def _resource_monitor():
+        stats = get_system_stats()
+        st.write("CPU 사용량")
+        st.progress(int(stats["cpu"]), text=f"{stats['cpu']:.1f}%")
+        st.write("RAM 사용량")
+        st.progress(int(stats["memory"]), text=f"{stats['memory']:.1f}%")
+        if stats["gpu_vram"] is not None:
+            st.write("GPU VRAM 사용량")
+            st.progress(int(stats["gpu_vram"]), text=f"{stats['gpu_vram']:.1f}%")
+        else:
+            st.write("GPU VRAM 사용량")
+            st.info("현재 환경에서 GPU를 사용할 수 없습니다.")
+
+    _resource_monitor()
 
     st.divider()
     st.subheader("세션 관리")
@@ -288,23 +304,6 @@ with st.sidebar:
 
         # 화면 갱신을 통한 상태 동기화
         st.session_state.should_rerun_app = True
-
-    # @st.fragment(run_every) 로 실제 실시간 반영
-    @st.fragment(run_every="5s")
-    def _resource_monitor():
-        stats = get_system_stats()
-        st.write("CPU 사용량")
-        st.progress(int(stats["cpu"]), text=f"{stats['cpu']:.1f}%")
-        st.write("RAM 사용량")
-        st.progress(int(stats["memory"]), text=f"{stats['memory']:.1f}%")
-        if stats["gpu_vram"] is not None:
-            st.write("GPU VRAM 사용량")
-            st.progress(int(stats["gpu_vram"]), text=f"{stats['gpu_vram']:.1f}%")
-        else:
-            st.write("GPU VRAM 사용량")
-            st.info("현재 환경에서 GPU를 사용할 수 없습니다.")
-
-    _resource_monitor()
 
 # --- 5. 다이얼로그 활성화 제어 (모듈화 이관 호출) ---
 if st.session_state.get("admin_active", False):
