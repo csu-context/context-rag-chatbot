@@ -417,6 +417,7 @@ def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
                             st.rerun()  # pragma: no cover
 
     with tab2:
+
         @st.fragment(run_every="2s")
         def _backup_status_monitor():
             try:

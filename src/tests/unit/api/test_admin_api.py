@@ -46,12 +46,13 @@ def test_get_backup_status_no_file(mock_backup_dir):
 
 def test_get_backup_status_with_file(mock_backup_dir):
     import json
+
     status_file = mock_backup_dir / "backup_status.json"
     dummy_data = {
         "status": "running_backup",
         "last_update": 123456.0,
         "error": None,
-        "target": "chromadb_backup_20230101_120000.tar.gz"
+        "target": "chromadb_backup_20230101_120000.tar.gz",
     }
     status_file.write_text(json.dumps(dummy_data), encoding="utf-8")
 

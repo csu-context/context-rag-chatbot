@@ -31,12 +31,7 @@ def _update_status(status: str, error: str | None = None, target: str | None = N
     try:
         status_file = BACKUP_DIR / STATUS_FILE_NAME
         status_file.parent.mkdir(parents=True, exist_ok=True)
-        data = {
-            "status": status,
-            "last_update": time.time(),
-            "error": error,
-            "target": target
-        }
+        data = {"status": status, "last_update": time.time(), "error": error, "target": target}
         status_file.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     except Exception as e:
         logger.error("Failed to write backup status: %s", e)

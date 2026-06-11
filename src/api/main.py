@@ -26,6 +26,7 @@ async def get_backup_status():
     현재 진행 중인 백업/복원 작업의 상태를 조회합니다.
     """
     import json
+
     status_file = BACKUP_DIR / "backup_status.json"
     if not status_file.exists():
         return JSONResponse(content={"status": "idle"})
