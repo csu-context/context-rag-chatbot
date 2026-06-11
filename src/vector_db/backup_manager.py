@@ -1,4 +1,5 @@
 import hashlib
+import json
 import logging
 import platform
 import shutil
@@ -23,20 +24,36 @@ DEFAULT_STABILITY_TIMEOUT_SECONDS = 30.0
 LOCK_FILE_NAME = ".chromadb_backup.lock"
 BACKUP_PATTERN = "chromadb_backup_*.tar.gz"
 HASH_SUFFIX = ".sha256"
+STATUS_FILE_NAME = "backup_status.json"
+
+
+def _update_status(status: str, error: str | None = None, target: str | None = None) -> None:
+    try:
+        status_file = BACKUP_DIR / STATUS_FILE_NAME
+        status_file.parent.mkdir(parents=True, exist_ok=True)
+        data = {
+            "status": status,
+            "last_update": time.time(),
+            "error": error,
+            "target": target
+        }
+        status_file.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    except Exception as e:
+        logger.error("Failed to write backup status: %s", e)
 
 
 @contextmanager
 def _operation_lock(lock_file: Path):
     if lock_file.exists():
-        logger.warning("Another backup/restore operation is in progress. Lock file exists: %s", lock_file)
-        raise RuntimeError(f"Lock file exists: {lock_file}")
+        logger.warning("다른 백업 또는 복원 작업이 진행 중입니다. 잠금 파일이 존재합니다: %s", lock_file)
+        raise RuntimeError(f"잠금 파일이 존재합니다: {lock_file}")
     try:
         lock_file.parent.mkdir(parents=True, exist_ok=True)
         lock_file.touch(exist_ok=False)
         yield
     except FileExistsError as e:
-        logger.warning("Another process acquired the lock concurrently: %s", lock_file)
-        raise RuntimeError(f"Lock file exists: {lock_file}") from e
+        logger.warning("다른 프로세스가 동시에 잠금을 획득했습니다: %s", lock_file)
+        raise RuntimeError(f"잠금 파일이 존재합니다: {lock_file}") from e
     finally:
         lock_file.unlink(missing_ok=True)
 
@@ -54,7 +71,7 @@ def _wait_for_stable_snapshot(vector_db_dir: Path, quiet_period_seconds: float, 
 
     while True:
         if time.time() - start_time > timeout_seconds:
-            logger.warning("Timeout waiting for ChromaDB stability. Backing up anyway.")
+            logger.warning("ChromaDB 안정화 대기 시간 초과. 백업을 계속 진행합니다.")
             return False
 
         time.sleep(1)
@@ -80,7 +97,7 @@ def _generate_hash_sidecar(backup_path: Path) -> Path:
 def verify_hash_sidecar(backup_path: Path) -> bool:
     hash_path = backup_path.with_name(f"{backup_path.name}{HASH_SUFFIX}")
     if not hash_path.exists():
-        logger.warning("Hash sidecar not found for %s, skipping verification.", backup_path)
+        logger.warning("%s에 대한 해시 검증용 파일을 찾을 수 없어 검증을 건너뜁니다.", backup_path)
         return True
 
     expected_hash = hash_path.read_text(encoding="utf-8").strip()
@@ -91,7 +108,7 @@ def verify_hash_sidecar(backup_path: Path) -> bool:
     actual_hash = sha256.hexdigest()
 
     if expected_hash != actual_hash:
-        logger.error("Hash verification failed for %s", backup_path)
+        logger.error("%s에 대한 해시 검증에 실패했습니다.", backup_path)
         return False
     return True
 
@@ -110,9 +127,11 @@ def backup_chromadb(
     stability_timeout_seconds: float = DEFAULT_STABILITY_TIMEOUT_SECONDS,
 ) -> bool:
     ensure_directories()
+    _update_status("running_backup")
 
     if not vector_db_dir.exists():
-        logger.error("Backup failed: vector DB directory does not exist: %s", vector_db_dir)
+        logger.error("백업 실패: 벡터 DB 디렉터리가 존재하지 않습니다: %s", vector_db_dir)
+        _update_status("failed", error=f"벡터 DB 디렉터리가 존재하지 않습니다: {vector_db_dir}")
         return False
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -121,23 +140,25 @@ def backup_chromadb(
 
     try:
         with _operation_lock(lock_file):
-            logger.info("Waiting for a stable ChromaDB snapshot: %s", vector_db_dir)
+            logger.info("안정적인 ChromaDB 스냅샷 생성 대기 중: %s", vector_db_dir)
             _wait_for_stable_snapshot(
                 vector_db_dir,
                 quiet_period_seconds=quiet_period_seconds,
                 timeout_seconds=stability_timeout_seconds,
             )
 
-            logger.info("Creating ChromaDB backup: %s -> %s", vector_db_dir, backup_path)
+            logger.info("ChromaDB 백업 작성 중: %s -> %s", vector_db_dir, backup_path)
             with tarfile.open(backup_path, "w:gz") as tar:
                 tar.add(vector_db_dir, arcname=vector_db_dir.name, filter=_exclude_runtime_files)
 
             _generate_hash_sidecar(backup_path)
-            logger.info("Successfully created backup and hash sidecar.")
+            logger.info("백업 파일 및 해시 검증 파일을 성공적으로 생성했습니다.")
+            _update_status("completed", target=backup_path.name)
             rotate_backups(rotation_limit, backup_dir)
             return True
     except Exception as e:
-        logger.error("Backup process failed: %s", e)
+        logger.error("백업 프로세스 실패: %s", e)
+        _update_status("failed", error=str(e))
         if backup_path.exists():
             backup_path.unlink(missing_ok=True)
             backup_path.with_name(f"{backup_path.name}{HASH_SUFFIX}").unlink(missing_ok=True)
@@ -152,14 +173,14 @@ def rotate_backups(limit: int, backup_dir: Path = BACKUP_DIR) -> None:
     for archive_path in backups[:-limit]:
         archive_path.unlink(missing_ok=True)
         archive_path.with_name(f"{archive_path.name}{HASH_SUFFIX}").unlink(missing_ok=True)
-        logger.info("Removed old backup: %s", archive_path.name)
+        logger.info("오래된 백업 삭제 완료: %s", archive_path.name)
 
 
 def diagnose_db(vector_db_dir: Path = VECTOR_DB_DIR) -> bool:
     # 1. SQLite 파일 무결성 검사
     sqlite_file = vector_db_dir / "chroma.sqlite3"
     if not sqlite_file.exists():
-        logger.error("Diagnostics failed: DB file not found: %s", sqlite_file)
+        logger.error("진단 실패: DB 파일을 찾을 수 없습니다: %s", sqlite_file)
         return False
 
     try:
@@ -170,11 +191,11 @@ def diagnose_db(vector_db_dir: Path = VECTOR_DB_DIR) -> bool:
         conn.close()
 
         if not (result and result[0] == "ok"):
-            logger.error("DB Diagnostics failed: Integrity check returned: %s", result)
+            logger.error("DB 진단 실패: 무결성 검사 결과: %s", result)
             return False
-        logger.info("DB Diagnostics passed: Integrity check OK.")
+        logger.info("DB 진단 통과: 무결성 검사 통과")
     except sqlite3.Error as e:
-        logger.error("DB Diagnostics failed: SQLite error: %s", e)
+        logger.error("DB 진단 실패: SQLite 오류: %s", e)
         return False
 
     # 2. ChromaDB 클라이언트 실제 쿼리 검증
@@ -195,11 +216,11 @@ def diagnose_db(vector_db_dir: Path = VECTOR_DB_DIR) -> bool:
         client.delete_collection(name="diagnostic_collection")
 
         if not results or not results.get("ids"):
-            logger.error("DB Diagnostics failed: ChromaDB query returned no results.")
+            logger.error("DB 진단 실패: ChromaDB 쿼리 결과가 없습니다.")
             return False
-        logger.info("DB Diagnostics passed: ChromaDB query OK.")
+        logger.info("DB 진단 통과: ChromaDB 쿼리 정상 작동")
     except Exception as e:
-        logger.error("DB Diagnostics failed: ChromaDB client error: %s", e)
+        logger.error("DB 진단 실패: ChromaDB 클라이언트 오류: %s", e)
         return False
 
     return True
@@ -218,7 +239,7 @@ def _move_existing_db(vector_db_dir: Path) -> Path | None:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     temp_existing = vector_db_dir.parent / f"{vector_db_dir.name}_temp_{timestamp}"
     shutil.move(vector_db_dir, temp_existing)
-    logger.info("Moved existing DB temporarily to: %s", temp_existing)
+    logger.info("기존 DB를 임시 위치로 이동했습니다: %s", temp_existing)
     return temp_existing
 
 
@@ -245,16 +266,16 @@ def _is_safe_tar_member(member: tarfile.TarInfo, target_dir: Path) -> bool:
 def _restore_previous_db(vector_db_dir: Path, temp_existing: Path | None) -> None:
     if vector_db_dir.exists():
         shutil.rmtree(vector_db_dir)
-        logger.info("Removed invalid restored DB: %s", vector_db_dir)
+        logger.info("잘못 복원된 DB 제거 완료: %s", vector_db_dir)
     if temp_existing and temp_existing.exists():
         shutil.move(temp_existing, vector_db_dir)
-        logger.info("Restored original DB from: %s", temp_existing)
+        logger.info("원본 DB 복원 완료: %s", temp_existing)
 
 
 def _remove_previous_db(temp_existing: Path | None) -> None:
     if temp_existing and temp_existing.exists():
         shutil.rmtree(temp_existing)
-        logger.info("Removed temporary original DB: %s", temp_existing)
+        logger.info("임시 보관된 원본 DB 제거 완료: %s", temp_existing)
 
 
 def restore_chromadb(
@@ -265,32 +286,39 @@ def restore_chromadb(
     ensure_directories()
     backup_path = _find_backup(backup_file, backup_dir)
     if backup_path is None:
-        logger.error("Restore failed: no backup archives found in %s", backup_dir)
+        logger.error("복원 실패: %s 디렉터리에서 백업 보관 파일을 찾을 수 없습니다.", backup_dir)
+        _update_status("failed", error="백업 보관 파일을 찾을 수 없습니다.")
         return False
     if not backup_path.exists():
-        logger.error("Restore failed: backup archive does not exist: %s", backup_path)
+        logger.error("복원 실패: 백업 보관 파일이 존재하지 않습니다: %s", backup_path)
+        _update_status("failed", error=f"백업 보관 파일이 존재하지 않습니다: {backup_path.name}")
         return False
     if not verify_hash_sidecar(backup_path):
+        _update_status("failed", error=f"해시 검증에 실패했습니다: {backup_path.name}")
         return False
 
+    _update_status("running_restore", target=backup_path.name)
     lock_file = vector_db_dir / LOCK_FILE_NAME if vector_db_dir.exists() else vector_db_dir.parent / LOCK_FILE_NAME
     temp_existing: Path | None = None
 
     try:
         with _operation_lock(lock_file):
-            logger.info("Restoring ChromaDB from backup: %s", backup_path.name)
+            logger.info("백업에서 ChromaDB 복원 중: %s", backup_path.name)
             temp_existing = _move_existing_db(vector_db_dir)
             _extract_archive(backup_path, vector_db_dir.parent)
 
             if not diagnose_db(vector_db_dir):
                 _restore_previous_db(vector_db_dir, temp_existing)
+                _update_status("failed", error="복원 후 데이터베이스 진단에 실패했습니다.", target=backup_path.name)
                 return False
 
             _remove_previous_db(temp_existing)
-            logger.info("Successfully restored ChromaDB from backup: %s", backup_path.name)
+            logger.info("백업에서 ChromaDB를 성공적으로 복원했습니다: %s", backup_path.name)
+            _update_status("completed", target=backup_path.name)
             return True
 
     except Exception as e:
-        logger.error("Restore process failed: %s", e)
+        logger.error("복원 프로세스 실패: %s", e)
         _restore_previous_db(vector_db_dir, temp_existing)
+        _update_status("failed", error=str(e), target=backup_path.name)
         return False

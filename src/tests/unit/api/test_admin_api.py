@@ -37,6 +37,30 @@ def test_get_backups(mock_backup_dir, mock_backup_files):
         assert data["backups"][0]["filename"] == "chromadb_backup_20230103_120000.tar.gz"
 
 
+def test_get_backup_status_no_file(mock_backup_dir):
+    with patch("src.api.main.BACKUP_DIR", mock_backup_dir):
+        response = client.get("/api/admin/backups/status")
+        assert response.status_code == 200
+        assert response.json() == {"status": "idle"}
+
+
+def test_get_backup_status_with_file(mock_backup_dir):
+    import json
+    status_file = mock_backup_dir / "backup_status.json"
+    dummy_data = {
+        "status": "running_backup",
+        "last_update": 123456.0,
+        "error": None,
+        "target": "chromadb_backup_20230101_120000.tar.gz"
+    }
+    status_file.write_text(json.dumps(dummy_data), encoding="utf-8")
+
+    with patch("src.api.main.BACKUP_DIR", mock_backup_dir):
+        response = client.get("/api/admin/backups/status")
+        assert response.status_code == 200
+        assert response.json() == dummy_data
+
+
 def test_create_backup():
     # TestClient는 BackgroundTasks를 비동기가 아닌 동기적으로 즉시 실행합니다.
     # 따라서 override 할 필요 없이 실제 함수(backup_chromadb)가 호출되었는지만 검증하면 됩니다.

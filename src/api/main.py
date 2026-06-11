@@ -1,10 +1,40 @@
+from contextlib import asynccontextmanager
 from fastapi import BackgroundTasks, FastAPI
 from fastapi.responses import JSONResponse
 
 from src.utils.paths import BACKUP_DIR
 from src.vector_db.backup_manager import backup_chromadb, restore_chromadb
 
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # 서버 기동 시 기존 백업 상태 파일이 있다면 안전하게 삭제하여 초기화
+    status_file = BACKUP_DIR / "backup_status.json"
+    if status_file.exists():
+        try:
+            status_file.unlink(missing_ok=True)
+        except Exception:
+            pass
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
+
+
+@app.get("/api/admin/backups/status")
+async def get_backup_status():
+    """
+    현재 진행 중인 백업/복원 작업의 상태를 조회합니다.
+    """
+    import json
+    status_file = BACKUP_DIR / "backup_status.json"
+    if not status_file.exists():
+        return JSONResponse(content={"status": "idle"})
+    try:
+        data = json.loads(status_file.read_text(encoding="utf-8"))
+        return JSONResponse(content=data)
+    except Exception as e:
+        return JSONResponse(content={"status": "failed", "error": f"Failed to read status file: {e}"}, status_code=500)
 
 
 @app.get("/api/admin/backups")

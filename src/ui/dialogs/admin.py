@@ -15,7 +15,7 @@ from src.utils.unicode import normalize_to_nfc
 
 logger = logging.getLogger(__name__)
 
-API_URL = "http://localhost:8000"  # FastAPI 서버 주소
+API_URL = settings.BACKEND_API_URL  # FastAPI 서버 주소
 
 
 def reset_admin_active():
@@ -417,13 +417,49 @@ def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
                             st.rerun()  # pragma: no cover
 
     with tab2:
-        st.subheader("데이터베이스 백업 및 복원")  # pragma: no cover
+        @st.fragment(run_every="2s")
+        def _backup_status_monitor():
+            try:
+                response = requests.get(f"{API_URL}/api/admin/backups/status")
+                if response.status_code == 200:
+                    status_data = response.json()
+                    status = status_data.get("status", "idle")
+                    error = status_data.get("error")
+                    target = status_data.get("target")
 
-        if st.button("수동 백업 실행", use_container_width=True):
+                    prev_running = st.session_state.get("backup_job_running", False)
+                    current_running = status in ("running_backup", "running_restore")
+
+                    st.session_state.backup_job_running = current_running
+
+                    if current_running:
+                        job_name = "백업" if status == "running_backup" else "복원"
+                        msg = f"데이터베이스 {job_name} 작업이 백그라운드에서 진행 중입니다..."
+                        if target:
+                            msg += f" (대상: {target})"
+                        st.info(msg)
+                    else:
+                        if status == "completed" and target:
+                            st.success(f"작업 완료: {target}")
+                        elif status == "failed" and error:
+                            st.error(f"작업 실패: {error}")
+
+                    if prev_running != current_running:
+                        st.rerun()
+            except Exception as e:
+                st.warning(f"상태 모니터링 API 호출 실패: {e}")
+
+        _backup_status_monitor()
+
+        st.subheader("데이터베이스 백업 및 복원")  # pragma: no cover
+        is_disabled = st.session_state.get("backup_job_running", False)
+
+        if st.button("수동 백업 실행", use_container_width=True, disabled=is_disabled):
             try:
                 response = requests.post(f"{API_URL}/api/admin/backups")
                 if response.status_code == 200:
                     st.toast("백업 작업이 시작되었습니다.")  # pragma: no cover
+                    st.rerun()
                 else:
                     st.error(f"백업 시작 실패: {response.text}")  # pragma: no cover
             except requests.exceptions.RequestException as e:  # pragma: no cover
@@ -444,7 +480,7 @@ def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
                         with col1:
                             st.write(f"`{backup['filename']}`")  # pragma: no cover
                         with col2:
-                            if st.button("복원", key=f"restore_{backup['filename']}", use_container_width=True):
+                            if st.button("복원", key=f"restore_{backup['filename']}", use_container_width=True, disabled=is_disabled):
                                 st.session_state.restore_filename = backup["filename"]
                                 st.session_state.show_restore_warning = True
             else:
@@ -452,25 +488,26 @@ def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
         except requests.exceptions.RequestException as e:  # pragma: no cover
             st.error(f"API 연결 실패: {e}")  # pragma: no cover
 
-    if st.session_state.get("show_restore_warning"):
-        st.warning("정말로 복원하시겠습니까? 현재 데이터베이스를 덮어쓰게 됩니다.")  # pragma: no cover
-        col1, col2 = st.columns(2)  # pragma: no cover
-        with col1:
-            if st.button("예, 복원합니다.", use_container_width=True):
-                try:
-                    filename = st.session_state.restore_filename
-                    response = requests.post(f"{API_URL}/api/admin/backups/restore?filename={filename}")
-                    if response.status_code == 200:
-                        st.toast(f"'{filename}'으로 복원 작업이 시작되었습니다.")  # pragma: no cover
-                        st.session_state.show_restore_warning = False
-                    else:
-                        st.error(f"복원 시작 실패: {response.text}")  # pragma: no cover
-                except requests.exceptions.RequestException as e:  # pragma: no cover
-                    st.error(f"API 연결 실패: {e}")  # pragma: no cover
-        with col2:
-            if st.button("아니요, 취소합니다.", use_container_width=True):
-                st.session_state.show_restore_warning = False
-                st.rerun()  # pragma: no cover
+        if st.session_state.get("show_restore_warning"):
+            st.warning("정말로 복원하시겠습니까? 현재 데이터베이스를 덮어쓰게 됩니다.")  # pragma: no cover
+            col1, col2 = st.columns(2)  # pragma: no cover
+            with col1:
+                if st.button("예, 복원합니다.", use_container_width=True, disabled=is_disabled):
+                    try:
+                        filename = st.session_state.restore_filename
+                        response = requests.post(f"{API_URL}/api/admin/backups/restore?filename={filename}")
+                        if response.status_code == 200:
+                            st.toast(f"'{filename}'으로 복원 작업이 시작되었습니다.")  # pragma: no cover
+                            st.session_state.show_restore_warning = False
+                            st.rerun()
+                        else:
+                            st.error(f"복원 시작 실패: {response.text}")  # pragma: no cover
+                    except requests.exceptions.RequestException as e:  # pragma: no cover
+                        st.error(f"API 연결 실패: {e}")  # pragma: no cover
+            with col2:
+                if st.button("아니요, 취소합니다.", use_container_width=True):
+                    st.session_state.show_restore_warning = False
+                    st.rerun()  # pragma: no cover
 
     st.divider()  # pragma: no cover
     if st.button("관리 시스템 종료 (닫기)", use_container_width=True):
