@@ -2,7 +2,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.ui.dialogs.admin import _render_sync_progress, reset_admin_active, show_admin_dialog
+from src.ui.dialogs.admin import API_URL, _render_sync_progress, reset_admin_active, show_admin_dialog
 
 
 @pytest.fixture
@@ -70,7 +70,7 @@ class TestAdminDialog:
                 func(db_manager, init_cb)
 
                 mock_st.subheader.assert_called()
-                mock_get.assert_called_with("http://localhost:8000/api/admin/backups")
+                mock_get.assert_called_with(f"{API_URL}/api/admin/backups")
 
     def test_show_admin_dialog_backup_and_restore(self, mock_st):
         db_manager = MagicMock()
@@ -99,10 +99,8 @@ class TestAdminDialog:
                 func = getattr(show_admin_dialog, "__wrapped__", show_admin_dialog)
                 func(db_manager, init_cb)
 
-                mock_requests.post.assert_any_call("http://localhost:8000/api/admin/backups")
-                mock_requests.post.assert_any_call(
-                    "http://localhost:8000/api/admin/backups/restore?filename=backup1.tar.gz"
-                )
+                mock_requests.post.assert_any_call(f"{API_URL}/api/admin/backups")
+                mock_requests.post.assert_any_call(f"{API_URL}/api/admin/backups/restore?filename=backup1.tar.gz")
 
     def test_render_sync_progress(self, mock_st):
         job = MagicMock()
