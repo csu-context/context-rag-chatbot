@@ -1,4 +1,5 @@
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
+
 from fastapi import BackgroundTasks, FastAPI
 from fastapi.responses import JSONResponse
 
@@ -11,10 +12,8 @@ async def lifespan(app: FastAPI):
     # 서버 기동 시 기존 백업 상태 파일이 있다면 안전하게 삭제하여 초기화
     status_file = BACKUP_DIR / "backup_status.json"
     if status_file.exists():
-        try:
+        with suppress(Exception):
             status_file.unlink(missing_ok=True)
-        except Exception:
-            pass
     yield
 
 

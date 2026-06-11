@@ -480,7 +480,12 @@ def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
                         with col1:
                             st.write(f"`{backup['filename']}`")  # pragma: no cover
                         with col2:
-                            if st.button("복원", key=f"restore_{backup['filename']}", use_container_width=True, disabled=is_disabled):
+                            if st.button(
+                                "복원",
+                                key=f"restore_{backup['filename']}",
+                                use_container_width=True,
+                                disabled=is_disabled,
+                            ):
                                 st.session_state.restore_filename = backup["filename"]
                                 st.session_state.show_restore_warning = True
             else:
