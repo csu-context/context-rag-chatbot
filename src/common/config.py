@@ -76,6 +76,7 @@ class Settings(BaseSettings):
     PARSER_TYPE: Literal["manual", "docling"] = Field(default="docling")
     DOC_TYPE: Literal["legal", "general"] = Field(default="legal")
     OLLAMA_BASE_URL: str = "http://localhost:11434"
+    BACKEND_API_URL: str = "http://localhost:8000"
     # PDF 헤더/푸터 동적 제거 임계치: 전체 페이지 중 이 비율 이상 반복되는 라인을 노이즈로 분류
     PDF_HEADER_FOOTER_THRESHOLD: float = Field(default=0.8)
     # PDF 잔여 노이즈 패턴 (범용 정규식). 환경 변수로 오버라이드 가능: PDF_NOISE_PATTERNS='["pattern1"]'
