@@ -1,6 +1,7 @@
 import hashlib
 import json
 import logging
+import os
 import platform
 import shutil
 import sqlite3
@@ -228,6 +229,18 @@ def _find_backup(backup_file: str | None, backup_dir: Path) -> Path | None:
     return backups[0] if backups else None
 
 
+def _release_chromadb_locks() -> None:
+    chroma_host = os.environ.get("CHROMA_SERVER_HOST")
+    if not chroma_host:
+        return
+    try:
+        client = chromadb.HttpClient(host=chroma_host, port=os.environ.get("CHROMA_SERVER_PORT", "8000"))
+        client.reset()
+        logger.info("ChromaDB 서버 리셋을 통해 파일 락(Lock)을 해제했습니다.")
+    except Exception as e:
+        logger.warning(f"ChromaDB 서버 리셋 시도 중 예외 발생 (무시됨): {e}")
+
+
 def _move_existing_db(vector_db_dir: Path) -> Path | None:
     if not vector_db_dir.exists() or not any(vector_db_dir.iterdir()):
         return None
@@ -313,6 +326,7 @@ def restore_chromadb(
     try:
         with _operation_lock(lock_file):
             logger.info("백업에서 ChromaDB 복원 중: %s", backup_path.name)
+            _release_chromadb_locks()
             temp_existing = _move_existing_db(vector_db_dir)
             _extract_archive(backup_path, vector_db_dir.parent)
 

@@ -98,6 +98,7 @@ services:
     environment:
       - IS_PERSISTENT=TRUE
       - PERSIST_DIRECTORY=/data
+      - ALLOW_RESET=TRUE
     networks:
       - rag-network
     # ChromaDB 리소스 한도
