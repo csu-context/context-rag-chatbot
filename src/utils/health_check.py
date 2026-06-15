@@ -11,7 +11,7 @@ except ImportError:
     # 직접 실행 시 src를 찾지 못할 경우를 대비한 로컬 임포트 (paths.py가 같은 폴더에 있으므로 가능)
     from paths import BASE_DIR, RAW_DATA_DIR, REQUIRED_DIRECTORIES, ensure_directories
 from src.common.config import settings
-from src.common.constants import MetadataFields
+from src.common.constants import MetadataFields, SupportedFormats
 from src.utils.file_utils import generate_file_hash
 
 # 로깅 설정
@@ -65,7 +65,7 @@ def check_data_integrity():
             logger.error(f"  [MISSING] {path.name} 경로 누락: {path}")
 
     raw_files = []
-    for ext in [".pdf", ".md", ".markdown"]:
+    for ext in SupportedFormats.EXTENSIONS:
         raw_files.extend(list(RAW_DATA_DIR.glob(f"**/*{ext}")))
 
     if raw_files:
@@ -130,7 +130,7 @@ def check_database_status():
 def _get_local_files_info() -> dict[str, dict]:
     """로컬 raw 데이터 파일들의 정보(상대 경로, 해시)를 추출"""
     raw_files = []
-    for ext in [".pdf", ".md", ".markdown"]:
+    for ext in SupportedFormats.EXTENSIONS:
         raw_files.extend(list(RAW_DATA_DIR.glob(f"**/*{ext}")))
 
     local_files_info = {}

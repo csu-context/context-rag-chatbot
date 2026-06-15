@@ -15,7 +15,6 @@ if sys.platform != "linux":
 else:
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
-import json
 import logging
 import threading
 import time
@@ -29,6 +28,7 @@ from src.common.constants import MetadataFields
 from src.core.chains import get_rag_chain
 from src.core.retriever import RetrieverFactory
 from src.models.factory import LLMFactory
+from src.ui.components.copy_button import render_custom_copy_button
 from src.ui.dialogs.admin import show_admin_dialog
 from src.ui.dialogs.chunk_viewer import show_chunks_viewer_dialog
 from src.ui.session import init_session_state
@@ -44,76 +44,6 @@ setup_global_logging()
 logging.getLogger("asyncio").setLevel(logging.CRITICAL)
 perf_logger = PerformanceLogger()  # 전용 로거 인스턴스 생성
 logger = logging.getLogger(__name__)
-
-
-# --- 커스텀 SVG 복사 버튼 렌더러 ---
-def render_custom_copy_button(text_to_copy: str, key_suffix: str):
-    safe_text = json.dumps(text_to_copy)
-    html_code = f"""
-    <style>
-        .copy-btn {{
-            background: transparent;
-            border: none;
-            cursor: pointer;
-            color: #555;
-            padding: 4px;
-            border-radius: 4px;
-            transition: background 0.2s;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }}
-        .copy-btn:hover {{
-            background: #f0f0f0;
-        }}
-        .copy-btn svg {{
-            width: 20px;
-            height: 20px;
-            display: block;
-        }}
-    </style>
-    <button class="copy-btn" id="copybtn-{key_suffix}" title="답변 복사하기">
-        <span id="ic-copy-{key_suffix}" style="display:flex">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                 stroke-linecap="round" stroke-linejoin="round">
-                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-            </svg>
-        </span>
-        <span id="ic-check-{key_suffix}" style="display:none; color:#4CAF50">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                 stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="20 6 9 17 4 12"></polyline>
-            </svg>
-        </span>
-    </button>
-    <script>
-        (function() {{
-            // st.html은 메인 DOM에 인라인 주입되므로(components.html의 iframe 격리 제거),
-            // 메시지별 버튼에 고유 id로 직접 바인딩해 전역 함수 충돌(마지막 메시지만 복사)을 막는다.
-            // 아이콘은 인라인 SVG로 렌더링한다(외부 폰트 CDN 의존 제거 — 오프라인/폐쇄망에서도 표시됨).
-            const btn = document.getElementById('copybtn-{key_suffix}');
-            if (!btn || btn.dataset.copyBound) return;  // 재실행 시 중복 바인딩 방지
-            btn.dataset.copyBound = '1';
-            const text = {safe_text};
-            const icCopy = document.getElementById('ic-copy-{key_suffix}');
-            const icCheck = document.getElementById('ic-check-{key_suffix}');
-            btn.addEventListener('click', function() {{
-                navigator.clipboard.writeText(text).then(function() {{
-                    icCopy.style.display = 'none';
-                    icCheck.style.display = 'flex';
-                    setTimeout(function() {{
-                        icCopy.style.display = 'flex';
-                        icCheck.style.display = 'none';
-                    }}, 2000);
-                }}).catch(function(err) {{
-                    console.error('Copy Failed', err);
-                }});
-            }});
-        }})();
-    </script>
-    """
-    st.html(html_code, unsafe_allow_javascript=True)
 
 
 def get_doc_field(doc, field, default=None):
@@ -139,6 +69,29 @@ def get_doc_score(doc, default=0.0):
     return default
 
 
+# 페이지가 없는 포맷(HWP/HWPX/markdown): 페이지 번호 대신 섹션 위치로 출처를 표기한다.
+_PAGELESS_DOC_TYPES = {"hwp", "hwpx", "md", "markdown"}
+
+
+def get_source_location(metadata: dict) -> tuple[str, str] | None:
+    """출처 위치를 (종류, 값)으로 반환한다.
+
+    - PDF 등 페이지가 있는 포맷: ("page", "12")
+    - HWP/markdown 등 페이지가 없는 포맷: ("section", "제2장 학사운영")
+    - 위치 정보가 없으면 None.
+
+    markitdown 계열(HWP/markdown)은 페이지 경계가 없어 모든 청크가 pg_num=1 이므로,
+    의미 없는 "p.1" 대신 청크의 섹션 제목(헤더 경로)으로 위치를 표기한다.
+    """
+    doc_type = str(metadata.get(MetadataFields.DOC_TYPE, "")).lower()
+    if doc_type in _PAGELESS_DOC_TYPES:
+        section = str(metadata.get(MetadataFields.SEC_TITLE) or metadata.get(MetadataFields.HEADER_PATH) or "").strip()
+        if section and section not in ("기본 섹션", "UNKNOWN"):
+            return ("section", section)
+        return None
+    return ("page", str(metadata.get(MetadataFields.PG_NUM, "-")))
+
+
 # --- 1. 페이지 설정 ---
 st.set_page_config(
     page_title="기업 매뉴얼 챗봇 (관리 시스템 통합)",
@@ -154,26 +107,21 @@ init_session_state()
 # Redis 세션 복원 — REDIS_URL 설정 시 이전 대화 기록 복구
 # 로드밸런서로 다른 인스턴스로 라우팅되어도 대화 연속성 유지
 if settings.REDIS_URL:
-    from src.utils.cookie import get_cookie_session_id, set_cookie_session_id
     from src.utils.redis_session import RedisSessionStore
 
-    # 1. 쿼리 스트링 또는 브라우저 쿠키에서 기존 세션 식별 시도
-    _session_id = st.query_params.get("sid", "") or get_cookie_session_id()
+    # 세션 식별을 URL query param(sid)으로 고정한다. 새로고침해도 URL이 유지되므로
+    # 동일 세션을 안정적으로 복원할 수 있다.
+    # (기존 쿠키 주입 방식은 set_cookie 직후 st.rerun() 레이스 + st.context.cookies
+    #  읽기 타이밍 의존으로 새로고침 복원이 불안정했음 → query param 으로 대체)
+    _session_id = st.query_params.get("sid", "")
 
-    # 2. 식별 불가능하고 아직 쿠키를 쓴 적이 없는 경우 새로 발급한 session_uuid 사용 및 브라우저 쿠키 동기화
     if not _session_id:
-        _session_id = st.session_state.get("session_uuid")
-        if not _session_id:  # 방어 가드
-            _session_id = str(uuid.uuid4())
-            st.session_state.session_uuid = _session_id
-
-        # 무한 루프 방지: 한 번만 쿠키 쓰기를 지시
-        if "st_session_id_written" not in st.session_state:
-            st.session_state.st_session_id_written = True
-            set_cookie_session_id(str(_session_id))
-            st.rerun()
+        # 신규 세션: session_uuid 를 발급/재사용하고 URL 에 고정한다(다음 런/새로고침부터 sid 로 식별).
+        _session_id = st.session_state.get("session_uuid") or str(uuid.uuid4())
+        st.session_state.session_uuid = _session_id
+        st.query_params["sid"] = _session_id
     else:
-        # 기존 세션 ID가 확인되었으므로, 현재 session_state 변수에도 덮어쓰기하여 일관성 유지
+        # 기존 세션 ID 확인 — session_state 에도 반영하여 일관성 유지
         st.session_state.session_uuid = str(_session_id)
 
     st.session_state._redis_session_id = str(_session_id)
@@ -193,13 +141,17 @@ def reset_doc_dialog():
 # [문서 원문 보기]
 @st.dialog("문서 원문 보기", on_dismiss=reset_doc_dialog)
 def show_document_dialog(doc: dict):
-    source = doc.get("metadata", {}).get(MetadataFields.SRC_NAME, "알 수 없음")
-    page = doc.get("metadata", {}).get(MetadataFields.PG_NUM, "-")
+    metadata = doc.get("metadata", {})
+    source = metadata.get(MetadataFields.SRC_NAME, "알 수 없음")
     score = doc.get("score", 0.0)
     content = doc.get("content", "")
 
     st.markdown(f"**출처:** {source}")
-    st.markdown(f"**페이지:** {page}")
+    loc = get_source_location(metadata)
+    if loc and loc[0] == "page":
+        st.markdown(f"**페이지:** p.{loc[1]}")
+    elif loc:
+        st.markdown(f"**위치:** {loc[1]}")
     st.markdown(f"**관련도 점수:** {score:.4f}")
     st.text_area("원문 내용", content, height=300)
     if st.button("닫기"):
@@ -335,7 +287,6 @@ with st.sidebar:
 
     st.divider()
     st.subheader("실시간 자원 모니터링")
-    stats = get_system_stats()
 
     # @st.fragment(run_every) 로 실제 실시간 반영
     @st.fragment(run_every="5s")
@@ -353,6 +304,28 @@ with st.sidebar:
             st.info("현재 환경에서 GPU를 사용할 수 없습니다.")
 
     _resource_monitor()
+
+    st.divider()
+    st.subheader("세션 관리")
+
+    # 대화 초기화 버튼 클릭 시 동작하는 로직
+    if st.button("대화 초기화", type="primary", use_container_width=True, disabled=st.session_state.is_generating):
+        st.session_state.messages = []
+        st.session_state.docs = []
+        st.session_state.final_docs = []
+
+        logger.info("대화 내용이 로컬 메모리에서 성공적으로 초기화되었습니다.")
+
+        if settings.REDIS_URL and hasattr(st.session_state, "_redis_session_id"):
+            from src.utils.redis_session import RedisSessionStore
+
+            RedisSessionStore.delete_session(st.session_state._redis_session_id)
+            logger.info("Redis 대화 세션 정보가 정상적으로 삭제되었습니다.")
+
+        st.rerun()
+
+        # 화면 갱신을 통한 상태 동기화
+        st.session_state.should_rerun_app = True
 
 # --- 5. 다이얼로그 활성화 제어 (모듈화 이관 호출) ---
 if st.session_state.get("admin_active", False):
@@ -462,7 +435,7 @@ for msg_idx, msg in enumerate(st.session_state.messages):
                     continue
                 metadata = doc.get("metadata", {})
                 source = metadata.get(MetadataFields.SRC_NAME, "알 수 없음")
-                page = metadata.get(MetadataFields.PG_NUM, "-")
+                loc = get_source_location(metadata)
 
                 # rerank_score 없을 때 RRF/기본값 0.0으로 무조건 경고 발생하는 오탐 방지
                 score = metadata.get("rerank_score")
@@ -471,7 +444,13 @@ for msg_idx, msg in enumerate(st.session_state.messages):
                 display_score = max(0.0, (score - 0.5) * 2) if has_rerank_score else 1.0
                 is_low_confidence = has_rerank_score and score < 0.5
 
-                button_label = f"📄 {source} (p.{page}) - 신뢰도: {display_score:.2f}"
+                if loc and loc[0] == "page":
+                    loc_text = f" (p.{loc[1]})"
+                elif loc:
+                    loc_text = f" · {loc[1]}"
+                else:
+                    loc_text = ""
+                button_label = f"📄 {source}{loc_text} - 신뢰도: {display_score:.2f}"
                 if is_low_confidence:
                     button_label += " ⚠️"
 

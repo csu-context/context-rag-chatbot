@@ -120,6 +120,12 @@ class SyncController:
             except SyncCancelledError:
                 j.mark_cancelled()
             except Exception as e:
+                # 백그라운드 스레드 예외는 job 상태에만 담기던 것을 로그에도 남긴다.
+                # foreground/main.py와 동일하게 스택트레이스를 보존한다. (#201)
+                logger.error(
+                    f"백그라운드 동기화 실패 (parser={parser_type}, 최근 파일={j.file_name!r}): {e}",
+                    exc_info=True,
+                )
                 j.fail(str(e))
 
         thread = threading.Thread(target=run, args=(job,), daemon=True, name="sync-background")

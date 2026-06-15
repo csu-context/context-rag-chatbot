@@ -53,6 +53,11 @@ rank-bm25==0.2.2
 kiwipiepy==0.23.1
 scikit-learn==1.8.0
 
+# 백엔드 API 및 통신 (FastAPI)
+fastapi>=0.100.0
+httpx>=0.24.0
+uvicorn>=0.22.0
+
 # 테스트 및 품질 관리
 pytest==9.0.3
 pytest-mock==3.15.1

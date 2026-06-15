@@ -1,5 +1,5 @@
 services:
-  # RAG Chatbot 애플리케이션 서비스
+  # RAG Chatbot 애플리케이션 서비스 (Streamlit UI)
   app:
     build:
       context: .
@@ -25,6 +25,7 @@ services:
       # Redis 세션 스토어 — 미설정 시 새로고침마다 대화가 초기화됨(쿠키+Redis 복원 비활성).
       # .env에 REDIS_URL이 있으면 우선(예: 외부 ElastiCache), 없으면 compose의 redis 서비스로 폴백.
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - BACKEND_API_URL=http://api:8080
     ports:
       - "8501:8501"
     # ChromaDB · Ollama · Redis 서버가 준비될 때까지 대기
@@ -32,9 +33,39 @@ services:
       - chromadb
       - ollama
       - redis
+      - api
     # 호스트 Native Ollama 연동을 위한 호스트 게이트웨이 매핑
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    networks:
+      - rag-network
+
+  # FastAPI 백엔드 서비스 (백업/복원 등 백그라운드 관리)
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rag-chatbot-api
+    command: ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8080"]
+    volumes:
+      - ./src:/app/src
+      - ./data:/app/data
+      - ./models:/app/models
+      - ./logs:/app/logs
+      - ./.cache:/app/.cache
+      - ./.env:/app/.env
+      - ./vector_db:/app/vector_db
+    env_file:
+      - .env
+    environment:
+      - CHROMA_SERVER_HOST=chromadb
+      - CHROMA_SERVER_PORT=8000
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - HF_HOME=/app/models
+    ports:
+      - "8080:8080"
+    depends_on:
+      - chromadb
     networks:
       - rag-network
 
