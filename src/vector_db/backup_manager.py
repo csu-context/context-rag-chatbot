@@ -15,7 +15,7 @@ import chromadb
 from chromadb.utils import embedding_functions
 
 from src.common.config import settings
-from src.utils.paths import BACKUP_DIR, VECTOR_DB_DIR, ensure_directories
+from src.utils.paths import BACKUP_DIR, MODELS_DIR, VECTOR_DB_DIR, ensure_directories
 
 logger = logging.getLogger(__name__)
 
@@ -200,6 +200,10 @@ def diagnose_db(vector_db_dir: Path = VECTOR_DB_DIR) -> bool:
         embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
             model_name=settings.EMBEDDING_MODEL_NAME,
             device="cpu",  # 진단용이므로 가볍게 CPU 사용
+            # 앱(embedder.py)과 동일한 캐시 경로에서 로드한다. cache_folder 미지정 시 HF 기본
+            # 경로(HF_HOME/hub)를 탐색하는데, bge-m3는 MODELS_DIR 최상위에 캐시되어 있고 hub는
+            # root 소유라 재다운로드도 거부됨 → 비루트 컨테이너에서 PermissionError(Errno 13).
+            cache_folder=str(MODELS_DIR),
         )
         client = chromadb.PersistentClient(
             path=str(vector_db_dir), settings=chromadb.Settings(anonymized_telemetry=False)
