@@ -229,12 +229,17 @@ def _find_backup(backup_file: str | None, backup_dir: Path) -> Path | None:
 
 
 def _move_existing_db(vector_db_dir: Path) -> Path | None:
-    if not vector_db_dir.exists():
+    if not vector_db_dir.exists() or not any(vector_db_dir.iterdir()):
         return None
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     temp_existing = vector_db_dir.parent / f"{vector_db_dir.name}_temp_{timestamp}"
-    shutil.move(vector_db_dir, temp_existing)
-    logger.info("기존 DB를 임시 위치로 이동했습니다: %s", temp_existing)
+    temp_existing.mkdir(parents=True, exist_ok=True)
+    for item in vector_db_dir.iterdir():
+        try:
+            shutil.move(str(item), str(temp_existing / item.name))
+        except Exception as e:
+            logger.warning(f"임시 이동 실패 (무시됨): {item} - {e}")
+    logger.info("기존 DB 내용을 임시 위치로 이동했습니다: %s", temp_existing)
     return temp_existing
 
 
@@ -260,16 +265,25 @@ def _is_safe_tar_member(member: tarfile.TarInfo, target_dir: Path) -> bool:
 
 def _restore_previous_db(vector_db_dir: Path, temp_existing: Path | None) -> None:
     if vector_db_dir.exists():
-        shutil.rmtree(vector_db_dir)
-        logger.info("잘못 복원된 DB 제거 완료: %s", vector_db_dir)
+        for item in vector_db_dir.iterdir():
+            if item.is_dir():
+                shutil.rmtree(item, ignore_errors=True)
+            else:
+                item.unlink(missing_ok=True)
+        logger.info("잘못 복원된 DB 내용 제거 완료: %s", vector_db_dir)
     if temp_existing and temp_existing.exists():
-        shutil.move(temp_existing, vector_db_dir)
+        for item in temp_existing.iterdir():
+            try:
+                shutil.move(str(item), str(vector_db_dir / item.name))
+            except Exception as e:
+                logger.warning(f"원본 복원 중 실패 (무시됨): {item} - {e}")
+        shutil.rmtree(temp_existing, ignore_errors=True)
         logger.info("원본 DB 복원 완료: %s", temp_existing)
 
 
 def _remove_previous_db(temp_existing: Path | None) -> None:
     if temp_existing and temp_existing.exists():
-        shutil.rmtree(temp_existing)
+        shutil.rmtree(temp_existing, ignore_errors=True)
         logger.info("임시 보관된 원본 DB 제거 완료: %s", temp_existing)
 
 
@@ -314,6 +328,9 @@ def restore_chromadb(
 
     except Exception as e:
         logger.error("복원 프로세스 실패: %s", e)
-        _restore_previous_db(vector_db_dir, temp_existing)
+        try:
+            _restore_previous_db(vector_db_dir, temp_existing)
+        except Exception as inner_e:
+            logger.error("이전 DB 복구 중 추가 오류 발생: %s", inner_e)
         _update_status("failed", error=str(e), target=backup_path.name)
         return False

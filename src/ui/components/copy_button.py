@@ -15,6 +15,10 @@ def render_custom_copy_button(text_to_copy: str, key_suffix: str):
 
     html_code = f"""
     <style>
+        .copy-wrapper {{
+            min-height: 32px;
+            line-height: 32px;
+        }}
         .copy-btn {{
             background: transparent;
             border: none;
@@ -23,7 +27,7 @@ def render_custom_copy_button(text_to_copy: str, key_suffix: str):
             padding: 4px;
             border-radius: 4px;
             transition: background 0.2s;
-            display: flex;
+            display: inline-flex;
             align-items: center;
             justify-content: center;
         }}
@@ -36,28 +40,27 @@ def render_custom_copy_button(text_to_copy: str, key_suffix: str):
             display: block;
         }}
     </style>
-    <button class="copy-btn" id="copybtn-{key_suffix}" title="답변 복사하기">
-        <span id="ic-copy-{key_suffix}" style="display:flex">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                 stroke-linecap="round" stroke-linejoin="round">
-                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-            </svg>
-        </span>
-        <span id="ic-check-{key_suffix}" style="display:none; color:#4CAF50">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                 stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="20 6 9 17 4 12"></polyline>
-            </svg>
-        </span>
-    </button>
+    <div class="copy-wrapper">
+        <button class="copy-btn" id="copybtn-{key_suffix}" title="답변 복사하기">
+            <span id="ic-copy-{key_suffix}" style="display:flex">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                     stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                </svg>
+            </span>
+            <span id="ic-check-{key_suffix}" style="display:none; color:#4CAF50">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                     stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+            </span>
+        </button>
+    </div>
     <script>
         (function() {{
-            // st.html은 메인 DOM에 인라인 주입되므로(components.html의 iframe 격리 제거),
-            // 메시지별 버튼에 고유 id로 직접 바인딩해 전역 함수 충돌(마지막 메시지만 복사)을 막는다.
-            // 아이콘은 인라인 SVG로 렌더링한다(외부 폰트 CDN 의존 제거 — 오프라인/폐쇄망에서도 표시됨).
             const btn = document.getElementById('copybtn-{key_suffix}');
-            if (!btn || btn.dataset.copyBound) return;  // 재실행 시 중복 바인딩 방지
+            if (!btn || btn.dataset.copyBound) return;
             btn.dataset.copyBound = '1';
             const text = {safe_text};
             const icCopy = document.getElementById('ic-copy-{key_suffix}');
@@ -74,7 +77,11 @@ def render_custom_copy_button(text_to_copy: str, key_suffix: str):
                     console.error('Copy Failed', err);
                 }});
             }});
+            // 부모 stHtml 컨테이너 높이 보정
+            const container = btn.closest('[data-testid="stHtml"]');
+            if (container) container.style.minHeight = '36px';
         }})();
     </script>
     """
     st.html(html_code, unsafe_allow_javascript=True)
+

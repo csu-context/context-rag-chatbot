@@ -21,8 +21,8 @@ langchain-openai==1.2.1
 torch==2.11.0+cu130
 torchvision==0.26.0+cu130
 torchaudio==2.11.0+cu130
-sentence-transformers==5.4.1
-transformers==5.8.0
+sentence-transformers==5.5.1
+transformers==5.12.0
 accelerate==1.13.0
 
 # 벡터 데이터베이스 및 MLOps 평가
@@ -47,8 +47,14 @@ markitdown-hwp==0.1.0    # HWP 5.0 OLE2 파싱 플러그인 (Rust docpler 엔진
 # UI 및 유틸리티
 streamlit==1.57.0
 python-dotenv==1.2.2
+pydantic==2.12.5
+pydantic-settings==2.14.1
 rank-bm25==0.2.2
 kiwipiepy==0.23.1
 scikit-learn==1.8.0
 redis==8.0.0
 
+# 백엔드 API 및 통신 (FastAPI)
+fastapi>=0.100.0
+httpx>=0.24.0
+uvicorn>=0.22.0

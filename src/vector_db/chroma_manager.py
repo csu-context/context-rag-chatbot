@@ -173,8 +173,7 @@ class ChromaConnectionMixin:
                 self.collection.modify(metadata=modify_metadata)
 
         except Exception as e:
-            logger.error(f"설정 검증 및 자동 초기화 중 오류 발생: {e}")
-            raise
+            logger.warning(f"설정 검증 및 자동 초기화 중 오류 발생 (연결은 유지됨): {e}")
 
 
 class ChromaDBManager(ChromaConnectionMixin, BaseRetriever):

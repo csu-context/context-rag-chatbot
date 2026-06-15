@@ -204,8 +204,8 @@ class CrossEncoderReranker(BaseReranker):
                     self._model = CrossEncoder(
                         self.model_name,
                         device=self.device,
-                        cache_dir=str(CROSS_ENCODER_CACHE_DIR),
-                        automodel_args=automodel_args,
+                        cache_folder=str(CROSS_ENCODER_CACHE_DIR),
+                        model_kwargs=automodel_args,
                         local_files_only=not settings.ALLOW_EXTERNAL_API,
                     )
             except Exception as e:

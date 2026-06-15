@@ -89,7 +89,7 @@ services:
 
   # ChromaDB 서버 전용 컨테이너 (벡터 DB 관리)
   chromadb:
-    image: chromadb/chroma:latest
+    image: chromadb/chroma:1.5.9
     container_name: rag-chatbot-chromadb
     volumes:
       - ./vector_db:/data
