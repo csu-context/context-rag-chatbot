@@ -1,17 +1,15 @@
-# WebSocket 타임아웃 방어 — Proxy/폐쇄망 환경 연결 끊김 방지
 [server]
+headless = true
 # 업로드 최대 크기 (MB)
 maxUploadSize = 200
-# WebSocket ping 주기 (초) — 유휴 연결 종료 방지
-# Proxy의 기본 타임아웃(60~120s)보다 짧게 설정
+# WebSocket 메시지 최대 크기 (MB) — maxUploadSize 이상으로 맞춰 대용량 업로드 시 1009(too big) 종료 방지
+maxMessageSize = 200
+# Docker Desktop/폐쇄망에서 업로드 핸드셰이크(requestFileURLs) 거부 방지.
+# 동일 출처(localhost) 전용 데모 구성에서 XSRF/CORS 차단이 file_uploader 세션 핸드셰이크를 막던 문제 해소.
 enableCORS = false
-enableXsrfProtection = true
-headless = true
+enableXsrfProtection = false
+# WebSocket 압축 비활성 — 프록시/Docker 포트포워딩 환경 호환성
+enableWebsocketCompression = false
 
 [browser]
-# 브라우저 재연결 시도 설정
-serverPort = 8501
-
-[runner]
-# 스크립트 실행 타임아웃 (초)
-fastReruns = true
+gatherUsageStats = false

@@ -41,6 +41,9 @@ docker image prune -af
 echo "Pulling the latest App image from ECR..."
 docker compose -f docker-compose.yml -f docker-compose.gpu.yml pull app
 
+echo "Ensuring host bind-mount dirs are writable by the non-root container..."
+sudo bash "$APP_DIR/scripts/init-host-dirs.sh"
+
 echo "Starting containers..."
 docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
 

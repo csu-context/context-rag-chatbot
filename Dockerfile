@@ -57,10 +57,23 @@ RUN groupadd -r appgroup && useradd -r -g appgroup -u 1000 appuser
 RUN mkdir -p data/raw data/processed vector_db logs && \
     chown -R appuser:appgroup /app
 
+# rapidocr(docling OCR 엔진)가 쓰는 OCR 모델(.onnx, det/cls/rec)을 빌드 시 미리 받아
+# 이미지 레이어에 포함한다. 미포함 시 런타임에 site-packages/rapidocr/models 로 받는데,
+# 이는 이미지가 아니라 컨테이너 쓰기 레이어라 --force-recreate 마다 유실되어 매번
+# 재다운로드(네트워크 의존)된다. 빌드 시 baking 으로 폐쇄망/오프라인 recreate 에도 견고.
+RUN python -c "from rapidocr import RapidOCR; RapidOCR()"
+
+# rapidocr 패키지 디렉토리를 appuser 소유로 넘긴다. 빌드 시 받은 모델 읽기 +
+# 런타임 잔여 다운로드(다른 모델 변형 등) 시 쓰기를 허용한다(비루트 PermissionError 방지).
+RUN chown -R appuser:appgroup /opt/venv/lib/python3.13/site-packages/rapidocr
+
 # 소스 코드 복사 (appuser 소유)
 COPY --chown=appuser:appgroup src/ /app/src/
 COPY --chown=appuser:appgroup prompts/ /app/prompts/
 COPY --chown=appuser:appgroup config/ /app/config/
+# Streamlit 설정(.streamlit/config.toml) 복사 — 미포함 시 컨테이너가 기본값으로만 동작하여
+# 업로드/WebSocket 방어 설정이 무효화됨(프로덕션 이미지에서도 적용되도록 보장)
+COPY --chown=appuser:appgroup .streamlit/ /app/.streamlit/
 
 # 포트 설정
 EXPOSE 8501

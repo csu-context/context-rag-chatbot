@@ -1,19 +1,19 @@
 import json
 
-import streamlit.components.v1 as components
+import streamlit as st
 
 
 def render_custom_copy_button(text_to_copy: str, key_suffix: str):
-    """클라이언트 브라우저 환경에서 동작하는 자바스크립트 기반의 커스텀 복사 버튼을 렌더링합니다.
+    """클라이언트 브라우저에서 동작하는 자바스크립트 기반 커스텀 복사 버튼을 렌더링합니다.
 
-    Material Symbols 사양의 아이콘을 활용하여 시각적 정합성을 확보합니다.
+    아이콘은 인라인 SVG로 렌더링한다(외부 폰트 CDN 의존 제거 — 오프라인/폐쇄망에서도 표시됨).
+    st.html로 메인 DOM에 주입하고 메시지별 고유 id로 직접 바인딩해, 전역 함수 충돌(마지막
+    메시지만 복사되던 문제)을 막는다.
     """
     # 문자열 내 특수문자 및 줄바꿈으로 인한 스크립트 구문 오류 방지를 위한 이스케이프 처리
     safe_text = json.dumps(text_to_copy)
 
-    # 웹 컴포넌트에 주입될 HTML, CSS, JavaScript 소스코드 정의
     html_code = f"""
-    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet" />
     <style>
         .copy-btn {{
             background: transparent;
@@ -30,31 +30,51 @@ def render_custom_copy_button(text_to_copy: str, key_suffix: str):
         .copy-btn:hover {{
             background: #f0f0f0;
         }}
-        .material-symbols-outlined {{
-            font-size: 20px;
+        .copy-btn svg {{
+            width: 20px;
+            height: 20px;
+            display: block;
         }}
     </style>
-    <button class="copy-btn" onclick="copyText()" title="답변 복사하기">
-        <span class="material-symbols-outlined" id="icon-{key_suffix}">content_copy</span>
+    <button class="copy-btn" id="copybtn-{key_suffix}" title="답변 복사하기">
+        <span id="ic-copy-{key_suffix}" style="display:flex">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" stroke-linejoin="round">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+            </svg>
+        </span>
+        <span id="ic-check-{key_suffix}" style="display:none; color:#4CAF50">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+        </span>
     </button>
     <script>
-        function copyText() {{
+        (function() {{
+            // st.html은 메인 DOM에 인라인 주입되므로(components.html의 iframe 격리 제거),
+            // 메시지별 버튼에 고유 id로 직접 바인딩해 전역 함수 충돌(마지막 메시지만 복사)을 막는다.
+            // 아이콘은 인라인 SVG로 렌더링한다(외부 폰트 CDN 의존 제거 — 오프라인/폐쇄망에서도 표시됨).
+            const btn = document.getElementById('copybtn-{key_suffix}');
+            if (!btn || btn.dataset.copyBound) return;  // 재실행 시 중복 바인딩 방지
+            btn.dataset.copyBound = '1';
             const text = {safe_text};
-            // 비동기 Clipboard API를 통한 클라이언트 환경 복사 실행
-            navigator.clipboard.writeText(text).then(function() {{
-                const icon = document.getElementById('icon-{key_suffix}');
-                icon.innerText = 'check';
-                icon.style.color = '#4CAF50';
-                // 2초 경과 후 원래의 content_copy 아이콘 상태로 원복 진행
-                setTimeout(function() {{
-                    icon.innerText = 'content_copy';
-                    icon.style.color = '#555';
-                }}, 2000);
-            }}).catch(function(err) {{
-                console.error('Copy Failed', err);
+            const icCopy = document.getElementById('ic-copy-{key_suffix}');
+            const icCheck = document.getElementById('ic-check-{key_suffix}');
+            btn.addEventListener('click', function() {{
+                navigator.clipboard.writeText(text).then(function() {{
+                    icCopy.style.display = 'none';
+                    icCheck.style.display = 'flex';
+                    setTimeout(function() {{
+                        icCopy.style.display = 'flex';
+                        icCheck.style.display = 'none';
+                    }}, 2000);
+                }}).catch(function(err) {{
+                    console.error('Copy Failed', err);
+                }});
             }});
-        }}
+        }})();
     </script>
     """
-    # Streamlit 인라인 아이프레임 컴포넌트를 통한 마크업 독립 렌더링
-    components.html(html_code, height=35, width=35)
+    st.html(html_code, unsafe_allow_javascript=True)

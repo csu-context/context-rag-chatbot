@@ -33,7 +33,7 @@ pyarrow==24.0.0
 tqdm==4.67.3
 psutil==7.2.2
 
-# 데이터 파싱 및 가공 (PDF, Docx, MD)
+# 데이터 파싱 및 가공 (PDF, Docx, MD, HWP)
 PyMuPDF==1.27.2.3
 docx2txt==0.9
 unstructured[pdf]==0.22.27
@@ -41,6 +41,8 @@ pytesseract==0.3.13
 pandas==3.0.2
 tabulate==0.10.0
 docling>=2.0.0
+markitdown==0.1.6        # HWP/HWPX -> Markdown 베이스 변환기 (MarkItDown)
+markitdown-hwp==0.1.0    # HWP 5.0 OLE2 파싱 플러그인 (Rust docpler 엔진)
 
 # UI 및 유틸리티
 streamlit==1.57.0
