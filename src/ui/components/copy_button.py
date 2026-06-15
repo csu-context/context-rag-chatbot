@@ -84,4 +84,3 @@ def render_custom_copy_button(text_to_copy: str, key_suffix: str):
     </script>
     """
     st.html(html_code, unsafe_allow_javascript=True)
-
