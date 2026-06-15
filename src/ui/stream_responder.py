@@ -76,17 +76,27 @@ class StreamResponder:
         over_limit = total_latency > 5.0
 
         if st.session_state.show_expert_mode:
+            stage_durations = self._stage_durations
+            # 시작했으나 아직 끝나지 않은 단계(검색/리랭킹/LLM 준비·생성). 이 구간엔 스텝
+            # 이벤트가 없어 경과시간이 멈춰 보이므로, 진행 중임을 명시해 오인을 막는다. (#200)
+            in_flight = [s for s, v in self.stage_latencies.items() if "end" not in v]
+
             header = f"**총 소요시간: {total_latency:.2f}초**"
-            if over_limit:
+            if in_flight:
+                busy = "응답 생성 중" if "generation" in in_flight else "처리 중"
+                header = f"{header} · ⏳ {busy}..."
+            elif over_limit:
                 header = f"⚠️ {header} (5초 초과)"
 
-            stage_durations = self._stage_durations
             bottleneck = max(stage_durations, key=lambda s: stage_durations[s]) if stage_durations else None
 
             lines = [header]
             for stage, elapsed in stage_durations.items():
                 marker = " ← 병목" if over_limit and stage == bottleneck else ""
                 lines.append(f"- {stage}: {elapsed:.2f}초{marker}")
+            for stage in in_flight:
+                label = "생성 중" if stage == "generation" else "처리 중"
+                lines.append(f"- {stage}: ({label}...)")
 
             self.latency_placeholder.info("\n".join(lines))
         else:
@@ -158,15 +168,14 @@ class StreamResponder:
 
     def consume_stream(self):
         """스트리밍 생성 제네레이터를 읽어서 UI를 실시간 업데이트하고 결과를 로깅합니다."""
-        show_expert_mode = st.session_state.show_expert_mode
         if not st.session_state.stream_iter:
             return
 
         try:
-            spinner_ctx = (
-                st.spinner("답변을 생성하고 있습니다...") if not show_expert_mode else contextlib.nullcontext()
-            )
-            with spinner_ctx:
+            # 전문가 모드에서도 스피너를 표시한다. LLM 준비·검색·리랭킹처럼 스텝 이벤트가 없는
+            # 블로킹 구간에는 서버가 경과시간을 다시 그리지 못하지만, 스피너 애니메이션은
+            # 브라우저에서 계속 돌아 처리가 멈춘 것처럼 보이는 오인을 막는다. (#200)
+            with st.spinner("답변을 생성하고 있습니다..."):
                 for step in st.session_state.stream_iter:
                     if st.session_state.stop_generation:
                         break

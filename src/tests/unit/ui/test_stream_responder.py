@@ -51,6 +51,30 @@ class TestStreamResponder:
         responder.process_step({"stage": "retrieval", "status": "complete"})
         assert "end" in responder.stage_latencies["retrieval"]
 
+    def test_display_latencies_in_flight_generation(self, mock_st):
+        """진행 중 단계(LLM 준비/생성)는 '생성 중'으로 표기되어 멈춤 오인을 막는다. (#200)"""
+        responder = StreamResponder(MagicMock(), MagicMock())
+        responder.process_step({"stage": "retrieval", "status": "running"})
+        responder.process_step({"stage": "retrieval", "status": "complete"})
+        # 생성 단계 시작(첫 토큰 전) — 끝나지 않은 in-flight 상태
+        responder.process_step({"stage": "generation", "status": "running"})
+
+        rendered = responder.latency_placeholder.info.call_args[0][0]
+        assert "응답 생성 중" in rendered  # 헤더 진행 표시
+        assert "generation: (생성 중...)" in rendered  # 진행 중 단계 라인
+        assert "retrieval:" in rendered  # 완료 단계는 소요시간 유지
+
+    def test_display_latencies_all_complete_no_busy_marker(self, mock_st):
+        """모든 단계 완료 시 진행 표시 없이 소요시간만 노출한다. (회귀 가드)"""
+        responder = StreamResponder(MagicMock(), MagicMock())
+        responder.process_step({"stage": "retrieval", "status": "running"})
+        responder.process_step({"stage": "retrieval", "status": "complete"})
+
+        rendered = responder.latency_placeholder.info.call_args[0][0]
+        assert "생성 중" not in rendered
+        assert "처리 중" not in rendered
+        assert "총 소요시간" in rendered
+
     def test_format_docs(self, mock_st):
         responder = StreamResponder(MagicMock(), MagicMock())
 
