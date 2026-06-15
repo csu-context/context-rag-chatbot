@@ -26,11 +26,11 @@ HASH_SUFFIX = ".sha256"
 STATUS_FILE_NAME = "backup_status.json"
 
 
-def _update_status(status: str, error: str | None = None, target: str | None = None) -> None:
+def _update_status(status: str, error: str | None = None, target: str | None = None, note: str | None = None) -> None:
     try:
         status_file = BACKUP_DIR / STATUS_FILE_NAME
         status_file.parent.mkdir(parents=True, exist_ok=True)
-        data = {"status": status, "last_update": time.time(), "error": error, "target": target}
+        data = {"status": status, "last_update": time.time(), "error": error, "target": target, "note": note}
         status_file.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     except Exception as e:
         logger.error("Failed to write backup status: %s", e)
@@ -331,7 +331,11 @@ def restore_chromadb(
 
             _remove_previous_db(temp_existing)
             logger.info("백업에서 ChromaDB를 성공적으로 복원했습니다: %s", backup_path.name)
-            _update_status("completed", target=backup_path.name)
+            # 실행 중인 chromadb 서버는 기동 시점의 파일/메모리 상태를 유지하므로, 디스크의 복원
+            # 결과를 서비스에 반영하려면 컨테이너 재시작이 필요하다. 운영자에게 명시적으로 안내한다.
+            restart_note = "복원이 적용되려면 chromadb 서비스를 재시작해야 합니다 (docker compose restart chromadb)."
+            logger.warning("%s", restart_note)
+            _update_status("completed", target=backup_path.name, note=restart_note)
             return True
 
     except Exception as e:

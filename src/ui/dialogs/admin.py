@@ -455,6 +455,9 @@ def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
                     else:
                         if status == "completed" and target:
                             st.success(f"작업 완료: {target}")
+                            note = status_data.get("note")
+                            if note:
+                                st.warning(note)
                         elif status == "failed" and error:
                             st.error(f"작업 실패: {error}")
 
