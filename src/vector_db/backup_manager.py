@@ -12,10 +12,8 @@ from datetime import datetime
 from pathlib import Path
 
 import chromadb
-from chromadb.utils import embedding_functions
 
-from src.common.config import settings
-from src.utils.paths import BACKUP_DIR, MODELS_DIR, VECTOR_DB_DIR, ensure_directories
+from src.utils.paths import BACKUP_DIR, VECTOR_DB_DIR, ensure_directories
 
 logger = logging.getLogger(__name__)
 
@@ -194,33 +192,25 @@ def diagnose_db(vector_db_dir: Path = VECTOR_DB_DIR) -> bool:
         logger.error("DB 진단 실패: SQLite 오류: %s", e)
         return False
 
-    # 2. ChromaDB 클라이언트 실제 쿼리 검증
+    # 2. 복원된 DB에 컬렉션/임베딩이 실제로 존재하는지 검증한다.
+    #    임베디드 PersistentClient로 라이브 vector_db에 진단 컬렉션을 add/delete하면, 같은 sqlite를
+    #    여는 chromadb 서버 컨테이너와 파일 락이 경합한다(특히 Windows). 또 임베딩 모델 로드까지
+    #    필요하다. 서버를 거치지 않고 read-only sqlite 조회로만 확인해 락·쓰기·모델 로드를 모두 피한다.
     try:
-        # 시스템 설정의 임베딩 모델 사용
-        embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
-            model_name=settings.EMBEDDING_MODEL_NAME,
-            device="cpu",  # 진단용이므로 가볍게 CPU 사용
-            # 앱(embedder.py)과 동일한 캐시 경로에서 로드한다. cache_folder 미지정 시 HF 기본
-            # 경로(HF_HOME/hub)를 탐색하는데, bge-m3는 MODELS_DIR 최상위에 캐시되어 있고 hub는
-            # root 소유라 재다운로드도 거부됨 → 비루트 컨테이너에서 PermissionError(Errno 13).
-            cache_folder=str(MODELS_DIR),
-        )
-        client = chromadb.PersistentClient(
-            path=str(vector_db_dir), settings=chromadb.Settings(anonymized_telemetry=False)
-        )
-        collection = client.get_or_create_collection(
-            name="diagnostic_collection", embedding_function=embedding_function
-        )
-        collection.add(ids=["test_id"], documents=["test document"])
-        results = collection.query(query_texts=["test"], n_results=1)
-        client.delete_collection(name="diagnostic_collection")
+        conn = sqlite3.connect(f"file:{sqlite_file}?mode=ro", uri=True)
+        cursor = conn.cursor()
+        cursor.execute("SELECT count(*) FROM collections;")
+        collection_count = cursor.fetchone()[0]
+        cursor.execute("SELECT count(*) FROM embeddings;")
+        embedding_count = cursor.fetchone()[0]
+        conn.close()
 
-        if not results or not results.get("ids"):
-            logger.error("DB 진단 실패: ChromaDB 쿼리 결과가 없습니다.")
+        if collection_count < 1:
+            logger.error("DB 진단 실패: 복원된 DB에 컬렉션이 없습니다.")
             return False
-        logger.info("DB 진단 통과: ChromaDB 쿼리 정상 작동")
-    except Exception as e:
-        logger.error("DB 진단 실패: ChromaDB 클라이언트 오류: %s", e)
+        logger.info("DB 진단 통과: 컬렉션 %d개 · 임베딩 %d건 확인", collection_count, embedding_count)
+    except sqlite3.Error as e:
+        logger.error("DB 진단 실패: 컬렉션 조회 오류: %s", e)
         return False
 
     return True
