@@ -253,3 +253,6 @@ def setup_global_logging():
     # 노이즈 제거
     for name in ["httpx", "google", "langchain"]:
         logging.getLogger(name).setLevel(logging.WARNING)
+    # sentence-transformers는 cache_folder 사용 시 cache_dir deprecation 경고를 데코레이터 로거로
+    # 모델 로드마다 출력한다(warnings가 아닌 logging이라 filterwarnings로는 억제 불가). ERROR로 올려 억제.
+    logging.getLogger("sentence_transformers.util.decorators").setLevel(logging.ERROR)

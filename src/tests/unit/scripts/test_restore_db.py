@@ -60,20 +60,20 @@ def test_restore_rejects_hash_mismatch(mock_dirs):
     assert (vector_db_dir / "chroma.sqlite3").read_text(encoding="utf-8") == "old data"
 
 
-def test_diagnose_db_success(mock_dirs):
-    _, vector_db_dir = mock_dirs
+def test_diagnose_db_success(tmp_path):
+    import sqlite3
 
-    # Mock sqlite3.connect to return a mock connection and cursor
-    with patch("sqlite3.connect") as mock_connect, patch("src.vector_db.backup_manager.chromadb.PersistentClient"):
-        mock_conn = mock_connect.return_value
-        mock_cursor = mock_conn.cursor.return_value
-        mock_cursor.fetchone.return_value = ("ok",)
+    vector_db_dir = tmp_path / "vector_db"
+    vector_db_dir.mkdir()
+    conn = sqlite3.connect(str(vector_db_dir / "chroma.sqlite3"))
+    conn.execute("CREATE TABLE collections (id TEXT)")
+    conn.execute("CREATE TABLE embeddings (id INTEGER)")
+    conn.execute("INSERT INTO collections VALUES ('c1')")
+    conn.execute("INSERT INTO embeddings VALUES (1)")
+    conn.commit()
+    conn.close()
 
-        success = diagnose_db(vector_db_dir=vector_db_dir)
-
-        assert success is True
-        mock_connect.assert_called_once()
-        mock_cursor.execute.assert_called_once_with("PRAGMA integrity_check;")
+    assert diagnose_db(vector_db_dir=vector_db_dir) is True
 
 
 def test_diagnose_db_failure_integrity_check(mock_dirs):

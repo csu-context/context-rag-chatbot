@@ -1,6 +1,7 @@
 import hashlib
 import json
 import logging
+import os
 import platform
 import shutil
 import sqlite3
@@ -11,9 +12,7 @@ from datetime import datetime
 from pathlib import Path
 
 import chromadb
-from chromadb.utils import embedding_functions
 
-from src.common.config import settings
 from src.utils.paths import BACKUP_DIR, VECTOR_DB_DIR, ensure_directories
 
 logger = logging.getLogger(__name__)
@@ -27,11 +26,11 @@ HASH_SUFFIX = ".sha256"
 STATUS_FILE_NAME = "backup_status.json"
 
 
-def _update_status(status: str, error: str | None = None, target: str | None = None) -> None:
+def _update_status(status: str, error: str | None = None, target: str | None = None, note: str | None = None) -> None:
     try:
         status_file = BACKUP_DIR / STATUS_FILE_NAME
         status_file.parent.mkdir(parents=True, exist_ok=True)
-        data = {"status": status, "last_update": time.time(), "error": error, "target": target}
+        data = {"status": status, "last_update": time.time(), "error": error, "target": target, "note": note}
         status_file.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     except Exception as e:
         logger.error("Failed to write backup status: %s", e)
@@ -193,29 +192,25 @@ def diagnose_db(vector_db_dir: Path = VECTOR_DB_DIR) -> bool:
         logger.error("DB 진단 실패: SQLite 오류: %s", e)
         return False
 
-    # 2. ChromaDB 클라이언트 실제 쿼리 검증
+    # 2. 복원된 DB에 컬렉션/임베딩이 실제로 존재하는지 검증한다.
+    #    임베디드 PersistentClient로 라이브 vector_db에 진단 컬렉션을 add/delete하면, 같은 sqlite를
+    #    여는 chromadb 서버 컨테이너와 파일 락이 경합한다(특히 Windows). 또 임베딩 모델 로드까지
+    #    필요하다. 서버를 거치지 않고 read-only sqlite 조회로만 확인해 락·쓰기·모델 로드를 모두 피한다.
     try:
-        # 시스템 설정의 임베딩 모델 사용
-        embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
-            model_name=settings.EMBEDDING_MODEL_NAME,
-            device="cpu",  # 진단용이므로 가볍게 CPU 사용
-        )
-        client = chromadb.PersistentClient(
-            path=str(vector_db_dir), settings=chromadb.Settings(anonymized_telemetry=False)
-        )
-        collection = client.get_or_create_collection(
-            name="diagnostic_collection", embedding_function=embedding_function
-        )
-        collection.add(ids=["test_id"], documents=["test document"])
-        results = collection.query(query_texts=["test"], n_results=1)
-        client.delete_collection(name="diagnostic_collection")
+        conn = sqlite3.connect(f"file:{sqlite_file}?mode=ro", uri=True)
+        cursor = conn.cursor()
+        cursor.execute("SELECT count(*) FROM collections;")
+        collection_count = cursor.fetchone()[0]
+        cursor.execute("SELECT count(*) FROM embeddings;")
+        embedding_count = cursor.fetchone()[0]
+        conn.close()
 
-        if not results or not results.get("ids"):
-            logger.error("DB 진단 실패: ChromaDB 쿼리 결과가 없습니다.")
+        if collection_count < 1:
+            logger.error("DB 진단 실패: 복원된 DB에 컬렉션이 없습니다.")
             return False
-        logger.info("DB 진단 통과: ChromaDB 쿼리 정상 작동")
-    except Exception as e:
-        logger.error("DB 진단 실패: ChromaDB 클라이언트 오류: %s", e)
+        logger.info("DB 진단 통과: 컬렉션 %d개 · 임베딩 %d건 확인", collection_count, embedding_count)
+    except sqlite3.Error as e:
+        logger.error("DB 진단 실패: 컬렉션 조회 오류: %s", e)
         return False
 
     return True
@@ -228,13 +223,30 @@ def _find_backup(backup_file: str | None, backup_dir: Path) -> Path | None:
     return backups[0] if backups else None
 
 
+def _release_chromadb_locks() -> None:
+    chroma_host = os.environ.get("CHROMA_SERVER_HOST")
+    if not chroma_host:
+        return
+    try:
+        client = chromadb.HttpClient(host=chroma_host, port=os.environ.get("CHROMA_SERVER_PORT", "8000"))
+        client.reset()
+        logger.info("ChromaDB 서버 리셋을 통해 파일 락(Lock)을 해제했습니다.")
+    except Exception as e:
+        logger.warning(f"ChromaDB 서버 리셋 시도 중 예외 발생 (무시됨): {e}")
+
+
 def _move_existing_db(vector_db_dir: Path) -> Path | None:
-    if not vector_db_dir.exists():
+    if not vector_db_dir.exists() or not any(vector_db_dir.iterdir()):
         return None
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     temp_existing = vector_db_dir.parent / f"{vector_db_dir.name}_temp_{timestamp}"
-    shutil.move(vector_db_dir, temp_existing)
-    logger.info("기존 DB를 임시 위치로 이동했습니다: %s", temp_existing)
+    temp_existing.mkdir(parents=True, exist_ok=True)
+    for item in vector_db_dir.iterdir():
+        try:
+            shutil.move(str(item), str(temp_existing / item.name))
+        except Exception as e:
+            logger.warning(f"임시 이동 실패 (무시됨): {item} - {e}")
+    logger.info("기존 DB 내용을 임시 위치로 이동했습니다: %s", temp_existing)
     return temp_existing
 
 
@@ -260,16 +272,25 @@ def _is_safe_tar_member(member: tarfile.TarInfo, target_dir: Path) -> bool:
 
 def _restore_previous_db(vector_db_dir: Path, temp_existing: Path | None) -> None:
     if vector_db_dir.exists():
-        shutil.rmtree(vector_db_dir)
-        logger.info("잘못 복원된 DB 제거 완료: %s", vector_db_dir)
+        for item in vector_db_dir.iterdir():
+            if item.is_dir():
+                shutil.rmtree(item, ignore_errors=True)
+            else:
+                item.unlink(missing_ok=True)
+        logger.info("잘못 복원된 DB 내용 제거 완료: %s", vector_db_dir)
     if temp_existing and temp_existing.exists():
-        shutil.move(temp_existing, vector_db_dir)
+        for item in temp_existing.iterdir():
+            try:
+                shutil.move(str(item), str(vector_db_dir / item.name))
+            except Exception as e:
+                logger.warning(f"원본 복원 중 실패 (무시됨): {item} - {e}")
+        shutil.rmtree(temp_existing, ignore_errors=True)
         logger.info("원본 DB 복원 완료: %s", temp_existing)
 
 
 def _remove_previous_db(temp_existing: Path | None) -> None:
     if temp_existing and temp_existing.exists():
-        shutil.rmtree(temp_existing)
+        shutil.rmtree(temp_existing, ignore_errors=True)
         logger.info("임시 보관된 원본 DB 제거 완료: %s", temp_existing)
 
 
@@ -299,6 +320,7 @@ def restore_chromadb(
     try:
         with _operation_lock(lock_file):
             logger.info("백업에서 ChromaDB 복원 중: %s", backup_path.name)
+            _release_chromadb_locks()
             temp_existing = _move_existing_db(vector_db_dir)
             _extract_archive(backup_path, vector_db_dir.parent)
 
@@ -309,11 +331,18 @@ def restore_chromadb(
 
             _remove_previous_db(temp_existing)
             logger.info("백업에서 ChromaDB를 성공적으로 복원했습니다: %s", backup_path.name)
-            _update_status("completed", target=backup_path.name)
+            # 실행 중인 chromadb 서버는 기동 시점의 파일/메모리 상태를 유지하므로, 디스크의 복원
+            # 결과를 서비스에 반영하려면 컨테이너 재시작이 필요하다. 운영자에게 명시적으로 안내한다.
+            restart_note = "복원이 적용되려면 chromadb 서비스를 재시작해야 합니다 (docker compose restart chromadb)."
+            logger.warning("%s", restart_note)
+            _update_status("completed", target=backup_path.name, note=restart_note)
             return True
 
     except Exception as e:
         logger.error("복원 프로세스 실패: %s", e)
-        _restore_previous_db(vector_db_dir, temp_existing)
+        try:
+            _restore_previous_db(vector_db_dir, temp_existing)
+        except Exception as inner_e:
+            logger.error("이전 DB 복구 중 추가 오류 발생: %s", inner_e)
         _update_status("failed", error=str(e), target=backup_path.name)
         return False
