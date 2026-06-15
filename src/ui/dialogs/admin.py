@@ -22,8 +22,8 @@ def reset_admin_active():
     st.session_state.admin_active = False
 
 
-def _render_sync_progress(initialize_rag_system_callback):
-    """백그라운드 동기화 진행률 폴링 프래그먼트."""
+def _render_sync_progress():
+    """백그라운드 동기화 진행률 폴링 프래그먼트(가동 중에만 마운트)."""
 
     @st.fragment(run_every="1s")
     def _progress_fragment():
@@ -46,32 +46,45 @@ def _render_sync_progress(initialize_rag_system_callback):
                 job.request_cancel()
             return
 
-        # 완료 / 취소 / 오류
-        st.session_state._current_sync_job = None
-        if snap["completed"]:
-            if initialize_rag_system_callback:
-                initialize_rag_system_callback()
-            st.success("동기화가 완료되었습니다.")  # pragma: no cover
-        elif snap["cancelled"]:
-            st.warning("동기화가 취소되었습니다.")  # pragma: no cover
-        elif snap["error"]:
-            st.error(f"동기화 오류: {snap['error']}")  # pragma: no cover
-
-        time.sleep(0.5)
-        st.session_state.admin_active = False
-        st.rerun()  # pragma: no cover
+        # 가동 종료(완료/취소/오류) → 결과 패널로 1회 핸드오프한다. 자동으로 닫지 않고
+        # job을 유지해, 부모 다이얼로그가 결과/에러를 운영자 확인까지 보여주도록 한다. (#201)
+        st.rerun()
 
     _progress_fragment()
 
 
+def _render_sync_result(job, initialize_rag_system_callback):
+    """동기화 종료 결과 패널. 자동으로 닫지 않고 운영자가 '확인'할 때까지 유지한다. (#201)"""
+    snap = job.snapshot()
+    st.subheader("동기화 결과")
+
+    if snap["completed"]:
+        if initialize_rag_system_callback:
+            initialize_rag_system_callback()
+        st.success("동기화가 완료되었습니다.")
+    elif snap["cancelled"]:
+        st.warning("동기화가 취소되었습니다.")
+    elif snap["error"]:
+        st.error(f"동기화 오류: {snap['error']}")
+        if snap["file_name"]:
+            st.caption(f"마지막 처리 파일: {snap['file_name']}")
+
+    if st.button("확인", key="sync_result_ack_btn"):
+        st.session_state._current_sync_job = None
+        st.rerun()
+
+
 @st.dialog("데이터 관리 시스템", width="large", on_dismiss=reset_admin_active)
 def show_admin_dialog(db_manager, initialize_rag_system_callback):  # noqa: C901
-    # 백그라운 동기화 실행 중이면 진행률 표시
+    # 백그라운드 동기화가 가동 중이면 진행률을, 종료되었으면 결과 패널을 표시한다.
     current_job = st.session_state.get("_current_sync_job")
     if current_job and current_job.running:
         st.subheader("동기화 진행 중...")  # pragma: no cover
         st.info("파일을 처리하는 동안 다른 작업이 가능합니다.")  # pragma: no cover
-        _render_sync_progress(initialize_rag_system_callback)
+        _render_sync_progress()
+        return
+    if current_job:
+        _render_sync_result(current_job, initialize_rag_system_callback)
         return
 
     tab1, tab2 = st.tabs(["문서 및 동기화 관리", "백업 및 복원"])
