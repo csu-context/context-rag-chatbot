@@ -120,6 +120,33 @@ class TestSyncController:
             mock_orchestrator.return_value.run_ingestion.assert_called_once()
             assert args[0].completed is True
 
+    @patch("src.controllers.sync_controller.logger")
+    @patch("src.controllers.sync_controller.threading.Thread")
+    @patch("src.controllers.sync_controller.PipelineOrchestrator")
+    @patch("src.controllers.sync_controller.st")
+    def test_background_failure_logs_stacktrace(self, mock_st, mock_orchestrator, mock_thread, mock_logger):
+        """백그라운드 동기화 실패 시 logger.error(exc_info=True)로 스택트레이스를 남기고 job에 기록한다. (#201)"""
+        mock_st.session_state = MagicMock()
+        mock_st.session_state.get.return_value = None
+        mock_orchestrator.return_value.run_ingestion.side_effect = RuntimeError("ingestion boom")
+
+        job = SyncController.trigger_sync_background("docling", force=True)
+        run_func = mock_thread.call_args[1]["target"]
+        args = mock_thread.call_args[1]["args"]
+
+        with (
+            patch("src.utils.health_check.run_full_diagnostics") as mock_diag,
+            patch("src.utils.health_check.repair_integrity"),
+        ):
+            mock_diag.return_value = (True, {})
+            run_func(*args)
+
+        mock_logger.error.assert_called_once()
+        assert mock_logger.error.call_args[1]["exc_info"] is True
+        assert job.error == "ingestion boom"
+        assert job.running is False
+        assert job.completed is False
+
     @patch("src.controllers.sync_controller.PipelineOrchestrator")
     @patch("src.controllers.sync_controller.st")
     def test_trigger_sync(self, mock_st, mock_orchestrator):

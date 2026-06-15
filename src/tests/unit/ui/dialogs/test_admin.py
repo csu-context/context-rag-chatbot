@@ -2,7 +2,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.ui.dialogs.admin import API_URL, _render_sync_progress, reset_admin_active, show_admin_dialog
+from src.ui.dialogs.admin import (
+    API_URL,
+    _render_sync_progress,
+    _render_sync_result,
+    reset_admin_active,
+    show_admin_dialog,
+)
 
 
 @pytest.fixture
@@ -102,7 +108,7 @@ class TestAdminDialog:
                 mock_requests.post.assert_any_call(f"{API_URL}/api/admin/backups")
                 mock_requests.post.assert_any_call(f"{API_URL}/api/admin/backups/restore?filename=backup1.tar.gz")
 
-    def test_render_sync_progress(self, mock_st):
+    def test_render_sync_progress_running_cancel(self, mock_st):
         job = MagicMock()
         job.snapshot.return_value = {
             "running": True,
@@ -117,12 +123,91 @@ class TestAdminDialog:
         mock_st.session_state.get.return_value = job
         mock_st.button.return_value = True
 
-        with patch("src.ui.dialogs.admin.time.sleep"):
-            _render_sync_progress(MagicMock())
-            job.request_cancel.assert_called_once()
+        _render_sync_progress()
+        job.request_cancel.assert_called_once()
 
-            job.snapshot.return_value["running"] = False
-            job.snapshot.return_value["completed"] = True
-            cb = MagicMock()
-            _render_sync_progress(cb)
-            cb.assert_called_once()
+    def test_render_sync_progress_terminal_handoff(self, mock_st):
+        """가동 종료 시 결과 패널로 1회 핸드오프(st.rerun)하고 자동으로 닫지 않는다. (#201)"""
+        job = MagicMock()
+        job.snapshot.return_value = {
+            "running": False,
+            "total": 10,
+            "current": 10,
+            "file_name": "test.pdf",
+            "percent": 100,
+            "completed": True,
+            "cancelled": False,
+            "error": None,
+        }
+        mock_st.session_state.get.return_value = job
+
+        _render_sync_progress()
+
+        mock_st.rerun.assert_called_once()
+        # 자동 닫기(admin_active=False)·job 소거를 하지 않아 결과가 부모로 인계된다.
+        assert mock_st.session_state.admin_active is True
+
+    def test_render_sync_result_completed(self, mock_st):
+        """완료 결과는 성공 메시지 + RAG 재초기화 1회. 확인 전까지 패널 유지. (#201)"""
+        job = MagicMock()
+        job.snapshot.return_value = {
+            "running": False,
+            "completed": True,
+            "cancelled": False,
+            "error": None,
+            "file_name": "",
+            "current": 1,
+            "total": 1,
+            "percent": 100,
+        }
+        cb = MagicMock()
+        mock_st.button.return_value = False  # 확인 미클릭 → 유지
+
+        _render_sync_result(job, cb)
+
+        cb.assert_called_once()
+        mock_st.success.assert_called_once()
+        mock_st.rerun.assert_not_called()
+
+    def test_render_sync_result_error_keeps_panel(self, mock_st):
+        """오류 결과는 사유 + 마지막 처리 파일을 표시하고, 재초기화하지 않는다. (#201)"""
+        job = MagicMock()
+        job.snapshot.return_value = {
+            "running": False,
+            "completed": False,
+            "cancelled": False,
+            "error": "ingestion boom",
+            "file_name": "broken.hwp",
+            "current": 0,
+            "total": 3,
+            "percent": 0,
+        }
+        cb = MagicMock()
+        mock_st.button.return_value = False
+
+        _render_sync_result(job, cb)
+
+        mock_st.error.assert_called_once()
+        assert "ingestion boom" in mock_st.error.call_args[0][0]
+        mock_st.caption.assert_called_once()
+        cb.assert_not_called()
+
+    def test_render_sync_result_ack_closes(self, mock_st):
+        """'확인' 클릭 시 job을 비우고 rerun으로 결과 패널을 닫는다. (#201)"""
+        job = MagicMock()
+        job.snapshot.return_value = {
+            "running": False,
+            "completed": True,
+            "cancelled": False,
+            "error": None,
+            "file_name": "",
+            "current": 1,
+            "total": 1,
+            "percent": 100,
+        }
+        mock_st.button.return_value = True  # 확인 클릭
+
+        _render_sync_result(job, MagicMock())
+
+        assert mock_st.session_state._current_sync_job is None
+        mock_st.rerun.assert_called_once()
